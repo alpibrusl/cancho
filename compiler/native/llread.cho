@@ -1,0 +1,841 @@
+edition 7;
+module selfhost.llread;
+
+// llread.cho -- the reader's words, types and values (`docs/native-backend.md` section 10): a type at the cursor into its number, a value into an operand, a
+// constant (an array, a struct, a string, a constant expression) into a record. `llbody.cho` reads instructions with these and `lltop.cho` the lines outside
+// a function. Pure, and no trap on any text.
+
+import std.bytes;
+import selfhost.llmod as lm;
+
+// ---- lists of words ----
+//
+// A list is words with a space before each and after the last; a word's number is its place, from 1.
+
+// The number of `text[from..to]` in `list`, or 0.
+pub fn word_index[&t, &l](text: &t [byte], from: int, to: int, list: &l [byte]) -> [] int {
+    var n = 1;
+    var i = 1;
+    while i < len(list) {
+        var end = i;
+        while end < len(list) && int_of(list[end]) != ' ' {
+            end = end + 1;
+        }
+        if end - i == to - from {
+            var k = 0;
+            while k < end - i && int_of(list[i + k]) == lm.at(text, from + k) {
+                k = k + 1;
+            }
+            if k == end - i {
+                return n;
+            }
+        }
+        n = n + 1;
+        i = end + 1;
+    }
+    return 0;
+}
+
+// Word `n` of `list`, or nothing.
+pub fn word_at(list: &static [byte], n: int) -> [] &static [byte] {
+    var seen = 1;
+    var i = 1;
+    while i < len(list) {
+        var end = i;
+        while end < len(list) && int_of(list[end]) != ' ' {
+            end = end + 1;
+        }
+        if seen == n {
+            return list[i..end];
+        }
+        seen = seen + 1;
+        i = end + 1;
+    }
+    return list[0..0];
+}
+
+// The instructions, by number. The families are runs of it: 1 to 12 the integer operations, 13 to 16 the floating-point ones, 22 to 31 the conversions.
+pub fn ops() -> [] &static [byte] {
+    return " add sub mul sdiv srem udiv and or xor shl ashr lshr fadd fsub fmul fdiv fneg icmp fcmp select phi trunc zext sext fptrunc fpext fptosi sitofp bitcast inttoptr ptrtoint alloca load store getelementptr extractvalue insertvalue call ret br switch unreachable atomicrmw cmpxchg insertelement shufflevector extractelement ";
+}
+
+pub fn op_fneg() -> [] int {
+    return 17;
+}
+
+pub fn op_icmp() -> [] int {
+    return 18;
+}
+
+pub fn op_fcmp() -> [] int {
+    return 19;
+}
+
+pub fn op_select() -> [] int {
+    return 20;
+}
+
+pub fn op_phi() -> [] int {
+    return 21;
+}
+
+pub fn op_bitcast() -> [] int {
+    return 29;
+}
+
+pub fn op_inttoptr() -> [] int {
+    return 30;
+}
+
+pub fn op_ptrtoint() -> [] int {
+    return 31;
+}
+
+pub fn op_alloca() -> [] int {
+    return 32;
+}
+
+pub fn op_load() -> [] int {
+    return 33;
+}
+
+pub fn op_store() -> [] int {
+    return 34;
+}
+
+pub fn op_gep() -> [] int {
+    return 35;
+}
+
+pub fn op_extractvalue() -> [] int {
+    return 36;
+}
+
+pub fn op_insertvalue() -> [] int {
+    return 37;
+}
+
+pub fn op_call() -> [] int {
+    return 38;
+}
+
+pub fn op_ret() -> [] int {
+    return 39;
+}
+
+pub fn op_br() -> [] int {
+    return 40;
+}
+
+pub fn op_switch() -> [] int {
+    return 41;
+}
+
+pub fn op_unreachable() -> [] int {
+    return 42;
+}
+
+pub fn op_atomicrmw() -> [] int {
+    return 43;
+}
+
+pub fn op_cmpxchg() -> [] int {
+    return 44;
+}
+
+pub fn op_insertelement() -> [] int {
+    return 45;
+}
+
+pub fn op_shufflevector() -> [] int {
+    return 46;
+}
+
+pub fn op_extractelement() -> [] int {
+    return 47;
+}
+
+pub fn icmp_words() -> [] &static [byte] {
+    return " eq ne ugt uge ult ule sgt sge slt sle ";
+}
+
+pub fn fcmp_words() -> [] &static [byte] {
+    return " oeq ogt oge olt ole one ord ueq ugt uge ult ule une uno ";
+}
+
+pub fn orderings() -> [] &static [byte] {
+    return " unordered monotonic acquire release acq_rel seq_cst ";
+}
+
+pub fn rmw_words() -> [] &static [byte] {
+    return " xchg add sub and nand or xor max min umax umin ";
+}
+
+pub fn constant_words() -> [] &static [byte] {
+    return " null undef poison zeroinitializer true false none ";
+}
+
+// ---- flags of an instruction (and of a constant expression) ----
+
+pub fn f_nsw() -> [] int {
+    return 1;
+}
+
+pub fn f_nuw() -> [] int {
+    return 2;
+}
+
+pub fn f_inbounds() -> [] int {
+    return 4;
+}
+
+pub fn f_volatile() -> [] int {
+    return 8;
+}
+
+pub fn f_atomic() -> [] int {
+    return 16;
+}
+
+pub fn f_sideeffect() -> [] int {
+    return 32;
+}
+
+// The explicit function type of a call is written (`call i32 (i32, ...) @f(...)`).
+pub fn f_typed() -> [] int {
+    return 64;
+}
+
+// An `alloca` with a count (`alloca i8, i64 1`).
+pub fn f_counted() -> [] int {
+    return 128;
+}
+
+// The first and the second ordering of an atomic instruction are the bits from 256 (three bits each), and the operation of an `atomicrmw` the bits from 16384.
+pub fn ordering_shift() -> [] int {
+    return 8;
+}
+
+pub fn rmw_shift() -> [] int {
+    return 14;
+}
+
+// ---- kinds of operand ----
+
+pub fn o_local() -> [] int {
+    return 1;
+}
+
+pub fn o_global() -> [] int {
+    return 2;
+}
+
+pub fn o_int() -> [] int {
+    return 3;
+}
+
+// An integer that does not fit 64 bits: kept as its text.
+pub fn o_big() -> [] int {
+    return 4;
+}
+
+pub fn o_float() -> [] int {
+    return 5;
+}
+
+// A word of `constant_words`, by its number.
+pub fn o_word() -> [] int {
+    return 6;
+}
+
+// A constant with parts: the record it is.
+pub fn o_const() -> [] int {
+    return 7;
+}
+
+pub fn o_label() -> [] int {
+    return 8;
+}
+
+// A type alone (the element of a `getelementptr`, the destination of a conversion).
+pub fn o_type() -> [] int {
+    return 9;
+}
+
+// An index of `extractvalue` or `insertvalue`.
+pub fn o_index() -> [] int {
+    return 10;
+}
+
+// Inline assembly: its two strings, from the first's opening quote to the second's closing one.
+pub fn o_asm() -> [] int {
+    return 11;
+}
+
+// `align N` before an argument of a call.
+pub fn o_align() -> [] int {
+    return 12;
+}
+
+// ---- kinds of record ----
+
+pub fn r_typedef() -> [] int {
+    return 1;
+}
+
+pub fn r_global() -> [] int {
+    return 2;
+}
+
+pub fn r_declare() -> [] int {
+    return 3;
+}
+
+pub fn r_func() -> [] int {
+    return 4;
+}
+
+pub fn r_block() -> [] int {
+    return 5;
+}
+
+pub fn r_instr() -> [] int {
+    return 6;
+}
+
+pub fn r_const() -> [] int {
+    return 7;
+}
+
+pub fn r_locals() -> [] int {
+    return 8;
+}
+
+pub fn r_end() -> [] int {
+    return 9;
+}
+
+// A line kept as it is written (`source_filename`).
+pub fn r_line() -> [] int {
+    return 10;
+}
+
+// ---- kinds of constant ----
+
+pub fn c_array() -> [] int {
+    return 1;
+}
+
+pub fn c_struct() -> [] int {
+    return 2;
+}
+
+pub fn c_vector() -> [] int {
+    return 3;
+}
+
+// An array of integers that each fit a cell: one cell an element, and the record's type is the element's.
+pub fn c_ints() -> [] int {
+    return 4;
+}
+
+pub fn c_cstring() -> [] int {
+    return 5;
+}
+
+pub fn c_expr() -> [] int {
+    return 6;
+}
+
+// The cells of a constant's record before its parts: the kind of record, its size, the kind of constant, its type, how many parts, and two cells the kind
+// gives a meaning to (a constant expression's instruction and flags; where a string's token starts and ends).
+pub fn const_head() -> [] int {
+    return 7;
+}
+
+// ---- types ----
+
+fn push_cell[&m](m: &!m [int], value: int) -> [] int {
+    let top = m[lm.h_ops_top()];
+    if top >= m[lm.h_ops_end()] {
+        return lm.fail(m, lm.why_room(), 0);
+    }
+    m[top] = value;
+    m[lm.h_ops_top()] = top + 1;
+    return 0;
+}
+
+// A vector type was read: a refusal for a reader that takes none, and else noted for the function it is in.
+fn saw_vector[&m](m: &!m [int], place: int) -> [] int {
+    if m[lm.h_strict()] != 0 {
+        return lm.fail(m, lm.why_vector(), place);
+    }
+    if m[lm.h_fvector()] == 0 {
+        m[lm.h_fvector()] = m[lm.h_line()];
+    }
+    return 0;
+}
+
+// The type of a word: its number, or -1 if the word names none the reader takes.
+fn word_type[&t, &m](text: &t [byte], m: &!m [int], from: int, to: int) -> [] int {
+    if lm.at(text, from) == 'i' && to - from > 1 && to - from < 5 {
+        var bits = 0;
+        var k = from + 1;
+        while k < to && bytes.is_digit(lm.at(text, k)) {
+            bits = bits * 10 + (lm.at(text, k) - '0');
+            k = k + 1;
+        }
+        if k == to && bits > 0 && bits <= 128 {
+            if bits == 64 {
+                return lm.ty_i64();
+            }
+            if bits == 8 {
+                return lm.ty_i8();
+            }
+            if bits == 1 {
+                return lm.ty_i1();
+            }
+            if bits == 32 {
+                return lm.ty_i32();
+            }
+            return lm.int_type(m, bits);
+        }
+        return 0 - 1;
+    }
+    if lm.spells(text, from, to, "ptr") {
+        return lm.ty_ptr();
+    }
+    if lm.spells(text, from, to, "void") {
+        return lm.ty_void();
+    }
+    if lm.spells(text, from, to, "double") {
+        return lm.ty_double();
+    }
+    if lm.spells(text, from, to, "float") {
+        return lm.ty_float();
+    }
+    if lm.spells(text, from, to, "label") {
+        return lm.ty_label();
+    }
+    return 0 - 1;
+}
+
+// Does a type begin at token `i`?
+pub fn type_starts[&t, &m](text: &t [byte], m: &!m [int], i: int) -> [] bool {
+    if lm.tk(m, i) == lm.t_word() {
+        return word_type(text, m, lm.ts(m, i), lm.te(m, i)) >= 0;
+    }
+    return lm.tk(m, i) == lm.t_local() || lm.is_punct(text, m, i, '{') || lm.is_punct(text, m, i, '[') || lm.is_punct(text, m, i, '<');
+}
+
+// The type at the cursor, taken: its number, or -1 with a refusal.
+pub fn parse_type[&t, &m](text: &t [byte], m: &!m [int]) -> [] int {
+    if !lm.enter(m, lm.ts(m, lm.pos(m))) {
+        return 0 - 1;
+    }
+    let ty = type_here(text, m);
+    lm.leave(m);
+    return ty;
+}
+
+fn type_here[&t, &m](text: &t [byte], m: &!m [int]) -> [] int {
+    let i = lm.pos(m);
+    let from = lm.ts(m, i);
+    if lm.tk(m, i) == lm.t_word() {
+        let ty = word_type(text, m, from, lm.te(m, i));
+        if ty < 0 {
+            lm.fail(m, lm.why_type(), from);
+            return 0 - 1;
+        }
+        lm.step(m);
+        return ty;
+    }
+    if lm.tk(m, i) == lm.t_local() {
+        // A named type: one type for the name, whatever it names.
+        let slot = lm.global_slot(text, m, from, lm.te(m, i));
+        if slot < 0 {
+            return 0 - 1;
+        }
+        lm.step(m);
+        let mark = m[lm.h_ops_top()];
+        push_cell(m, slot);
+        let named = lm.intern(m, lm.k_named(), 0, mark, 1);
+        m[lm.h_ops_top()] = mark;
+        return named;
+    }
+    if lm.take_punct(text, m, '{') {
+        let mark = m[lm.h_ops_top()];
+        var n = 0;
+        if !lm.take_punct(text, m, '}') {
+            var going = true;
+            while going {
+                let field = parse_type(text, m);
+                if field < 0 {
+                    m[lm.h_ops_top()] = mark;
+                    return 0 - 1;
+                }
+                push_cell(m, field);
+                n = n + 1;
+                if !lm.take_punct(text, m, ',') {
+                    going = false;
+                }
+            }
+            if !lm.need_punct(text, m, '}') {
+                m[lm.h_ops_top()] = mark;
+                return 0 - 1;
+            }
+        }
+        let made = lm.intern(m, lm.k_struct(), n, mark, n);
+        m[lm.h_ops_top()] = mark;
+        return made;
+    }
+    if lm.is_punct(text, m, i, '[') || lm.is_punct(text, m, i, '<') {
+        var kind = lm.k_array();
+        var close = ']';
+        if lm.is_punct(text, m, i, '<') {
+            kind = lm.k_vector();
+            close = '>';
+            saw_vector(m, from);
+        }
+        lm.step(m);
+        if lm.tk(m, lm.pos(m)) != lm.t_number() {
+            // `<{` is a packed struct, and `<` a value where a type was wanted.
+            lm.fail(m, lm.why_type(), from);
+            return 0 - 1;
+        }
+        let count = lm.take_count(text, m);
+        if count < 0 || !lm.need_word(text, m, "x") {
+            return 0 - 1;
+        }
+        let element = parse_type(text, m);
+        if element < 0 || !lm.need_punct(text, m, close) {
+            return 0 - 1;
+        }
+        let mark = m[lm.h_ops_top()];
+        push_cell(m, element);
+        let made = lm.intern(m, kind, count, mark, 1);
+        m[lm.h_ops_top()] = mark;
+        return made;
+    }
+    lm.fail(m, lm.why_type(), from);
+    return 0 - 1;
+}
+
+// The list of parameter types of a function type at the cursor, after its `(` and up to and with its `)`, for the result `result`: the function type.
+pub fn parse_function_type[&t, &m](text: &t [byte], m: &!m [int], result: int) -> [] int {
+    let mark = m[lm.h_ops_top()];
+    push_cell(m, result);
+    var n = 0;
+    var more = 0;
+    if !lm.take_punct(text, m, ')') {
+        var going = true;
+        while going {
+            if lm.tk(m, lm.pos(m)) == lm.t_dots() {
+                lm.step(m);
+                more = 1;
+                going = false;
+            } else {
+                let p = parse_type(text, m);
+                if p < 0 {
+                    m[lm.h_ops_top()] = mark;
+                    return 0 - 1;
+                }
+                push_cell(m, p);
+                n = n + 1;
+                if !lm.take_punct(text, m, ',') {
+                    going = false;
+                }
+            }
+        }
+        if !lm.need_punct(text, m, ')') {
+            m[lm.h_ops_top()] = mark;
+            return 0 - 1;
+        }
+    }
+    push_cell(m, more);
+    let made = lm.intern(m, lm.k_function(), n, mark, n + 2);
+    m[lm.h_ops_top()] = mark;
+    return made;
+}
+
+// ---- values ----
+
+// A constant's record written from the operands above `mark` (which are taken off): where it is.
+fn write_const[&m](m: &!m [int], kind: int, ty: int, mark: int, x: int, y: int) -> [] int {
+    let n = lm.ops_since(m, mark);
+    let record = lm.put(m, r_const());
+    lm.put(m, const_head() + 4 * n);
+    lm.put(m, kind);
+    lm.put(m, ty);
+    lm.put(m, n);
+    lm.put(m, x);
+    lm.put(m, y);
+    lm.flush_ops(m, mark);
+    return record;
+}
+
+// An array of integers, one cell each, from the operands above `mark`.
+fn write_ints[&m](m: &!m [int], element: int, mark: int) -> [] int {
+    let n = lm.ops_since(m, mark);
+    let record = lm.put(m, r_const());
+    lm.put(m, const_head() + n);
+    lm.put(m, c_ints());
+    lm.put(m, element);
+    lm.put(m, n);
+    lm.put(m, 0);
+    lm.put(m, 0);
+    var k = 0;
+    while k < n {
+        lm.put(m, m[mark + 4 * k + 2]);
+        k = k + 1;
+    }
+    m[lm.h_ops_top()] = mark;
+    return record;
+}
+
+// The elements of an aggregate constant, each a type and a value, up to and with the closing `close`: pushed. Whether it went well.
+fn parse_elements[&t, &m](text: &t [byte], m: &!m [int], close: int) -> [] bool {
+    if lm.take_punct(text, m, close) {
+        return true;
+    }
+    var going = true;
+    while going {
+        if !parse_typed(text, m) {
+            return false;
+        }
+        if !lm.take_punct(text, m, ',') {
+            going = false;
+        }
+    }
+    return lm.need_punct(text, m, close);
+}
+
+// A number as an operand of type `ty`: an integer, or a floating-point value as `0x` and its sixteen hexadecimal digits.
+fn parse_number[&t, &m](text: &t [byte], m: &!m [int], ty: int) -> [] bool {
+    let i = lm.pos(m);
+    let from = lm.ts(m, i);
+    let to = lm.te(m, i);
+    lm.step(m);
+    if lm.at(text, from) == '0' && lm.at(text, from + 1) == 'x' {
+        var bits = 0;
+        var k = from + 2;
+        while k < to {
+            let c = lm.at(text, k);
+            var d = 0 - 1;
+            if bytes.is_digit(c) {
+                d = c - '0';
+            } else if c >= 'A' && c <= 'F' {
+                d = c - 'A' + 10;
+            } else if c >= 'a' && c <= 'f' {
+                d = c - 'a' + 10;
+            }
+            if d < 0 || k - from > 17 {
+                lm.fail(m, lm.why_constant(), from);
+                return false;
+            }
+            bits = bits << 4 | d;
+            k = k + 1;
+        }
+        if to - from < 3 {
+            lm.fail(m, lm.why_constant(), from);
+            return false;
+        }
+        lm.push_op(m, ty, o_float(), bits, from);
+        return true;
+    }
+    var k = from;
+    var negative = false;
+    if lm.at(text, k) == '-' {
+        negative = true;
+        k = k + 1;
+    }
+    var n = 0;
+    var big = false;
+    while k < to {
+        let c = lm.at(text, k);
+        if !bytes.is_digit(c) {
+            // A decimal point or an exponent: a floating-point value the compiler never writes so.
+            lm.fail(m, lm.why_constant(), from);
+            return false;
+        }
+        // The value is kept as a negative number while it is read, so that the least 64-bit integer is read like any other.
+        if n < (0 - 9223372036854775807 - 1 + (c - '0')) / 10 {
+            big = true;
+        } else {
+            n = n * 10 - (c - '0');
+        }
+        k = k + 1;
+    }
+    if !big && !negative && n == 0 - 9223372036854775807 - 1 {
+        big = true;
+    }
+    if big {
+        lm.push_op(m, ty, o_big(), 0, from);
+    } else if negative {
+        lm.push_op(m, ty, o_int(), n, from);
+    } else {
+        lm.push_op(m, ty, o_int(), 0 - n, from);
+    }
+    return true;
+}
+
+// The conversion or the address computation written as a constant at the cursor (`ptrtoint (...)`, `getelementptr inbounds (...)`): its record's operand.
+fn parse_expr[&t, &m](text: &t [byte], m: &!m [int], ty: int, op: int) -> [] bool {
+    let from = lm.ts(m, lm.pos(m));
+    lm.step(m);
+    var flags = 0;
+    if op == op_gep() {
+        if lm.take_word(text, m, "inbounds") {
+            flags = flags | f_inbounds();
+        }
+        if lm.take_word(text, m, "nuw") {
+            flags = flags | f_nuw();
+        }
+    }
+    if !lm.need_punct(text, m, '(') {
+        return false;
+    }
+    let mark = m[lm.h_ops_top()];
+    if op == op_gep() {
+        let element = parse_type(text, m);
+        if element < 0 {
+            return false;
+        }
+        lm.push_op(m, element, o_type(), 0, 0);
+        while lm.take_punct(text, m, ',') {
+            if !parse_typed(text, m) {
+                return false;
+            }
+        }
+    } else {
+        if !parse_typed(text, m) || !lm.need_word(text, m, "to") {
+            return false;
+        }
+        let to = parse_type(text, m);
+        if to < 0 {
+            return false;
+        }
+        lm.push_op(m, to, o_type(), 0, 0);
+    }
+    if !lm.need_punct(text, m, ')') {
+        return false;
+    }
+    let record = write_const(m, c_expr(), ty, mark, op, flags);
+    lm.push_op(m, ty, o_const(), record, from);
+    return !lm.failed(m);
+}
+
+// The value at the cursor, of type `ty`, taken and pushed as an operand. Whether it went well.
+pub fn parse_value[&t, &m](text: &t [byte], m: &!m [int], ty: int) -> [] bool {
+    if !lm.enter(m, lm.ts(m, lm.pos(m))) {
+        return false;
+    }
+    let went = value_here(text, m, ty);
+    lm.leave(m);
+    return went;
+}
+
+fn value_here[&t, &m](text: &t [byte], m: &!m [int], ty: int) -> [] bool {
+    let i = lm.pos(m);
+    let kind = lm.tk(m, i);
+    let from = lm.ts(m, i);
+    let to = lm.te(m, i);
+    if kind == lm.t_local() {
+        let id = lm.local_id(text, m, from + 1, to);
+        if id < 0 {
+            return false;
+        }
+        lm.step(m);
+        if ty == lm.ty_label() {
+            lm.push_op(m, ty, o_label(), id, from + 1);
+        } else {
+            lm.push_op(m, ty, o_local(), id, from + 1);
+        }
+        return true;
+    }
+    if kind == lm.t_global() {
+        let slot = lm.global_slot(text, m, from, to);
+        if slot < 0 {
+            return false;
+        }
+        m[slot + 3] = 1;
+        lm.step(m);
+        lm.push_op(m, ty, o_global(), slot, from);
+        return true;
+    }
+    if kind == lm.t_number() {
+        return parse_number(text, m, ty);
+    }
+    if kind == lm.t_cstring() {
+        lm.step(m);
+        let mark = m[lm.h_ops_top()];
+        let record = write_const(m, c_cstring(), ty, mark, from, to);
+        lm.push_op(m, ty, o_const(), record, from);
+        return !lm.failed(m);
+    }
+    if kind == lm.t_word() {
+        let w = word_index(text, from, to, constant_words());
+        if w > 0 {
+            lm.step(m);
+            lm.push_op(m, ty, o_word(), w, from);
+            return true;
+        }
+        let op = word_index(text, from, to, ops());
+        if op == op_gep() || op == op_ptrtoint() || op == op_inttoptr() || op == op_bitcast() {
+            return parse_expr(text, m, ty, op);
+        }
+        lm.fail(m, lm.why_constant(), from);
+        return false;
+    }
+    if kind == lm.t_punct() {
+        let c = lm.at(text, from);
+        var which = 0;
+        var close = 0;
+        if c == '[' {
+            which = c_array();
+            close = ']';
+        } else if c == '{' {
+            which = c_struct();
+            close = '}';
+        } else if c == '<' {
+            which = c_vector();
+            close = '>';
+            saw_vector(m, from);
+        }
+        if which != 0 {
+            lm.step(m);
+            let mark = m[lm.h_ops_top()];
+            if !parse_elements(text, m, close) {
+                return false;
+            }
+            var record = 0;
+            let n = lm.ops_since(m, mark);
+            var plain = which == c_array() && n > 0;
+            var k = 0;
+            while plain && k < n {
+                if m[mark + 4 * k + 1] != o_int() || m[mark + 4 * k] != m[mark] {
+                    plain = false;
+                }
+                k = k + 1;
+            }
+            if plain {
+                record = write_ints(m, m[mark], mark);
+            } else {
+                record = write_const(m, which, ty, mark, 0, 0);
+            }
+            lm.push_op(m, ty, o_const(), record, from);
+            return !lm.failed(m);
+        }
+    }
+    lm.fail(m, lm.why_constant(), from);
+    return false;
+}
+
+// A type and then a value of it, pushed as one operand.
+pub fn parse_typed[&t, &m](text: &t [byte], m: &!m [int]) -> [] bool {
+    let ty = parse_type(text, m);
+    if ty < 0 {
+        return false;
+    }
+    return parse_value(text, m, ty);
+}

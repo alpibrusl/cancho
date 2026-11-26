@@ -1,0 +1,620 @@
+edition 7;
+module selfhost.llbody;
+
+// llbody.cho -- the reader's instructions (`docs/native-backend.md` section 10): one line of a function's body into a record. Each instruction has a fixed
+// shape, written beside the function that reads it; a line of another shape is refused, never guessed at. Pure, and no trap on any text.
+//
+// An instruction's record: the kind of record, its size, the instruction's number (`llread.ops`), its flags, the number of the local it defines (-1 for none)
+// and where that name is, the type of its result (`void` for none), a number the instruction gives a meaning to (an alignment, a predicate), the line it is
+// on, how many operands, and the operands, four cells each.
+
+import selfhost.llmod as lm;
+import selfhost.llread as lr;
+
+pub fn instr_head() -> [] int {
+    return 10;
+}
+
+// The type a named type names, and any other type as it is.
+pub fn resolved[&m](m: &m [int], ty: int) -> [] int {
+    if lm.type_kind(m, ty) == lm.k_named() {
+        return lm.cell(m, lm.type_part(m, ty, 0) + 2) - 1;
+    }
+    return ty;
+}
+
+// The type of operand `k` above `mark`.
+fn op_type[&m](m: &m [int], mark: int, k: int) -> [] int {
+    return lm.cell(m, mark + 4 * k);
+}
+
+// `, align N` at the cursor, if it is there: N, 0 for none, -1 with a refusal.
+fn parse_align[&t, &m](text: &t [byte], m: &!m [int]) -> [] int {
+    if lm.is_punct(text, m, lm.pos(m), ',') && lm.is_word(text, m, lm.pos(m) + 1, "align") {
+        lm.step(m);
+        lm.step(m);
+        return lm.take_count(text, m);
+    }
+    return 0;
+}
+
+// An ordering at the cursor, if one is there: its number, or 0.
+fn parse_ordering[&t, &m](text: &t [byte], m: &!m [int]) -> [] int {
+    let i = lm.pos(m);
+    if lm.tk(m, i) != lm.t_word() {
+        return 0;
+    }
+    let n = lr.word_index(text, lm.ts(m, i), lm.te(m, i), lr.orderings());
+    if n > 0 {
+        lm.step(m);
+    }
+    return n;
+}
+
+// A vector of `count` values of type `element`.
+fn vector_of[&m](m: &!m [int], count: int, element: int) -> [] int {
+    let top = m[lm.h_ops_top()];
+    if top >= m[lm.h_ops_end()] {
+        lm.fail(m, lm.why_room(), 0);
+        return 0 - 1;
+    }
+    m[top] = element;
+    return lm.intern(m, lm.k_vector(), count, top, 1);
+}
+
+// The type a comparison of values of type `ty` answers: `i1`, or as many of them as a vector has.
+fn truth_of[&m](m: &!m [int], ty: int) -> [] int {
+    if lm.type_kind(m, ty) == lm.k_vector() {
+        return vector_of(m, lm.type_count(m, ty), lm.ty_i1());
+    }
+    return lm.ty_i1();
+}
+
+// The type of the part of `ty` that the indices above `from` (operands of kind index, `n` of them) lead to: or -1.
+fn part_type[&m](m: &m [int], ty: int, from: int, n: int) -> [] int {
+    var at = resolved(m, ty);
+    var k = 0;
+    while k < n {
+        let index = lm.cell(m, from + 4 * k + 2);
+        let kind = lm.type_kind(m, at);
+        if kind == lm.k_struct() && index >= 0 && index < lm.type_count(m, at) {
+            at = resolved(m, lm.type_part(m, at, index));
+        } else if kind == lm.k_array() && index >= 0 && index < lm.type_count(m, at) {
+            at = resolved(m, lm.type_part(m, at, 0));
+        } else {
+            return 0 - 1;
+        }
+        k = k + 1;
+    }
+    return at;
+}
+
+// `, N` once or more: the indices of `extractvalue` and `insertvalue`, pushed.
+fn parse_indices[&t, &m](text: &t [byte], m: &!m [int]) -> [] bool {
+    if !lm.is_punct(text, m, lm.pos(m), ',') {
+        lm.fail(m, lm.why_shape(), lm.ts(m, lm.pos(m)));
+        return false;
+    }
+    while lm.take_punct(text, m, ',') {
+        let n = lm.take_count(text, m);
+        if n < 0 {
+            return false;
+        }
+        lm.push_op(m, lm.ty_none(), lr.o_index(), n, 0);
+    }
+    return true;
+}
+
+// `label %name`, pushed.
+fn parse_label[&t, &m](text: &t [byte], m: &!m [int]) -> [] bool {
+    if !lm.need_word(text, m, "label") {
+        return false;
+    }
+    if lm.tk(m, lm.pos(m)) != lm.t_local() {
+        lm.fail(m, lm.why_shape(), lm.ts(m, lm.pos(m)));
+        return false;
+    }
+    return lr.parse_value(text, m, lm.ty_label());
+}
+
+// What a call calls and with what, after its result type `result`:
+//     [(T, ..., [...])] @name(ARGS)   or   %pointer(ARGS)   or   asm [sideeffect] "text", "constraints"(ARGS)
+// where an argument is `T [align N] value`. The callee is the first operand. Answers the flags, or -1.
+fn parse_call[&t, &m](text: &t [byte], m: &!m [int], result: int) -> [] int {
+    var flags = 0;
+    var typed = lm.ty_none();
+    if lm.take_punct(text, m, '(') {
+        typed = lr.parse_function_type(text, m, result);
+        if typed < 0 {
+            return 0 - 1;
+        }
+        flags = flags | lr.f_typed();
+    }
+    let i = lm.pos(m);
+    if lm.take_word(text, m, "asm") {
+        if lm.take_word(text, m, "sideeffect") {
+            flags = flags | lr.f_sideeffect();
+        }
+        let first = lm.pos(m);
+        if lm.tk(m, first) != lm.t_string() || !lm.is_punct(text, m, first + 1, ',') || lm.tk(m, first + 2) != lm.t_string() {
+            lm.fail(m, lm.why_shape(), lm.ts(m, first));
+            return 0 - 1;
+        }
+        lm.push_op(m, typed, lr.o_asm(), lm.ts(m, first), lm.te(m, first + 2));
+        lm.step(m);
+        lm.step(m);
+        lm.step(m);
+    } else if lm.tk(m, i) == lm.t_global() || lm.tk(m, i) == lm.t_local() {
+        if !lr.parse_value(text, m, lm.ty_ptr()) {
+            return 0 - 1;
+        }
+        // The callee's operand carries the function type that was written, if one was.
+        let top = m[lm.h_ops_top()];
+        if typed >= 0 && top >= 4 {
+            m[top - 4] = typed;
+        }
+    } else {
+        lm.fail(m, lm.why_shape(), lm.ts(m, i));
+        return 0 - 1;
+    }
+    if !lm.need_punct(text, m, '(') {
+        return 0 - 1;
+    }
+    if !lm.take_punct(text, m, ')') {
+        var going = true;
+        while going {
+            let ty = lr.parse_type(text, m);
+            if ty < 0 {
+                return 0 - 1;
+            }
+            if lm.take_word(text, m, "align") {
+                let n = lm.take_count(text, m);
+                if n < 0 {
+                    return 0 - 1;
+                }
+                lm.push_op(m, lm.ty_none(), lr.o_align(), n, 0);
+            }
+            if lm.tk(m, lm.pos(m)) == lm.t_word() && lr.word_index(text, lm.ts(m, lm.pos(m)), lm.te(m, lm.pos(m)), lr.constant_words()) == 0 && lr.word_index(text, lm.ts(m, lm.pos(m)), lm.te(m, lm.pos(m)), lr.ops()) == 0 {
+                // An attribute of the argument (`noundef`, `signext`): the compiler writes none but `align`.
+                lm.fail(m, lm.why_word(), lm.ts(m, lm.pos(m)));
+                return 0 - 1;
+            }
+            if !lr.parse_value(text, m, ty) {
+                return 0 - 1;
+            }
+            if !lm.take_punct(text, m, ',') {
+                going = false;
+            }
+        }
+        if !lm.need_punct(text, m, ')') {
+            return 0 - 1;
+        }
+    }
+    return flags;
+}
+
+// What one instruction's reading comes to: its flags, the type of its result, and its number.
+struct Shape {
+    flags: int,
+    ty: int,
+    aux: int,
+    good: bool,
+}
+
+fn bad() -> [] Shape {
+    return Shape { flags: 0, ty: 0 - 1, aux: 0, good: false };
+}
+
+// The operands of instruction `op` at the cursor, pushed above `mark`. The shapes:
+//     add sub mul ... (1 to 12)     [nsw] [nuw] T a, b
+//     fadd fsub fmul fdiv           T a, b                      fneg   T a
+//     icmp fcmp                     PREDICATE T a, b
+//     select                        T c, T a, T b               phi    T [ a, %from ], ...
+//     trunc ... ptrtoint (22 to 31) T a to T
+//     alloca                        T [, T count] [, align N]
+//     load                          [atomic] [volatile] T, ptr p [ORDERING] [, align N]
+//     store                         [atomic] [volatile] T a, ptr p [ORDERING] [, align N]
+//     getelementptr                 [inbounds] [nuw] T, ptr p, T i, ...
+//     extractvalue                  T a, N, ...                 insertvalue   T a, T b, N, ...
+//     call                          T CALLEE(ARGS)              (`parse_call`)
+//     ret                           void | T a                  unreachable
+//     br                            label %to | i1 c, label %then, label %else
+//     switch                        T a, label %default [ T k, label %to ... ]   (the cases may be a line each)
+//     atomicrmw                     [volatile] OPERATION ptr p, T a ORDERING [, align N]
+//     cmpxchg                       [volatile] ptr p, T old, T new ORDERING ORDERING [, align N]
+//     insertelement                 T v, T a, T i     extractelement   T v, T i     shufflevector   T a, T b, T mask
+fn parse_operands[&t, &m](text: &t [byte], m: &!m [int], op: int, mark: int) -> [] Shape {
+    var flags = 0;
+    var aux = 0;
+    var ty = lm.ty_void();
+    if op >= 1 && op <= 16 || op == lr.op_fneg() {
+        if op <= 12 {
+            var more = true;
+            while more {
+                if lm.take_word(text, m, "nsw") {
+                    flags = flags | lr.f_nsw();
+                } else if lm.take_word(text, m, "nuw") {
+                    flags = flags | lr.f_nuw();
+                } else {
+                    more = false;
+                }
+            }
+        }
+        ty = lr.parse_type(text, m);
+        if ty < 0 || !lr.parse_value(text, m, ty) {
+            return bad();
+        }
+        if op != lr.op_fneg() {
+            if !lm.need_punct(text, m, ',') || !lr.parse_value(text, m, ty) {
+                return bad();
+            }
+        }
+    } else if op == lr.op_icmp() || op == lr.op_fcmp() {
+        let i = lm.pos(m);
+        if op == lr.op_icmp() {
+            aux = lr.word_index(text, lm.ts(m, i), lm.te(m, i), lr.icmp_words());
+        } else {
+            aux = lr.word_index(text, lm.ts(m, i), lm.te(m, i), lr.fcmp_words());
+        }
+        if lm.tk(m, i) != lm.t_word() || aux == 0 {
+            lm.fail(m, lm.why_word(), lm.ts(m, i));
+            return bad();
+        }
+        lm.step(m);
+        let of = lr.parse_type(text, m);
+        if of < 0 || !lr.parse_value(text, m, of) || !lm.need_punct(text, m, ',') || !lr.parse_value(text, m, of) {
+            return bad();
+        }
+        ty = truth_of(m, of);
+    } else if op == lr.op_select() {
+        if !lr.parse_typed(text, m) || !lm.need_punct(text, m, ',') || !lr.parse_typed(text, m) || !lm.need_punct(text, m, ',') || !lr.parse_typed(text, m) {
+            return bad();
+        }
+        ty = op_type(m, mark, 1);
+    } else if op == lr.op_phi() {
+        ty = lr.parse_type(text, m);
+        if ty < 0 {
+            return bad();
+        }
+        var going = true;
+        while going {
+            if !lm.need_punct(text, m, '[') || !lr.parse_value(text, m, ty) || !lm.need_punct(text, m, ',') {
+                return bad();
+            }
+            if lm.tk(m, lm.pos(m)) != lm.t_local() || !lr.parse_value(text, m, lm.ty_label()) || !lm.need_punct(text, m, ']') {
+                lm.fail(m, lm.why_shape(), lm.ts(m, lm.pos(m)));
+                return bad();
+            }
+            if !lm.take_punct(text, m, ',') {
+                going = false;
+            }
+        }
+    } else if op >= 22 && op <= 31 {
+        if !lr.parse_typed(text, m) || !lm.need_word(text, m, "to") {
+            return bad();
+        }
+        ty = lr.parse_type(text, m);
+        if ty < 0 {
+            return bad();
+        }
+    } else if op == lr.op_alloca() {
+        let of = lr.parse_type(text, m);
+        if of < 0 {
+            return bad();
+        }
+        lm.push_op(m, of, lr.o_type(), 0, 0);
+        if lm.is_punct(text, m, lm.pos(m), ',') && !lm.is_word(text, m, lm.pos(m) + 1, "align") {
+            lm.step(m);
+            if !lr.parse_typed(text, m) {
+                return bad();
+            }
+            flags = flags | lr.f_counted();
+        }
+        aux = parse_align(text, m);
+        ty = lm.ty_ptr();
+    } else if op == lr.op_load() || op == lr.op_store() {
+        if lm.take_word(text, m, "atomic") {
+            flags = flags | lr.f_atomic();
+        }
+        if lm.take_word(text, m, "volatile") {
+            flags = flags | lr.f_volatile();
+        }
+        if op == lr.op_load() {
+            ty = lr.parse_type(text, m);
+            if ty < 0 {
+                return bad();
+            }
+        } else if !lr.parse_typed(text, m) {
+            return bad();
+        }
+        if !lm.need_punct(text, m, ',') || !lr.parse_typed(text, m) {
+            return bad();
+        }
+        flags = flags | parse_ordering(text, m) << lr.ordering_shift();
+        aux = parse_align(text, m);
+    } else if op == lr.op_gep() {
+        if lm.take_word(text, m, "inbounds") {
+            flags = flags | lr.f_inbounds();
+        }
+        if lm.take_word(text, m, "nuw") {
+            flags = flags | lr.f_nuw();
+        }
+        let of = lr.parse_type(text, m);
+        if of < 0 {
+            return bad();
+        }
+        lm.push_op(m, of, lr.o_type(), 0, 0);
+        if !lm.need_punct(text, m, ',') || !lr.parse_typed(text, m) {
+            return bad();
+        }
+        while lm.take_punct(text, m, ',') {
+            if !lr.parse_typed(text, m) {
+                return bad();
+            }
+        }
+        ty = lm.ty_ptr();
+    } else if op == lr.op_extractvalue() || op == lr.op_insertvalue() {
+        if !lr.parse_typed(text, m) {
+            return bad();
+        }
+        var values = 1;
+        if op == lr.op_insertvalue() {
+            if !lm.need_punct(text, m, ',') || !lr.parse_typed(text, m) {
+                return bad();
+            }
+            values = 2;
+        }
+        if !parse_indices(text, m) {
+            return bad();
+        }
+        ty = op_type(m, mark, 0);
+        let part = part_type(m, ty, mark + 4 * values, lm.ops_since(m, mark) - values);
+        if part < 0 {
+            lm.fail(m, lm.why_shape(), lm.ts(m, 0));
+            return bad();
+        }
+        if op == lr.op_extractvalue() {
+            ty = part;
+        }
+    } else if op == lr.op_call() {
+        ty = lr.parse_type(text, m);
+        if ty < 0 {
+            return bad();
+        }
+        flags = parse_call(text, m, ty);
+        if flags < 0 {
+            return bad();
+        }
+    } else if op == lr.op_ret() {
+        if !lm.take_word(text, m, "void") {
+            if !lr.parse_typed(text, m) {
+                return bad();
+            }
+        }
+    } else if op == lr.op_br() {
+        if lm.is_word(text, m, lm.pos(m), "label") {
+            if !parse_label(text, m) {
+                return bad();
+            }
+        } else if !lr.parse_typed(text, m) || !lm.need_punct(text, m, ',') || !parse_label(text, m) || !lm.need_punct(text, m, ',') || !parse_label(text, m) {
+            return bad();
+        }
+    } else if op == lr.op_switch() {
+        if !lr.parse_typed(text, m) || !lm.need_punct(text, m, ',') || !parse_label(text, m) || !lm.need_punct(text, m, '[') {
+            return bad();
+        }
+        m[lm.h_in_switch()] = 1;
+        if !parse_cases(text, m) {
+            return bad();
+        }
+    } else if op == lr.op_unreachable() {
+        ty = lm.ty_void();
+    } else if op == lr.op_atomicrmw() {
+        if lm.take_word(text, m, "volatile") {
+            flags = flags | lr.f_volatile();
+        }
+        let i = lm.pos(m);
+        let which = lr.word_index(text, lm.ts(m, i), lm.te(m, i), lr.rmw_words());
+        if lm.tk(m, i) != lm.t_word() || which == 0 {
+            lm.fail(m, lm.why_word(), lm.ts(m, i));
+            return bad();
+        }
+        lm.step(m);
+        if !lr.parse_typed(text, m) || !lm.need_punct(text, m, ',') || !lr.parse_typed(text, m) {
+            return bad();
+        }
+        let order = parse_ordering(text, m);
+        if order == 0 {
+            lm.fail(m, lm.why_shape(), lm.ts(m, lm.pos(m)));
+            return bad();
+        }
+        flags = flags | order << lr.ordering_shift() | which << lr.rmw_shift();
+        aux = parse_align(text, m);
+        ty = op_type(m, mark, 1);
+    } else if op == lr.op_cmpxchg() {
+        if lm.take_word(text, m, "volatile") {
+            flags = flags | lr.f_volatile();
+        }
+        if !lr.parse_typed(text, m) || !lm.need_punct(text, m, ',') || !lr.parse_typed(text, m) || !lm.need_punct(text, m, ',') || !lr.parse_typed(text, m) {
+            return bad();
+        }
+        let first = parse_ordering(text, m);
+        let second = parse_ordering(text, m);
+        if first == 0 || second == 0 {
+            lm.fail(m, lm.why_shape(), lm.ts(m, lm.pos(m)));
+            return bad();
+        }
+        flags = flags | first << lr.ordering_shift() | second << lr.ordering_shift() + 3;
+        aux = parse_align(text, m);
+        // The result is the old value and whether the exchange was made.
+        let top = m[lm.h_ops_top()];
+        if top + 2 > m[lm.h_ops_end()] {
+            lm.fail(m, lm.why_room(), 0);
+            return bad();
+        }
+        m[top] = op_type(m, mark, 1);
+        m[top + 1] = lm.ty_i1();
+        ty = lm.intern(m, lm.k_struct(), 2, top, 2);
+    } else {
+        // insertelement, shufflevector, extractelement: typed values with commas between.
+        var going = true;
+        while going {
+            if !lr.parse_typed(text, m) {
+                return bad();
+            }
+            if !lm.take_punct(text, m, ',') {
+                going = false;
+            }
+        }
+        let n = lm.ops_since(m, mark);
+        let first = op_type(m, mark, 0);
+        if lm.type_kind(m, first) != lm.k_vector() || op == lr.op_extractelement() && n != 2 || op != lr.op_extractelement() && n != 3 {
+            lm.fail(m, lm.why_shape(), lm.ts(m, 0));
+            return bad();
+        }
+        ty = first;
+        if op == lr.op_extractelement() {
+            ty = lm.type_part(m, first, 0);
+        } else if op == lr.op_shufflevector() {
+            ty = vector_of(m, lm.type_count(m, op_type(m, mark, 2)), lm.type_part(m, first, 0));
+        }
+    }
+    if aux < 0 || ty < 0 || lm.failed(m) {
+        return bad();
+    }
+    return Shape { flags: flags, ty: ty, aux: aux, good: true };
+}
+
+// The cases of a `switch` on this line, each `T k, label %to`, pushed; its closing `]` ends it. Whether it went well.
+fn parse_cases[&t, &m](text: &t [byte], m: &!m [int]) -> [] bool {
+    while !lm.at_end(m) && m[lm.h_in_switch()] != 0 {
+        if lm.take_punct(text, m, ']') {
+            m[lm.h_in_switch()] = 0;
+        } else if !lr.parse_typed(text, m) || !lm.need_punct(text, m, ',') || !parse_label(text, m) {
+            return false;
+        }
+    }
+    return true;
+}
+
+// The record of an instruction written, with the operands above `mark`, and the local it defines defined. It is written when the whole instruction has been
+// read, so that the constants among its operands, which are records too, come before it and not inside it.
+fn finish[&m](m: &!m [int], op: int, result: int, name: int, line_no: int, mark: int, got: Shape, place: int) -> [] int {
+    let n = lm.ops_since(m, mark);
+    let record = lm.put(m, lr.r_instr());
+    lm.put(m, instr_head() + 4 * n);
+    lm.put(m, op);
+    lm.put(m, got.flags);
+    lm.put(m, result);
+    lm.put(m, name);
+    lm.put(m, got.ty);
+    lm.put(m, got.aux);
+    lm.put(m, line_no);
+    lm.put(m, n);
+    lm.flush_ops(m, mark);
+    if lm.failed(m) {
+        return 0;
+    }
+    if result >= 0 {
+        if got.ty == lm.ty_void() {
+            return lm.fail(m, lm.why_shape(), place);
+        }
+        lm.define_local(m, result, record, got.ty, 0, place);
+    }
+    m[lm.h_finstr()] = m[lm.h_finstr()] + 1;
+    m[lm.h_ninstr()] = m[lm.h_ninstr()] + 1;
+    return 0;
+}
+
+// A block's record: the kind, its size, the number of its label (-1 for the first block of a function that has none written) and where the name is.
+pub fn block[&m](m: &!m [int], id: int, name: int) -> [] int {
+    let record = lm.put(m, lr.r_block());
+    lm.put(m, 4);
+    lm.put(m, id);
+    lm.put(m, name);
+    m[lm.h_fblocks()] = m[lm.h_fblocks()] + 1;
+    return record;
+}
+
+// One line of a function's body, lexed, into records: a label, an instruction, or more cases of the `switch` above it (whose operands stay on the stack, and
+// whose first line is kept in the header, until its `]`).
+pub fn line[&t, &m](text: &t [byte], m: &!m [int]) -> [] int {
+    let n = m[lm.h_ntok()];
+    if n == 0 {
+        return 0;
+    }
+    if m[lm.h_in_switch()] != 0 {
+        let mark = m[lm.h_ops()];
+        if !parse_cases(text, m) {
+            return 0;
+        }
+        if m[lm.h_in_switch()] == 0 {
+            if !lm.at_end(m) {
+                return lm.fail(m, lm.why_shape(), lm.ts(m, lm.pos(m)));
+            }
+            finish(m, lr.op_switch(), 0 - 1, 0 - 1, m[switch_line()], mark, Shape { flags: 0, ty: lm.ty_void(), aux: 0, good: true }, lm.ts(m, 0));
+        }
+        return 0;
+    }
+    if n == 2 && lm.is_punct(text, m, 1, ':') && (lm.tk(m, 0) == lm.t_word() || lm.tk(m, 0) == lm.t_number()) {
+        let id = lm.local_id(text, m, lm.ts(m, 0), lm.te(m, 0));
+        if id < 0 {
+            return 0;
+        }
+        let record = block(m, id, lm.ts(m, 0));
+        return lm.define_local(m, id, record, lm.ty_label(), 1, lm.ts(m, 0));
+    }
+    if m[lm.h_fblocks()] == 0 {
+        m[lm.h_first_block()] = block(m, 0 - 1, 0 - 1);
+    }
+    var result = 0 - 1;
+    var name = 0 - 1;
+    if lm.tk(m, 0) == lm.t_local() && lm.is_punct(text, m, 1, '=') {
+        name = lm.ts(m, 0) + 1;
+        result = lm.local_id(text, m, name, lm.te(m, 0));
+        if result < 0 {
+            return 0;
+        }
+        lm.step(m);
+        lm.step(m);
+    }
+    let i = lm.pos(m);
+    var op = 0;
+    if lm.tk(m, i) == lm.t_word() {
+        op = lr.word_index(text, lm.ts(m, i), lm.te(m, i), lr.ops());
+    }
+    if op == 0 {
+        return lm.fail(m, lm.why_instruction(), lm.ts(m, i));
+    }
+    lm.step(m);
+    // The operand stack is empty between instructions: a `switch` is the one that keeps it across lines.
+    m[lm.h_ops_top()] = m[lm.h_ops()];
+    let mark = m[lm.h_ops()];
+    let got = parse_operands(text, m, op, mark);
+    if !got.good {
+        if !lm.failed(m) {
+            lm.fail(m, lm.why_shape(), lm.ts(m, i));
+        }
+        return 0;
+    }
+    if m[lm.h_in_switch()] != 0 {
+        if result >= 0 {
+            return lm.fail(m, lm.why_shape(), lm.ts(m, 0));
+        }
+        m[switch_line()] = m[lm.h_line()];
+        return 0;
+    }
+    if !lm.at_end(m) {
+        // What is left on the line is a flag, an attribute or metadata that the shapes above do not have.
+        if lm.tk(m, lm.pos(m)) == lm.t_punct() {
+            return lm.fail(m, lm.why_shape(), lm.ts(m, lm.pos(m)));
+        }
+        return lm.fail(m, lm.why_word(), lm.ts(m, lm.pos(m)));
+    }
+    return finish(m, op, result, name, m[lm.h_line()], mark, got, lm.ts(m, i));
+}
+
+// The header's cell for the line of a `switch` whose cases are still being read.
+pub fn switch_line() -> [] int {
+    return 44;
+}

@@ -1,0 +1,1239 @@
+edition 7;
+module selfhost.llmod;
+
+// llmod.cho -- the module of LLVM text in memory (`docs/native-backend.md` section 10): the one table everything of the reader is kept in, the tokens of a
+// line, the refusal, the names, and the types. The reader (`llread.cho`, `llbody.cho`) fills it and the printer (`llprint.cho`) and, later, the code generator
+// read it. Pure: no capability, and no trap on any text (every read of the text and every write of the table is checked here).
+//
+// The table is one `[int]` the caller allocates with `room(text)` cells. Its first 64 cells are the header (the functions below name them); then come the
+// regions, laid out once by `layout` from a count of the text: the tokens of the line being read, the operands of the instruction being read, the types, the
+// names of the module, the names of the function being read, and last the records, which fill the rest in the order the text has them.
+
+import std.bytes;
+
+// ---- the header ----
+
+// Where the next record goes, and where the records' room ends.
+pub fn h_top() -> [] int {
+    return 0;
+}
+
+pub fn h_end() -> [] int {
+    return 1;
+}
+
+// The refusal: 0 or 1, the line it is at (from 1), why (a code of `why_text`), and where in the text.
+pub fn h_fail() -> [] int {
+    return 2;
+}
+
+pub fn h_fail_line() -> [] int {
+    return 3;
+}
+
+pub fn h_fail_why() -> [] int {
+    return 4;
+}
+
+pub fn h_fail_at() -> [] int {
+    return 5;
+}
+
+// The line being read (from 1).
+pub fn h_line() -> [] int {
+    return 6;
+}
+
+// The tokens of the line: where their table is, how many it holds, how many there are, and the one the reader is at.
+pub fn h_tok() -> [] int {
+    return 7;
+}
+
+pub fn h_tok_cap() -> [] int {
+    return 8;
+}
+
+pub fn h_ntok() -> [] int {
+    return 9;
+}
+
+pub fn h_pos() -> [] int {
+    return 10;
+}
+
+// The types: their records (from `h_ty` to `h_ty_end`, the next at `h_ty_top`), the offset of each by its number (`h_tyidx`, `h_ntypes` of them, room for
+// `h_tyidx_cap`), and the hash table that finds a type that is already there (`h_tyh`, `h_tyh_size` slots).
+pub fn h_ty() -> [] int {
+    return 11;
+}
+
+pub fn h_ty_top() -> [] int {
+    return 12;
+}
+
+pub fn h_ty_end() -> [] int {
+    return 13;
+}
+
+pub fn h_tyidx() -> [] int {
+    return 14;
+}
+
+pub fn h_tyidx_cap() -> [] int {
+    return 15;
+}
+
+pub fn h_ntypes() -> [] int {
+    return 16;
+}
+
+pub fn h_tyh() -> [] int {
+    return 17;
+}
+
+pub fn h_tyh_size() -> [] int {
+    return 18;
+}
+
+// The names of the module (globals and functions): a hash table of `h_gh_size` slots of four cells (where the name is, its length, the record that defines it or
+// 0, and whether something used it), and how many are taken.
+pub fn h_gh() -> [] int {
+    return 19;
+}
+
+pub fn h_gh_size() -> [] int {
+    return 20;
+}
+
+pub fn h_gh_used() -> [] int {
+    return 21;
+}
+
+// The names of the function being read: a hash table of `h_lh_size` slots of three cells (the function's stamp, where the name is, its number), the stamp, and
+// what is known of each name by its number, four cells (where the name is, the record that defines it or 0, its type, 1 for a label): `h_li`, room for `h_li_cap`.
+pub fn h_lh() -> [] int {
+    return 22;
+}
+
+pub fn h_lh_size() -> [] int {
+    return 23;
+}
+
+pub fn h_stamp() -> [] int {
+    return 24;
+}
+
+pub fn h_li() -> [] int {
+    return 25;
+}
+
+pub fn h_li_cap() -> [] int {
+    return 26;
+}
+
+pub fn h_nlocals() -> [] int {
+    return 27;
+}
+
+// The operands of the instruction being read, a stack: its base, its top and its end.
+pub fn h_ops() -> [] int {
+    return 28;
+}
+
+pub fn h_ops_top() -> [] int {
+    return 29;
+}
+
+pub fn h_ops_end() -> [] int {
+    return 30;
+}
+
+// Where the records begin; the record of the function being read (0 outside one); how many functions, globals, declarations and instructions were read.
+pub fn h_rec() -> [] int {
+    return 31;
+}
+
+pub fn h_func() -> [] int {
+    return 32;
+}
+
+pub fn h_nfuncs() -> [] int {
+    return 33;
+}
+
+pub fn h_nglobals() -> [] int {
+    return 34;
+}
+
+pub fn h_ndecls() -> [] int {
+    return 35;
+}
+
+pub fn h_ninstr() -> [] int {
+    return 36;
+}
+
+// 1 if a vector type is refused (what a code generator with no vectors asks for); the round trip reads them.
+pub fn h_strict() -> [] int {
+    return 37;
+}
+
+// The `switch` being read (its cases are a line each): 1 inside one.
+pub fn h_in_switch() -> [] int {
+    return 38;
+}
+
+// The number of blocks and of instructions of the function being read, and the line of its first vector type (0 for none).
+pub fn h_fblocks() -> [] int {
+    return 39;
+}
+
+pub fn h_finstr() -> [] int {
+    return 40;
+}
+
+pub fn h_fvector() -> [] int {
+    return 41;
+}
+
+// 1 once `layout` has run.
+pub fn h_ready() -> [] int {
+    return 42;
+}
+
+// The first block of the function being read, when it has no label written: its record (0: it has one, or none yet) and the number it has all the same. LLVM
+// numbers what has no name as it comes: the parameters, then that block, then the instructions; and a `phi` may name it by that number.
+pub fn h_first_block() -> [] int {
+    return 45;
+}
+
+pub fn h_first_number() -> [] int {
+    return 46;
+}
+
+// How deep the reader is in brackets (a type in a type, a constant in a constant): past `deepest` it refuses, so that no text makes it call itself without end.
+pub fn h_depth() -> [] int {
+    return 43;
+}
+
+pub fn deepest() -> [] int {
+    return 48;
+}
+
+// One bracket deeper: whether that is allowed (a refusal if not). `leave` is its other half.
+pub fn enter[&m](m: &!m [int], place: int) -> [] bool {
+    if m[h_depth()] >= deepest() {
+        fail(m, why_shape(), place);
+        return false;
+    }
+    m[h_depth()] = m[h_depth()] + 1;
+    return true;
+}
+
+pub fn leave[&m](m: &!m [int]) -> [] int {
+    if m[h_depth()] > 0 {
+        m[h_depth()] = m[h_depth()] - 1;
+    }
+    return 0;
+}
+
+pub fn header() -> [] int {
+    return 64;
+}
+
+// ---- why a module is refused ----
+
+pub fn why_room() -> [] int {
+    return 1;
+}
+
+pub fn why_instruction() -> [] int {
+    return 2;
+}
+
+pub fn why_type() -> [] int {
+    return 3;
+}
+
+pub fn why_shape() -> [] int {
+    return 4;
+}
+
+pub fn why_vector() -> [] int {
+    return 5;
+}
+
+pub fn why_twice() -> [] int {
+    return 6;
+}
+
+pub fn why_undefined() -> [] int {
+    return 7;
+}
+
+pub fn why_top() -> [] int {
+    return 8;
+}
+
+pub fn why_word() -> [] int {
+    return 9;
+}
+
+pub fn why_constant() -> [] int {
+    return 10;
+}
+
+pub fn why_target() -> [] int {
+    return 11;
+}
+
+pub fn why_open() -> [] int {
+    return 12;
+}
+
+pub fn why_name() -> [] int {
+    return 13;
+}
+
+// The sentence for a code.
+pub fn why_text(why: int) -> [] &static [byte] {
+    if why == 1 {
+        return "the module is larger than the room the reader was given for it";
+    }
+    if why == 2 {
+        return "an instruction the native backend does not read";
+    }
+    if why == 3 {
+        return "a type the native backend does not read";
+    }
+    if why == 4 {
+        return "a line that is not written the way the compiler writes it";
+    }
+    if why == 5 {
+        return "a vector, which the native backend has no code for";
+    }
+    if why == 6 {
+        return "a name that is defined twice";
+    }
+    if why == 7 {
+        return "a name that is used and never defined";
+    }
+    if why == 8 {
+        return "a line outside a function that the native backend does not read";
+    }
+    if why == 9 {
+        return "a word (a flag, a linkage, an attribute) the native backend does not read";
+    }
+    if why == 10 {
+        return "a constant the native backend does not read";
+    }
+    if why == 11 {
+        return "a module for a machine the native backend has no table for";
+    }
+    if why == 12 {
+        return "a function that does not end";
+    }
+    if why == 13 {
+        return "a name written in quotes, which the compiler never writes";
+    }
+    return "a module the native backend does not read";
+}
+
+// The first refusal is the one that counts. Answers 0, so that a reader can `return fail(...)`.
+pub fn fail[&m](m: &!m [int], why: int, at: int) -> [] int {
+    if m[h_fail()] == 0 {
+        m[h_fail()] = 1;
+        m[h_fail_line()] = m[h_line()];
+        m[h_fail_why()] = why;
+        m[h_fail_at()] = at;
+    }
+    return 0;
+}
+
+pub fn failed[&m](m: &m [int]) -> [] bool {
+    return m[h_fail()] != 0;
+}
+
+// ---- the text ----
+
+pub fn at[&t](text: &t [byte], i: int) -> [] int {
+    if i < 0 || i >= len(text) {
+        return 0 - 1;
+    }
+    return int_of(text[i]);
+}
+
+// A byte of a name: of a word, of what follows a sigil, of a label.
+pub fn name_byte(c: int) -> [] bool {
+    return bytes.is_alpha(c) || bytes.is_digit(c) || c == '_' || c == '.' || c == '$' || c == '-';
+}
+
+// The end of the name (or the number, or the word) that begins at `from`: the sigil, if there is one, and the bytes of a name after it.
+pub fn name_end[&t](text: &t [byte], from: int) -> [] int {
+    var i = from;
+    let c = at(text, i);
+    if c == '@' || c == '%' || c == '!' || c == '#' || c == '$' {
+        i = i + 1;
+    }
+    while name_byte(at(text, i)) {
+        i = i + 1;
+    }
+    return i;
+}
+
+// Is `text[from..to]` the word `word`?
+pub fn spells[&t, &w](text: &t [byte], from: int, to: int, word: &w [byte]) -> [] bool {
+    if from < 0 || to > len(text) || to - from != len(word) {
+        return false;
+    }
+    var k = 0;
+    while k < len(word) {
+        if int_of(text[from + k]) != int_of(word[k]) {
+            return false;
+        }
+        k = k + 1;
+    }
+    return true;
+}
+
+// ---- tokens ----
+
+pub fn t_word() -> [] int {
+    return 1;
+}
+
+pub fn t_number() -> [] int {
+    return 2;
+}
+
+pub fn t_string() -> [] int {
+    return 3;
+}
+
+pub fn t_cstring() -> [] int {
+    return 4;
+}
+
+pub fn t_global() -> [] int {
+    return 5;
+}
+
+pub fn t_local() -> [] int {
+    return 6;
+}
+
+pub fn t_meta() -> [] int {
+    return 7;
+}
+
+pub fn t_group() -> [] int {
+    return 8;
+}
+
+pub fn t_punct() -> [] int {
+    return 9;
+}
+
+pub fn t_dots() -> [] int {
+    return 10;
+}
+
+// The end of the string whose opening quote is at `q`: past its closing quote, or `to` if it has none. LLVM writes a quote inside a string as `\22`.
+fn string_end[&t](text: &t [byte], q: int, to: int) -> [] int {
+    var i = q + 1;
+    while i < to && at(text, i) != '"' {
+        i = i + 1;
+    }
+    if i < to {
+        return i + 1;
+    }
+    return to;
+}
+
+// The tokens of `text[from..to]`, one line, into the table of tokens; the cursor is put at the first. A `;` outside a string ends the line. A line with more
+// tokens than the table holds is a refusal (the table was sized from the longest line, so this is a line `layout` did not see).
+pub fn lex[&t, &m](text: &t [byte], m: &!m [int], from: int, to: int) -> [] int {
+    let base = m[h_tok()];
+    let cap = m[h_tok_cap()];
+    var i = from;
+    var n = 0;
+    var going = true;
+    while i < to && going {
+        let c = at(text, i);
+        var kind = 0;
+        var end = i + 1;
+        if c == ';' {
+            going = false;
+        } else if bytes.is_blank(c) {
+            kind = 0;
+        } else if c == '"' {
+            kind = t_string();
+            end = string_end(text, i, to);
+        } else if c == 'c' && at(text, i + 1) == '"' {
+            kind = t_cstring();
+            end = string_end(text, i + 1, to);
+        } else if c == '@' || c == '%' || c == '!' || c == '#' {
+            kind = t_global();
+            if c == '%' {
+                kind = t_local();
+            }
+            if c == '!' {
+                kind = t_meta();
+            }
+            if c == '#' {
+                kind = t_group();
+            }
+            if at(text, i + 1) == '"' {
+                end = string_end(text, i + 1, to);
+            } else {
+                while end < to && name_byte(at(text, end)) {
+                    end = end + 1;
+                }
+            }
+        } else if bytes.is_digit(c) || c == '-' && bytes.is_digit(at(text, i + 1)) {
+            kind = t_number();
+            while end < to && (bytes.is_alpha(at(text, end)) || bytes.is_digit(at(text, end)) || at(text, end) == '.' || (at(text, end) == '+' || at(text, end) == '-') && (at(text, end - 1) == 'e' || at(text, end - 1) == 'E')) {
+                end = end + 1;
+            }
+        } else if bytes.is_alpha(c) || c == '_' {
+            kind = t_word();
+            while end < to && name_byte(at(text, end)) {
+                end = end + 1;
+            }
+        } else if c == '.' && at(text, i + 1) == '.' && at(text, i + 2) == '.' {
+            kind = t_dots();
+            end = i + 3;
+        } else {
+            kind = t_punct();
+        }
+        if going && kind != 0 {
+            if n >= cap {
+                going = false;
+                fail(m, why_room(), i);
+            } else {
+                m[base + 3 * n] = kind;
+                m[base + 3 * n + 1] = i;
+                m[base + 3 * n + 2] = end;
+                n = n + 1;
+            }
+        }
+        i = end;
+    }
+    m[h_ntok()] = n;
+    m[h_pos()] = 0;
+    return n;
+}
+
+// How many tokens `text[from..to]` has: `lex` without a table, for `layout`.
+fn count_tokens[&t](text: &t [byte], from: int, to: int) -> [] int {
+    var i = from;
+    var n = 0;
+    while i < to {
+        let c = at(text, i);
+        var end = i + 1;
+        if c == ';' {
+            return n;
+        }
+        if bytes.is_blank(c) {
+            end = i + 1;
+        } else if c == '"' {
+            end = string_end(text, i, to);
+            n = n + 1;
+        } else if (c == 'c' || c == '@' || c == '%' || c == '!' || c == '#') && at(text, i + 1) == '"' {
+            end = string_end(text, i + 1, to);
+            n = n + 1;
+        } else if name_byte(c) || c == '@' || c == '%' || c == '!' || c == '#' {
+            while end < to && (name_byte(at(text, end)) || at(text, end) == '+') {
+                end = end + 1;
+            }
+            n = n + 1;
+        } else {
+            n = n + 1;
+        }
+        i = end;
+    }
+    return n;
+}
+
+// The kind of token `i` of the line (0 past its end), where it starts and where it ends.
+pub fn tk[&m](m: &m [int], i: int) -> [] int {
+    if i < 0 || i >= m[h_ntok()] {
+        return 0;
+    }
+    return m[m[h_tok()] + 3 * i];
+}
+
+pub fn ts[&m](m: &m [int], i: int) -> [] int {
+    if i < 0 || i >= m[h_ntok()] {
+        return 0;
+    }
+    return m[m[h_tok()] + 3 * i + 1];
+}
+
+pub fn te[&m](m: &m [int], i: int) -> [] int {
+    if i < 0 || i >= m[h_ntok()] {
+        return 0;
+    }
+    return m[m[h_tok()] + 3 * i + 2];
+}
+
+// Is token `i` the punctuation `c`? The word `word`?
+pub fn is_punct[&t, &m](text: &t [byte], m: &m [int], i: int, c: int) -> [] bool {
+    return tk(m, i) == t_punct() && at(text, ts(m, i)) == c;
+}
+
+pub fn is_word[&t, &m, &w](text: &t [byte], m: &m [int], i: int, word: &w [byte]) -> [] bool {
+    return tk(m, i) == t_word() && spells(text, ts(m, i), te(m, i), word);
+}
+
+// The cursor: the token the reader is at.
+pub fn pos[&m](m: &m [int]) -> [] int {
+    return m[h_pos()];
+}
+
+pub fn step[&m](m: &!m [int]) -> [] int {
+    m[h_pos()] = m[h_pos()] + 1;
+    return 0;
+}
+
+// The word `word` at the cursor, taken: whether it was there.
+pub fn take_word[&t, &m, &w](text: &t [byte], m: &!m [int], word: &w [byte]) -> [] bool {
+    if is_word(text, m, pos(m), word) {
+        step(m);
+        return true;
+    }
+    return false;
+}
+
+pub fn take_punct[&t, &m](text: &t [byte], m: &!m [int], c: int) -> [] bool {
+    if is_punct(text, m, pos(m), c) {
+        step(m);
+        return true;
+    }
+    return false;
+}
+
+// The punctuation `c` at the cursor, taken; a refusal if it is not there.
+pub fn need_punct[&t, &m](text: &t [byte], m: &!m [int], c: int) -> [] bool {
+    if take_punct(text, m, c) {
+        return true;
+    }
+    fail(m, why_shape(), ts(m, pos(m)));
+    return false;
+}
+
+pub fn need_word[&t, &m, &w](text: &t [byte], m: &!m [int], word: &w [byte]) -> [] bool {
+    if take_word(text, m, word) {
+        return true;
+    }
+    fail(m, why_shape(), ts(m, pos(m)));
+    return false;
+}
+
+// Is the cursor past the last token of the line?
+pub fn at_end[&m](m: &m [int]) -> [] bool {
+    return m[h_pos()] >= m[h_ntok()];
+}
+
+// The number at the cursor, taken, as a count (an alignment, a length, an index): 0 or more, or -1 with a refusal if it is not a plain number that fits.
+pub fn take_count[&t, &m](text: &t [byte], m: &!m [int]) -> [] int {
+    let i = pos(m);
+    if tk(m, i) != t_number() {
+        fail(m, why_shape(), ts(m, i));
+        return 0 - 1;
+    }
+    var n = 0;
+    var k = ts(m, i);
+    while k < te(m, i) {
+        let c = at(text, k);
+        if !bytes.is_digit(c) || n > 100000000000000 {
+            fail(m, why_shape(), ts(m, i));
+            return 0 - 1;
+        }
+        n = n * 10 + (c - '0');
+        k = k + 1;
+    }
+    step(m);
+    return n;
+}
+
+// ---- records ----
+
+// One cell written at the end of the records; a refusal when there is no room. Answers where it was written (0 on a refusal: cell 0 is the header's).
+pub fn put[&m](m: &!m [int], value: int) -> [] int {
+    let top = m[h_top()];
+    if top >= m[h_end()] || top < m[h_rec()] {
+        fail(m, why_room(), 0);
+        return 0;
+    }
+    m[top] = value;
+    m[h_top()] = top + 1;
+    return top;
+}
+
+// A cell of the table read with its index checked: 0 outside it.
+pub fn cell[&m](m: &m [int], i: int) -> [] int {
+    if i < 0 || i >= len(m) {
+        return 0;
+    }
+    return m[i];
+}
+
+// A cell of a record written, if it is inside the records.
+pub fn set[&m](m: &!m [int], i: int, value: int) -> [] int {
+    if i >= m[h_rec()] && i < m[h_top()] {
+        m[i] = value;
+    }
+    return 0;
+}
+
+// The operand stack: four cells an operand (its type, its kind, and two cells the kind gives a meaning to).
+pub fn push_op[&m](m: &!m [int], ty: int, kind: int, a: int, b: int) -> [] int {
+    let top = m[h_ops_top()];
+    if top + 4 > m[h_ops_end()] {
+        return fail(m, why_room(), 0);
+    }
+    m[top] = ty;
+    m[top + 1] = kind;
+    m[top + 2] = a;
+    m[top + 3] = b;
+    m[h_ops_top()] = top + 4;
+    return 0;
+}
+
+// How many operands are on the stack above `mark` (a value of `h_ops_top` taken earlier).
+pub fn ops_since[&m](m: &m [int], mark: int) -> [] int {
+    return (m[h_ops_top()] - mark) / 4;
+}
+
+// The operands above `mark` written to the records, and taken off the stack.
+pub fn flush_ops[&m](m: &!m [int], mark: int) -> [] int {
+    var i = mark;
+    let top = m[h_ops_top()];
+    while i < top {
+        put(m, m[i]);
+        i = i + 1;
+    }
+    m[h_ops_top()] = mark;
+    return 0;
+}
+
+// ---- hashing ----
+
+fn shr33(x: int) -> [] int {
+    return x >> 33 & 0x7fffffff;
+}
+
+fn mix(h: int) -> [] int {
+    var x = h ^ shr33(h);
+    x = wrapping_mul(x, 0xff51afd7 << 32 | 0xed558ccd);
+    x = x ^ shr33(x);
+    return x & 0x3fffffffffffffff;
+}
+
+fn hash_text[&t](text: &t [byte], from: int, to: int) -> [] int {
+    var h = 0xcbf29ce4 << 32 | 0x84222325;
+    var i = from;
+    while i < to {
+        h = wrapping_mul(h ^ at(text, i), 1099511628211);
+        i = i + 1;
+    }
+    return mix(h);
+}
+
+fn same_text[&t](text: &t [byte], a: int, b: int, n: int) -> [] bool {
+    var k = 0;
+    while k < n {
+        if at(text, a + k) != at(text, b + k) {
+            return false;
+        }
+        k = k + 1;
+    }
+    return true;
+}
+
+// ---- the names of the module ----
+
+// The slot of the global whose name (with its `@`) is `text[from..to]`, made if it is not there: the index of its four cells, or -1 with a refusal if the
+// table is full.
+pub fn global_slot[&t, &m](text: &t [byte], m: &!m [int], from: int, to: int) -> [] int {
+    let size = m[h_gh_size()];
+    let base = m[h_gh()];
+    if at(text, from + 1) == '"' {
+        fail(m, why_name(), from);
+        return 0 - 1;
+    }
+    var s = hash_text(text, from, to) & size - 1;
+    var tries = 0;
+    while tries < size {
+        let c = base + 4 * s;
+        if m[c + 1] == 0 {
+            if 4 * (m[h_gh_used()] + 1) > 3 * size {
+                fail(m, why_room(), from);
+                return 0 - 1;
+            }
+            m[c] = from;
+            m[c + 1] = to - from;
+            m[c + 2] = 0;
+            m[c + 3] = 0;
+            m[h_gh_used()] = m[h_gh_used()] + 1;
+            return c;
+        }
+        if m[c + 1] == to - from && same_text(text, m[c], from, to - from) {
+            return c;
+        }
+        s = s + 1 & size - 1;
+        tries = tries + 1;
+    }
+    fail(m, why_room(), from);
+    return 0 - 1;
+}
+
+// The global at the cursor defined by the record at `record`: its slot, or -1 with a refusal if it is defined already.
+pub fn define_global[&t, &m](text: &t [byte], m: &!m [int], from: int, to: int, record: int) -> [] int {
+    let slot = global_slot(text, m, from, to);
+    if slot < 0 {
+        return slot;
+    }
+    if m[slot + 2] != 0 {
+        fail(m, why_twice(), from);
+        return 0 - 1;
+    }
+    m[slot + 2] = record;
+    return slot;
+}
+
+// ---- the names of a function ----
+
+// A new function: none of the names of the last one are known.
+pub fn new_function[&m](m: &!m [int]) -> [] int {
+    m[h_stamp()] = m[h_stamp()] + 1;
+    m[h_nlocals()] = 0;
+    m[h_fblocks()] = 0;
+    m[h_finstr()] = 0;
+    m[h_fvector()] = 0;
+    m[h_first_block()] = 0;
+    m[h_first_number()] = 0;
+    return 0;
+}
+
+// The number of the local whose name (without its `%`: a label is written with none where it is defined) is `text[from..to]`, given one if it is new: or -1
+// with a refusal.
+pub fn local_id[&t, &m](text: &t [byte], m: &!m [int], from: int, to: int) -> [] int {
+    let size = m[h_lh_size()];
+    let base = m[h_lh()];
+    let stamp = m[h_stamp()];
+    if at(text, from) == '"' {
+        fail(m, why_name(), from);
+        return 0 - 1;
+    }
+    var s = hash_text(text, from, to) & size - 1;
+    var tries = 0;
+    while tries < size {
+        let c = base + 3 * s;
+        if m[c] != stamp {
+            let id = m[h_nlocals()];
+            if id >= m[h_li_cap()] {
+                fail(m, why_room(), from);
+                return 0 - 1;
+            }
+            m[c] = stamp;
+            m[c + 1] = from;
+            m[c + 2] = id;
+            let info = m[h_li()] + 4 * id;
+            m[info] = from;
+            m[info + 1] = 0;
+            m[info + 2] = 0 - 1;
+            m[info + 3] = 0;
+            m[h_nlocals()] = id + 1;
+            return id;
+        }
+        if name_end(text, m[c + 1]) - m[c + 1] == to - from && same_text(text, m[c + 1], from, to - from) {
+            return m[c + 2];
+        }
+        s = s + 1 & size - 1;
+        tries = tries + 1;
+    }
+    fail(m, why_room(), from);
+    return 0 - 1;
+}
+
+// The local `id` is defined by the record at `record`, with the type `ty` (`label` 1 for a block): a refusal if it is defined already.
+pub fn define_local[&m](m: &!m [int], id: int, record: int, ty: int, label: int, place: int) -> [] int {
+    if id < 0 || id >= m[h_nlocals()] {
+        return 0;
+    }
+    let info = m[h_li()] + 4 * id;
+    if m[info + 1] != 0 {
+        return fail(m, why_twice(), place);
+    }
+    m[info + 1] = record;
+    m[info + 2] = ty;
+    m[info + 3] = label;
+    return 0;
+}
+
+// ---- types ----
+//
+// A type is a number. The first twelve are fixed; the others are made as the text names them, the same type always the same number. A type's record is its
+// kind, a number (the bits of an integer, the length of an array or a vector, how many fields or parameters) and then its parts: the element; the fields; for
+// a function type the result, the parameters, and 1 if more may follow; for a named type where its name is and the type it names (-1 until its line is read).
+
+pub fn ty_void() -> [] int {
+    return 0;
+}
+
+pub fn ty_i1() -> [] int {
+    return 1;
+}
+
+pub fn ty_i8() -> [] int {
+    return 2;
+}
+
+pub fn ty_i16() -> [] int {
+    return 3;
+}
+
+pub fn ty_i32() -> [] int {
+    return 4;
+}
+
+pub fn ty_i64() -> [] int {
+    return 5;
+}
+
+pub fn ty_i128() -> [] int {
+    return 6;
+}
+
+pub fn ty_float() -> [] int {
+    return 7;
+}
+
+pub fn ty_double() -> [] int {
+    return 8;
+}
+
+pub fn ty_ptr() -> [] int {
+    return 9;
+}
+
+pub fn ty_label() -> [] int {
+    return 10;
+}
+
+// No type: what an operand that is not a value has.
+pub fn ty_none() -> [] int {
+    return 0 - 1;
+}
+
+pub fn k_void() -> [] int {
+    return 1;
+}
+
+pub fn k_int() -> [] int {
+    return 2;
+}
+
+pub fn k_float() -> [] int {
+    return 3;
+}
+
+pub fn k_double() -> [] int {
+    return 4;
+}
+
+pub fn k_ptr() -> [] int {
+    return 5;
+}
+
+pub fn k_label() -> [] int {
+    return 6;
+}
+
+pub fn k_struct() -> [] int {
+    return 7;
+}
+
+pub fn k_array() -> [] int {
+    return 8;
+}
+
+pub fn k_vector() -> [] int {
+    return 9;
+}
+
+pub fn k_function() -> [] int {
+    return 10;
+}
+
+pub fn k_named() -> [] int {
+    return 11;
+}
+
+// The record of type `ty`: its offset, or 0 if there is no such type.
+fn ty_at[&m](m: &m [int], ty: int) -> [] int {
+    if ty < 0 || ty >= m[h_ntypes()] {
+        return 0;
+    }
+    return m[m[h_tyidx()] + ty];
+}
+
+pub fn type_kind[&m](m: &m [int], ty: int) -> [] int {
+    return cell(m, ty_at(m, ty));
+}
+
+// The bits of an integer type, the length of an array or a vector, how many fields a struct has, how many parameters a function type has.
+pub fn type_count[&m](m: &m [int], ty: int) -> [] int {
+    return cell(m, ty_at(m, ty) + 1);
+}
+
+// Part `k` of a type: field `k` of a struct, the element of an array or a vector (`k` 0); for a function type the result (0), then the parameters, then 1 if
+// more arguments may follow; for a named type where its name is (0) and the type it names (1).
+pub fn type_part[&m](m: &m [int], ty: int, k: int) -> [] int {
+    return cell(m, ty_at(m, ty) + 2 + k);
+}
+
+// The type of kind `kind` with the number `count` and the `parts` cells at `from` (in the table: the operand stack is where a type is put together): its
+// number, found or made; -1 with a refusal when there is no room.
+pub fn intern[&m](m: &!m [int], kind: int, count: int, from: int, parts: int) -> [] int {
+    var h = wrapping_mul(kind * 31 + count, 1099511628211);
+    var k = 0;
+    while k < parts {
+        h = wrapping_mul(h ^ m[from + k], 1099511628211);
+        k = k + 1;
+    }
+    let size = m[h_tyh_size()];
+    var s = mix(h) & size - 1;
+    var tries = 0;
+    while tries < size {
+        let slot = m[h_tyh()] + s;
+        if m[slot] == 0 {
+            let id = m[h_ntypes()];
+            let top = m[h_ty_top()];
+            if id >= m[h_tyidx_cap()] || top + 2 + parts > m[h_ty_end()] || 2 * (id + 1) > size {
+                fail(m, why_room(), 0);
+                return 0 - 1;
+            }
+            m[top] = kind;
+            m[top + 1] = count;
+            k = 0;
+            while k < parts {
+                m[top + 2 + k] = m[from + k];
+                k = k + 1;
+            }
+            m[h_ty_top()] = top + 2 + parts;
+            m[m[h_tyidx()] + id] = top;
+            m[h_ntypes()] = id + 1;
+            m[slot] = id + 1;
+            return id;
+        }
+        let have = m[m[h_tyidx()] + m[slot] - 1];
+        if m[have] == kind && m[have + 1] == count {
+            var same = true;
+            k = 0;
+            while k < parts && same {
+                if m[have + 2 + k] != m[from + k] {
+                    same = false;
+                }
+                k = k + 1;
+            }
+            // A named type is one type however often it is named: its second part (what it names) is not part of what it is.
+            if same && (kind != k_named() || parts == 1) {
+                return m[slot] - 1;
+            }
+        }
+        s = s + 1 & size - 1;
+        tries = tries + 1;
+    }
+    fail(m, why_room(), 0);
+    return 0 - 1;
+}
+
+// An integer type of `bits` bits.
+pub fn int_type[&m](m: &!m [int], bits: int) -> [] int {
+    return intern(m, k_int(), bits, 0, 0);
+}
+
+// Does the type `ty` hold a vector anywhere in it?
+pub fn has_vector[&m](m: &m [int], ty: int) -> [] bool {
+    let kind = type_kind(m, ty);
+    if kind == k_vector() {
+        return true;
+    }
+    if kind == k_array() {
+        return has_vector(m, type_part(m, ty, 0));
+    }
+    if kind == k_struct() {
+        var k = 0;
+        while k < type_count(m, ty) {
+            if has_vector(m, type_part(m, ty, k)) {
+                return true;
+            }
+            k = k + 1;
+        }
+    }
+    return false;
+}
+
+// ---- the room, and its layout ----
+
+fn pow2_at_least(n: int) -> [] int {
+    var p = 64;
+    while p < n && p < 1 << 40 {
+        p = p * 2;
+    }
+    return p;
+}
+
+// What `layout` counts of the text: lines, tokens, the most tokens a line has, the most lines a function has, names of the module, opening brackets.
+struct Counts {
+    lines: int,
+    tokens: int,
+    widest: int,
+    longest: int,
+    names: int,
+    brackets: int,
+}
+
+fn count[&t](text: &t [byte]) -> [] Counts {
+    var lines = 0;
+    var tokens = 0;
+    var widest = 0;
+    var longest = 0;
+    var names = 0;
+    var brackets = 0;
+    var in_function = 0;
+    var from = 0;
+    var i = 0;
+    while i <= len(text) {
+        let c = at(text, i);
+        if c == '{' || c == '[' || c == '<' {
+            brackets = brackets + 1;
+        }
+        if i == len(text) || c == '\n' {
+            let n = count_tokens(text, from, i);
+            lines = lines + 1;
+            tokens = tokens + n;
+            if n > widest {
+                widest = n;
+            }
+            let first = at(text, from);
+            if first == '@' || first == 'd' {
+                names = names + 1;
+            }
+            if first == 'd' && at(text, from + 2) == 'f' {
+                in_function = 0;
+            }
+            if first == '}' {
+                in_function = 0;
+            } else {
+                in_function = in_function + 1;
+                if in_function > longest {
+                    longest = in_function;
+                }
+            }
+            from = i + 1;
+        }
+        i = i + 1;
+    }
+    return Counts { lines: lines, tokens: tokens, widest: widest, longest: longest, names: names, brackets: brackets };
+}
+
+fn sizes[&t](text: &t [byte]) -> [] (int, int, int, int, int, int, int, int) {
+    let n = count(text);
+    let tok = 3 * (n.widest + 4);
+    let ops = 4 * (n.widest + 2 * n.longest + 64);
+    let tyidx = n.brackets + 256;
+    let tyh = pow2_at_least(2 * tyidx + 2);
+    let ty = 4 * n.brackets + 2 * n.widest + 4096;
+    let gh = 4 * pow2_at_least(2 * n.names + 2048);
+    let li = n.longest + n.widest + 64;
+    let records = 16 * n.lines + 2 * n.tokens + 4 * li + 1024;
+    return (tok, ops, tyidx, tyh, ty, gh, li, records);
+}
+
+// How many cells the table for `text` needs.
+pub fn room[&t](text: &t [byte]) -> [] int {
+    let (tok, ops, tyidx, tyh, ty, gh, li, records) = sizes(text);
+    return header() + tok + ops + tyidx + tyh + ty + gh + 3 * pow2_at_least(2 * li) + 4 * li + records;
+}
+
+// The table `m` laid out for `text`, empty, with the fixed types made; `strict` 1 to refuse vectors. A table that is smaller than `room(text)` is a refusal, as
+// is every read after it.
+pub fn layout[&t, &m](text: &t [byte], m: &!m [int], strict: int) -> [] int {
+    var i = 0;
+    while i < len(m) && i < header() {
+        m[i] = 0;
+        i = i + 1;
+    }
+    if len(m) < header() {
+        return 0;
+    }
+    let (tok, ops, tyidx, tyh, ty, gh, li, records) = sizes(text);
+    let lh = pow2_at_least(2 * li);
+    if len(m) < header() + tok + ops + tyidx + tyh + ty + gh + 3 * lh + 4 * li + records {
+        m[h_rec()] = len(m);
+        m[h_top()] = len(m);
+        m[h_end()] = len(m);
+        return fail(m, why_room(), 0);
+    }
+    var next = header();
+    m[h_tok()] = next;
+    m[h_tok_cap()] = tok / 3;
+    next = next + tok;
+    m[h_ops()] = next;
+    m[h_ops_top()] = next;
+    next = next + ops;
+    m[h_ops_end()] = next;
+    m[h_tyidx()] = next;
+    m[h_tyidx_cap()] = tyidx;
+    next = next + tyidx;
+    m[h_tyh()] = next;
+    m[h_tyh_size()] = tyh;
+    next = next + tyh;
+    m[h_ty()] = next;
+    m[h_ty_top()] = next;
+    next = next + ty;
+    m[h_ty_end()] = next;
+    m[h_gh()] = next;
+    m[h_gh_size()] = gh / 4;
+    next = next + gh;
+    m[h_lh()] = next;
+    m[h_lh_size()] = lh;
+    next = next + 3 * lh;
+    m[h_li()] = next;
+    m[h_li_cap()] = li;
+    next = next + 4 * li;
+    // The hash tables must be empty; the other regions are written before they are read.
+    i = m[h_tyh()];
+    while i < m[h_ty()] {
+        m[i] = 0;
+        i = i + 1;
+    }
+    i = m[h_gh()];
+    while i < m[h_li()] {
+        m[i] = 0;
+        i = i + 1;
+    }
+    m[h_rec()] = next;
+    m[h_top()] = next;
+    m[h_end()] = len(m);
+    m[h_strict()] = strict;
+    m[h_line()] = 0;
+    // The fixed types, in the order of their numbers.
+    intern(m, k_void(), 0, 0, 0);
+    int_type(m, 1);
+    int_type(m, 8);
+    int_type(m, 16);
+    int_type(m, 32);
+    int_type(m, 64);
+    int_type(m, 128);
+    intern(m, k_float(), 0, 0, 0);
+    intern(m, k_double(), 0, 0, 0);
+    intern(m, k_ptr(), 0, 0, 0);
+    intern(m, k_label(), 0, 0, 0);
+    m[h_ready()] = 1;
+    return 0;
+}

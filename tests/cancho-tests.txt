@@ -16,3 +16,5 @@ lex_json_parse | 20 | --std tests/lex/json_parse_test.cho
 lex_json_write | 16 | --std tests/lex/json_write_test.cho
 lex_map | 5 | --std tests/lex/map_test.cho
 lex_route | 6 | --std tests/lex/route_test.cho
+# The reader of the native backend (docs/native-backend.md section 10): three modules read and printed, refusals with their line, and no damage reaches a trap.
+native_reader | 11 | --std compiler/native/llmod.cho compiler/native/llread.cho compiler/native/llbody.cho compiler/native/lltop.cho compiler/native/llprint.cho tests/native/reader_test.cho

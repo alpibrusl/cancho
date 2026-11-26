@@ -255,7 +255,9 @@ pub fn test_files[&h, &i, &a, &f, &x, &c, &t, &l, &s, &k](heap: &!h Heap, io: &!
                     }
                     if status == 0 {
                         borrow exe as &ep in {
-                            status = cliprog.make_binary(heap, io, args, fs, exec, buffer.bytes(b.ir), buffer.bytes(ep), clang, false, false);
+                            borrow names as &nm in {
+                                status = cliprog.make_through(heap, io, args, fs, exec, buffer.bytes(b.ir), buffer.bytes(ep), clang, false, false, false, clibase.backend_asked(args), clibase.name_at(buffer.bytes(nm), 0));
+                            }
                             if status == 0 {
                                 status = run_tests(heap, io, exec, clock, buffer.bytes(ep), tests);
                                 fs_remove(fs, buffer.bytes(ep));
@@ -381,7 +383,6 @@ pub fn test_set[&h, &i, &a, &f, &x, &c, &l, &s, &k](heap: &!h Heap, io: &!i Io, 
 // does, and taken away.
 pub fn test_command[&h, &i, &a, &f, &x, &c](heap: &!h Heap, io: &!i Io, args: &a Args, fs: &f Fs(""), exec: &x Exec(""), clock: &c Clock) -> [heap, io_write, err_write, args, fs_read(""), fs_write(""), file_read, file_write, exec(""), clock, poll] int {
     var host = 0;
-    var native = false;
     var host_given = false;
     var clang_at = 0 - 1;
     var std_dir = 0 - 1;
@@ -415,7 +416,6 @@ pub fn test_command[&h, &i, &a, &f, &x, &c](heap: &!h Heap, io: &!i Io, args: &a
             if clibase.backend_of(args, n) < 0 {
                 return clibase.usage_error(heap, io, "`--backend` needs llvm or native, and is of `check`, `build`, `run` and `test`");
             }
-            native = clibase.backend_of(args, n) == 1;
         } else if bytes.equal(word, "-l") || bytes.equal(word, "-L") {
             n = n + 1;
             if n >= arg_count(args) {
@@ -448,16 +448,6 @@ pub fn test_command[&h, &i, &a, &f, &x, &c](heap: &!h Heap, io: &!i Io, args: &a
     }
     if files == 0 {
         return clibase.usage_error(heap, io, "no file given");
-    }
-    if native {
-        // Nothing of the native backend is built yet (`docs/native-backend.md` section 8), so there is no program to run the tests of: said before anything is read.
-        let given = cliprog.files_of_args(heap, args, true, false);
-        var refused = 1;
-        borrow given as &gb in {
-            refused = clibase.refuse_backend(heap, io, clibase.name_at(buffer.bytes(gb), 0), false);
-        }
-        buffer.drop(heap, given);
-        return refused;
     }
     var std_path = buffer.empty(heap, 0);
     if std_dir >= 0 {

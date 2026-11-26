@@ -1,0 +1,54 @@
+edition 7;
+module selfhost.llback;
+
+// llback.cho -- what the command line asks of the native backend today (`docs/native-backend.md` sections 8 and 10): a module of the compiler read, and either
+// judged (`--backend native`: the reader with vectors refused; there is no code generator yet) or written back (`--backend roundtrip`: the module the reader
+// read, as text, for clang).
+
+import std.buffer;
+import selfhost.llmod as lm;
+import selfhost.lltop as lt;
+import selfhost.llprint as lp;
+
+// What became of a module: the text to give clang (empty unless it was written back), and the refusal if there was one (`why` 0 for none; else the line of the
+// module and the reason, a code of `llmod.why_text`).
+pub res struct Judged {
+    text: buffer.Buffer,
+    line: int,
+    why: int,
+}
+
+pub fn native() -> [] int {
+    return 1;
+}
+
+pub fn roundtrip() -> [] int {
+    return 2;
+}
+
+// The module `ir` through the backend `backend`.
+pub fn through[&h, &r](heap: &!h Heap, ir: &r [byte], backend: int) -> [heap] Judged {
+    var strict = 0;
+    if backend == native() {
+        strict = 1;
+    }
+    let table = box_slice(heap, lm.room(ir), 0);
+    var text = buffer.empty(heap, 0);
+    var line = 0;
+    var why = 0;
+    borrow mut table as &!tw in {
+        let m = contents(tw);
+        if lt.read(ir, m, strict) != 0 {
+            line = lm.cell(m, lm.h_fail_line());
+            why = lm.cell(m, lm.h_fail_why());
+            if why == 0 {
+                why = lm.why_room();
+            }
+        } else if backend == roundtrip() {
+            buffer.drop(heap, text);
+            text = lp.print(heap, ir, m);
+        }
+    }
+    unbox_slice(heap, table);
+    return Judged { text: text, line: line, why: why };
+}

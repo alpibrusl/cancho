@@ -68,7 +68,8 @@ same "$(head -1 "$work/lanes.txt")" "not in the subset: instruction extracteleme
 same "$?" 2 "the status for a file that is not there"
 end
 
-# The flag (docs/native-backend.md section 8). `native` is refused by a rule, for a program the front end accepts, and nothing is written.
+# The flag (docs/native-backend.md section 8). `native` is refused by a rule, for a program the front end accepts, and nothing is written. (What the reader
+# behind it reads and refuses is native_reader.sh's.)
 begin the_native_backend_is_refused_by_a_rule_and_writes_nothing
 cat > "$work/small.cho" << 'EOF'
 fn main(world: World) -> [] int {
@@ -85,7 +86,7 @@ mkdir "$work/out"
 "$cancho" build "$work/small.cho" --backend native -o "$work/out/small" > "$work/native.txt" 2>&1
 same "$?" 1 "the status of build"
 same "$(head -1 "$work/native.txt" | sed 's/^.*small\.cho: error: \(The backend that was asked for cannot build this program\).*/\1/')" "The backend that was asked for cannot build this program" "what build says"
-same "$(sed -n 2p "$work/native.txt")" '    the native backend is not built yet: nothing was written, and `--backend llvm` builds this program' "and why, today"
+same "$(sed -n 2p "$work/native.txt")" '    the native backend reads this program'"'"'s module and has no code generator yet: nothing was written, and `--backend llvm` builds this program' "and why, today"
 same "$(ls "$work/out" | wc -l | tr -d ' ')" 0 "what build wrote"
 "$cancho" build "$work/small.cho" --backend native --emit ll -o "$work/out/small.ll" > /dev/null 2>&1
 same "$?" 1 "the status of build --emit ll"
@@ -99,7 +100,8 @@ same "$(grep -c '"rule":' "$work/native.json")" 1 "and with no other"
 python3 -c 'import json,sys; json.load(open(sys.argv[1]))' "$work/native.json" 2> /dev/null || fail "the answer of check is not JSON"
 "$cancho" run "$work/small.cho" --backend native > /dev/null 2>&1
 same "$?" 1 "the status of run"
-"$cancho" test "$work/small.cho" --backend native > "$work/test.txt" 2>&1
+printf 'fn test_nothing() -> [] int {\n    return 0;\n}\n' > "$work/small_test.cho"
+"$cancho" test "$work/small_test.cho" --backend native > "$work/test.txt" 2>&1
 same "$?" 1 "the status of test"
 same "$(grep -c 'The backend that was asked for cannot build this program' "$work/test.txt")" 1 "what test says"
 # A program the front end refuses is refused for its own reason: the backend is not reached.
