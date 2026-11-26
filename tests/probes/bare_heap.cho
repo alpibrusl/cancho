@@ -1,0 +1,44 @@
+edition 5;
+
+// bare_heap.cho -- a program for no system that uses the heap (`docs/freestanding.md` 8): a box, a slice on the heap, and the library's JSON writer, which
+// grows a buffer there. tests/commands/freestanding.sh builds it for `aarch64-none-elf` and reads what the module calls and defines.
+import std.buffer;
+import std.json;
+
+struct Pair {
+    a: int,
+    b: int,
+}
+
+fn work[&h](heap: &!h Heap) -> [heap] int {
+    let boxed = box(heap, Pair { a: 3, b: 4 });
+    let pair = unbox(heap, boxed);
+    var w = json.writer(heap, 8);
+    w = json.begin_object(heap, w);
+    w = json.put_key(heap, w, "sum");
+    w = json.put_int(heap, w, pair.a + pair.b);
+    w = json.end_object(heap, w);
+    let made = json.finish(w);
+    var n = 0;
+    borrow made as &m in {
+        n = buffer.size(m);
+    }
+    buffer.drop(heap, made);
+    return n;
+}
+
+fn main(world: World) -> [] int {
+    let Split { io, ffi, fs, heap, args, net, clock } = split(world);
+    release(io);
+    release(ffi);
+    release(fs);
+    release(args);
+    release(net);
+    release(clock);
+    var status = 0;
+    borrow mut heap as &!h in {
+        status = work(h);
+    }
+    release(heap);
+    return status;
+}

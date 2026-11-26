@@ -346,9 +346,9 @@ fn build_module[&s, &x](st: &!s [int], text: &x [byte]) -> [] int {
     }
     emit.str(st, "\", \"\"()\n  unreachable\n}\n");
     emit.str(st, "declare i32 @putchar(i32)\n");
-    emit.str(st, "declare ptr @malloc(i64)\ndeclare void @free(ptr)\n");
     if st[61] != 3 {
-        // (Where there is no system `calloc` is defined, by `runtime.bare_text`: a `static` is made with it.)
+        // (Where there is no system the three are defined, by `runtime.bare_text`: the heap of that target is its own.)
+        emit.str(st, "declare ptr @malloc(i64)\ndeclare void @free(ptr)\n");
         emit.str(st, "declare ptr @calloc(i64, i64)\n");
     }
     if st[61] != 3 {

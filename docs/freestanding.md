@@ -68,8 +68,9 @@ probe of the test is built with `--std` since.)* It writes the two globals the C
 - **`memset`, `memcpy`, `memmove`, `memchr`.** LLVM calls the first three for a fill or a copy it does not write in line, on every
   target, whether or not the program names them; `memchr` is what the byte search calls. Each is a loop, marked `"no-builtins"`:
   without that the loop of `memset` is recognised as a fill and compiled into a call of `memset`.
-- **`calloc`, for statics only.** A `static` is made once, before `main`, in zeroed memory that is never given back; `std.math`
-  has some. So `calloc` is defined: the next bytes of the same memory, cleared. `malloc` and `free` are not: there is no heap (§7).
+- **`malloc`, `free`, `calloc`.** *(Corrected: this item said `calloc` was defined for statics only and the other two not at
+  all. There is a heap since section 8.)* A `static` is made once, before `main`, in zeroed memory that is never given back;
+  `std.math` has some. That is `calloc`, which is `malloc` and a fill.
 - **The arena's own trap says nothing.** On a hosted target a region that is full writes a sentence on the standard error before it
   traps. There is no standard error here; it traps.
 
@@ -86,9 +87,10 @@ What is checked is the language: ownership, regions, effects, bounds, overflow. 
 calls a system.
 
 What needs a system does not, and **is refused by a rule** (`unsupported-on-target`), where the call is written: a builtin whose
-code calls the hosted runtime (`putchar`, `write_bytes`, the files, the sockets, the processes, the clock, `box` and the rest of the
-heap, `spawn`, and the ciphers and hashes, whose support is not written for this target). `bare.needs_system` says which, by the
-builtin's number: of the 197, 47 do not need one (the capabilities, the slices, the bits, the arithmetic, the floats, `Mmio`, `Cpu`).
+code calls the hosted runtime (`putchar`, `write_bytes`, the files, the sockets, the processes, the clock, `spawn`, and the
+ciphers and hashes, whose support is not written for this target). `bare.needs_system` says which, by the builtin's number: of the
+197, 52 do not need one (the capabilities, the slices, the bits, the arithmetic, the floats, `Mmio`, `Cpu`, and since section 8
+the five of the heap: `box`, `unbox`, `contents`, `box_slice`, `unbox_slice`).
 
 - **Only a call the program reaches is refused.** The checker writes every function of every module the program imports, so a
   library with one function that prints would refuse every program that imports it. Instead the call leaves a line in the function
@@ -124,8 +126,9 @@ MMU and a trap; on the day this was written it also booted on `-M raspi4b`, from
 ## 7. What this does not do
 
 - **A foreign function is not looked at.** *(Corrected: this item said there was no rule for a hosted builtin on this target; there is, §5.)* An `extern fn` is the program's own, and whether the link has it is the link's.
-- **No heap.** `box`, `box_slice` and `std.buffer` call `malloc`. A kernel that wants them needs an allocator over the same memory
-  as the regions; no program has asked.
+- **No heap.** *(Corrected: there is one, section 8. This item said `box`, `box_slice` and `std.buffer` call `malloc`, that a
+  kernel that wants them needs an allocator over the same memory as the regions, and that no program had asked. cancho-os
+  asked: every tool of cancho-tools writes its answer through `std.json`, which grows a `std.buffer`.)*
 - **No interrupt entry.** *(Corrected again: system registers are built too, [`cpu.md`](cpu.md), edition 14, and cancho-os calls no
   foreign function.)* What follows is the earlier state. *(Corrected: memory by address is built since, [`mmio.md`](mmio.md), edition 13: a
   capability whose type names the address ranges, so that `authority` lists what a driver touches.)* cancho-os reached the hardware
@@ -136,3 +139,43 @@ MMU and a trap; on the day this was written it also booted on `-M raspi4b`, from
 - **No `--entry`.** The C `main` is what a boot stub calls. Naming another entry would save two instructions and add an option.
 - **The seed is not changed.** A compiler built from the seed alone (`scripts/seed-build.sh`) does not have the target until the
   next reseed; `scripts/build-standalone.sh` builds one that does.
+
+## 8. The heap
+
+A program for this target may use the heap: `box`, `box_slice`, and so `std.buffer`, `std.vec`, `std.map` and `std.json`, which
+are made of them. Nothing changed in the language or in the code a call compiles to: it calls `malloc`, `free` and `calloc` as on
+every target. What changed is who defines them. Here it is `bare.ll`, over the same memory as the regions.
+
+- **A block is 32 bytes times a power of two.** 16 of them are a header that holds which power; the rest is the caller's, aligned
+  to 16. `malloc` rounds what was asked for, and the header, up to the next such size.
+- **A block that is given back is the next of its size to be handed out.** There is a list for each size, threaded through the
+  free blocks themselves. A block is never split and never joined to its neighbour. So `free` and `malloc` are a few instructions
+  each and no walk; at most half of a block is not what was asked for; and memory that has been one size stays that size, which
+  is the cost: a program that makes many small blocks, frees them, and then wants one large one finds none of that memory.
+- **New blocks come from where the regions' chunks come from**, the memory between `__cancho_heap_start` and `__cancho_heap_end`,
+  and like a chunk are never returned to it. One counter serves both, so neither can take what the other has.
+- **No memory left is a trap**, as it is for a region. The code of `box` already traps when `malloc` answers null; this `malloc`
+  does not answer null.
+- **`free` of what `malloc` did not make is a trap if the header names no size**, and undetected otherwise. The language is what
+  prevents it: a box is given back once, by whoever owns it.
+- **One thread.** There is no lock, as there is none on the regions of this target.
+- **A `static` costs more than it did**: its memory has a header and a size that is a power of two now, where it was the bytes
+  rounded to 16. `std.math`'s tables are small.
+
+Measured, in the program that asked. cancho-os with a `heap` command, built with this compiler for `aarch64-none-elf`, in
+`qemu-system-aarch64` as a Raspberry Pi 3 and as QEMU's `virt` machine, the command run twice on each:
+
+| what | result |
+|---|---|
+| an object of four members made with `std.json` and printed | `{"type":"hash","path":"TEST.TXT","bytes":45,"ok":true}` |
+| 600 buffers, begun at sizes from 1 byte to 300,000, each grown a byte at a time to as many as 3,087 and read back, three alive at a time and given back in another order than they were made | no byte wrong |
+| a buffer of 64 KiB made and given back 100,000 times, in 1 GiB of memory | done: 6 GiB would have been needed if nothing were used again |
+| the same again without a restart | the same |
+
+`tests/commands/freestanding.sh` has the check a machine without AArch64 can make: `tests/probes/bare_heap.cho` (a box, and a
+`std.json` object) builds for this target into a module that defines `malloc`, `free` and `calloc`, declares none of them as
+somebody else's, calls nothing it does not define, and has no call that needs a system; and the same program for the machine the
+gate runs on answers 9, the length of the object it made.
+
+What it does not do: join free blocks; give memory back to the regions; say how much is left; more than one thread. And the gate
+still runs no program for this target: that the allocator works is measured by cancho-os, not here.

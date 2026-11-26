@@ -19,8 +19,8 @@ import selfhost.emit;
 // Does builtin number `b` (its place in `tables.builtin_name`) need a system? What does not: the capabilities themselves
 // (`split`, `release`, `narrow`, the forks), the slices and the bits, the arithmetic, the floats, `null_ptr`, `trap`, `Mmio` and
 // `Cpu`. Everything else does: the streams (0 to 5), the block ciphers and hashes, whose support is not written for this target
-// (23 to 27, 31 to 35), and from 52 on the files, the heap, the arguments, the network, the clock, the devices, the
-// directories, the processes and the threads.
+// (23 to 27, 31 to 35), and from 52 on the files, the arguments, the network, the clock, the devices, the directories,
+// the processes and the threads. The heap is not among them: the runtime of this target has one (`docs/freestanding.md` 8).
 pub fn needs_system(b: int) -> [] bool {
     if b <= 5 {
         return true;
@@ -29,6 +29,10 @@ pub fn needs_system(b: int) -> [] bool {
         return false;
     }
     if b == 177 || b == 180 || b >= 188 {
+        return false;
+    }
+    // The heap (`box`, `unbox`, `contents`, `box_slice`, `unbox_slice`): `bare.ll` has its own `malloc` and `free`.
+    if b >= 70 && b <= 72 || b == 75 || b == 76 {
         return false;
     }
     return true;

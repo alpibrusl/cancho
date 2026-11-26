@@ -38,6 +38,30 @@ else
 fi
 end
 
+# The heap (docs/freestanding.md 8): a program that boxes a value and grows a buffer builds for no system, and what it calls for memory is the module's own.
+begin a_program_for_no_system_has_a_heap_of_its_own
+if "$cancho" build tests/probes/bare_heap.cho --std --target aarch64-none-elf --emit ll -o "$work/heap.ll" > "$work/heap.txt" 2>&1; then
+    same "$(calls_undefined "$work/heap.ll")" "" "what the module calls and does not define"
+    same "$(grep -c '^define ptr @malloc(i64' "$work/heap.ll")" 1 "malloc is the module's own"
+    same "$(grep -c '^define void @free(ptr' "$work/heap.ll")" 1 "free is the module's own"
+    same "$(grep -c '^define ptr @calloc(i64' "$work/heap.ll")" 1 "calloc is the module's own"
+    same "$(grep -c '^declare ptr @malloc\|^declare void @free\|^declare ptr @calloc' "$work/heap.ll")" 0 "none of the three is declared as somebody else's"
+    case "$(grep -c 'call ptr @malloc\|call void @free' "$work/heap.ll")" in
+        0) fail "the module never calls malloc or free: the check above shows nothing" ;;
+    esac
+    same "$(grep -c 'needs-system' "$work/heap.ll")" 0 "the heap needs no system"
+else
+    fail "a program that uses the heap, for no system, said: $(head -c 300 "$work/heap.txt")"
+fi
+# and it is a program: for the machine this runs on it answers the length of the object it made, {"sum":7}
+if "$cancho" build tests/probes/bare_heap.cho --std -o "$work/heap-host" > "$work/heap-host.txt" 2>&1; then
+    "$work/heap-host"
+    same "$?" 9 "what the same program answers on this machine"
+else
+    fail "the same program for this machine said: $(head -c 300 "$work/heap-host.txt")"
+fi
+end
+
 begin an_object_for_no_system_is_an_elf_for_aarch64
 if "$cancho" build tests/probes/freestanding.cho --std --target aarch64-none-elf --emit obj -o "$work/bare.o" > "$work/obj.txt" 2>&1; then
     # The four bytes of the magic, then (at 18) the machine: 183, AArch64, little-endian.
