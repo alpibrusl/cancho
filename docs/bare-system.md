@@ -211,7 +211,48 @@ Proposed: (a) first, (b) before the feature is called done. The owner may prefer
    cancho-tools' own conformance suite, as far as it can be pointed at a remote board.
 5. **§7 (b)**, if (a) was built first.
 
-## 10. Open, for the owner
+## 10. What was read in the compiler, and what it means for the order
+
+Read at `ad5bbbb8`, before any code, to find where the work is.
+
+- **How a function is called.** A cancho function is `@lexs_N` in the module, N its node. A parameter that
+  is a slice (`&r [byte]`) is two arguments, a pointer and a length; any other reference, a capability's
+  among them, is one pointer; a whole number is an `i64`. (A function `out[&s, &b](k: &!s [int], p: &b
+  [byte], extra: int)` is `@lexs_28(ptr, i64, ptr, i64, i64)`.) So the functions of §5 are short: load what
+  was lent from the global, pass it on with the runtime's own arguments, which already are a pointer and a
+  length wherever the operation takes bytes.
+- **A statement is known in ten places.** `borrow` is the nearest existing one: the parser (`ast.cho`),
+  the kinds (`kinds.cho`), the checker and writer of bodies (`body.cho`, three places), the formatter
+  (`printing.cho`), the two listings (`listing.cho`, `jsonprint.cho`), the reader of a stored program
+  (`ingest.cho`) and its identity (`identity.cho`). A new statement is all ten.
+- **No new reserved word is needed.** `system` then a name then `(` is two names in a row at the start of
+  a statement, which is nothing today. The parser can take it there and nowhere else, so no program that
+  has a variable called `system` changes meaning.
+- **Effects are the hard part, and not where §6 put it.** What a function performs is a set of bits
+  (`effects.cho`, `st[54]`), one for each label a builtin performs. A label that carries an argument
+  (`fs_read("")`, `mmio("...")`) is *not* in the set: it raises flags that say "this function performed
+  something the set does not follow", and what exactly is worked out elsewhere, for `authority`
+  (`authority.cho`, `narrowing.cho`). So discharging `fs_read("")` at the block is not "clear some bits":
+  the flags it raised are the same flags a `mmio("...")` in the same body raised, and clearing them would
+  lose the kernel's own. Doing it soundly means following labels with arguments precisely at the block,
+  in both places.
+
+**So the order changes, and §6 and §7 are not the first thing built.**
+
+1. *First, the mechanism and no change to effects.* The block lends, the driver's functions answer, a
+   call with nothing lent traps. The hosted effects are **not** discharged: the function that contains
+   the block declares them (`io_write`, `args`, `fs_read("")`, ...), and so do its callers up to `main`.
+   The capabilities are the ones `split(world)` already gives a bare program (§7 (a)). `cancho authority`
+   of the image then lists those labels beside its addresses. That is true (the image does read files,
+   its own), and it is less sharp than today's report, which says the image never touches a filesystem.
+   Nothing about effects can be wrong in this step, because nothing about effects is touched.
+2. *Then the discharge of §6 and the capabilities of the block (§4 `as (...)`, §7 (b)), together*, as one
+   change to the effect checker and to `authority`, with tests that can fail: a body that performs a
+   `mmio` of its own inside the block must still have it in the row.
+
+Step 1 is enough for cancho-os to run the tools. Step 2 is what makes the report as sharp as it is today.
+
+## 11. Open, for the owner
 
 - The word: `system ... as ... in { }`, or another.
 - §7: (a) then (b), or (b) at once.
