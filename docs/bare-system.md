@@ -44,28 +44,38 @@ No network, no clock, no process, no thread, no foreign code.
 
 **The runtime already has a narrow waist.** A hosted builtin does not call the C library where it is
 written; it calls a function of `compiler/runtime.ll` (or `runtime/dirs_*.ll`), and that one calls the C
-library. Each tool was built to LLVM text for the host and the calls counted. Beyond what every hosted
-module carries, the ones a tool's own code reaches are:
+library. Each tool was built to LLVM text for the host (`--emit ll`), and the functions that can be
+reached from its `main` were followed through that text. These are all the runtime's functions any of the
+nine reaches, apart from the regions, the heap and the trap, which the bare target has:
 
-| what | the runtime's function, as it is defined today |
+| the runtime's function, as it is defined today | reached by |
 |---|---|
-| arguments | `ptr @cancho_arg(i64 %n)`, and the count in a global the C `main` stores |
-| open a file | `i64 @cancho_open(ptr %src, i64 %len, ptr %prefix, i64 %plen, i64 %mode)` |
-| read, write | `i64 @cancho_fd_read(i64 %fd, ptr %p, i64 %n)`, `@cancho_fd_write` the same |
-| at a place | `i64 @cancho_fd_pread(i64 %fd, ptr %p, i64 %n, i64 %at)`, `@cancho_fd_pwrite` |
-| the rest of a file | `@cancho_fd_close`, `@cancho_fd_size`, `@cancho_fd_sync`, `@cancho_fd_truncate`, `@cancho_fd_lock`, each `i64 (i64 %fd ...)` |
-| directories | `@cancho_dir_open`, `_step`, `_list`, `_next`, `_list_close`, `_stat`, `_rename`, `_remove`, `_sync`: `void (..., ptr %out)` |
-| the streams | `i64 @cancho_write_bytes(ptr %p, i64 %n)`, `putchar`, `getchar`, `@cancho_flush_out`, and the one for the standard error |
-| a path held to its prefix | `ptr @cancho_checked_path(ptr %src, i64 %len, ptr %prefix, i64 %plen)`, `i1 @cancho_path_covers(...)` |
+| `ptr @cancho_arg(i64 %n)`, with the globals `cancho_argc` and `cancho_argv` the C `main` stores | all nine |
+| `i64 @cancho_write_bytes(ptr %p, i64 %n)` | all nine |
+| `void @cancho_flush_out(ptr %out)` | all nine |
+| `getchar` | `jsonq`, `tally`, `write` |
+| `ptr @cancho_checked_path(ptr %src, i64 %len, ptr %prefix, i64 %plen)`, `i1 @cancho_path_covers(...)` | all nine |
+| `void @cancho_dir_open(ptr %src, i64 %len, ptr %prefix, i64 %plen, ptr %out)` | all nine |
+| `void @cancho_dir_step(ptr %dir, ptr %name, i64 %len, i64 %which, ptr %out)` | all nine |
+| `i64 @cancho_open(ptr %src, i64 %len, ptr %prefix, i64 %plen, i64 %mode)` | `seek`, `peek`, `jsonq`, `tally`, `hash`, `write` |
+| `i64 @cancho_fd_read(i64 %fd, ptr %p, i64 %n)` | all but `list` |
+| `i64 @cancho_fd_close(i64 %fd)` | all nine |
+| `i64 @cancho_fd_pread(i64 %fd, ptr %p, i64 %n, i64 %at)`, `i64 @cancho_fd_size(i64 %fd)` | `peek` |
+| `void @cancho_dir_list(ptr %dir, ptr %out)`, `void @cancho_dir_next(ptr %list, ptr %buf, i64 %room, ptr %out)`, `i64 @cancho_dir_list_close(i64 %stream)` | `list` |
+| `void @cancho_dir_stat(ptr %dir, ptr %name, i64 %len, ptr %out)` | `list`, `move` |
+| `i64 @cancho_fd_write(i64 %fd, ptr %p, i64 %n)`, `i64 @cancho_fd_sync(i64 %fd)` | `write`, `replace` |
+| `i64 @cancho_fd_lock(i64 %fd)` | `write`, `replace`, `move` |
+| `void @cancho_dir_rename(ptr %dir, ptr %from, i64 %flen, ptr %to, i64 %tlen, i64 %fresh, ptr %out)`, `void @cancho_dir_sync(ptr %dir, ptr %out)` | `write`, `replace`, `move` |
+| `void @cancho_dir_remove(ptr %dir, ptr %name, i64 %len, ptr %out)` | `write`, `replace` |
+| `i64 @cancho_errno()`, `ptr @cancho_errno_location()` | all nine |
 
-How many of the nine reach each: `cancho_fd_read` 8; `getchar`, `cancho_dir_rename`, `cancho_dir_sync`,
-`cancho_fd_lock` 3; `cancho_dir_remove`, `cancho_dir_stat`, `cancho_fd_sync`, `cancho_fd_write` 2;
-`cancho_dir_list`, `_next`, `_list_close`, `cancho_fd_pread`, `cancho_fd_size` 1; the others in the table
-all nine. (The count is of the whole hosted module, which is not pruned of the runtime's own functions,
-so "all nine" is an upper bound for those rows; §9 asks for the exact list as its first step.)
+Twenty-three functions, with plain signatures: integers, pointers with lengths, an `out` pointer for the
+directory ones. Under them, on a hosted target, are about forty functions of the C library (`fopen`,
+`openat`, `read`, `fstatat`, `renameat`, `flock`, `fsync`, ...). **A system, to these programs, is whoever
+defines those twenty-three.** The first nine rows are everything the five tools that only read need.
 
-So the need is about twenty-five functions with plain signatures: integers, pointers with lengths, one
-`out` pointer for the directory ones. **A system, to these programs, is whoever defines those.**
+(Followed, not proven: a function whose address is taken counts as reached, so the list can be a little
+long and cannot be short. §9's first step makes the count a program in the repository and a test.)
 
 ## 3. Why defining them is not enough
 
@@ -182,10 +192,10 @@ Proposed: (a) first, (b) before the feature is called done. The owner may prefer
 
 ## 9. Steps, each with what shows it works
 
-1. **The exact list.** A census, like `scripts/ll-census.cho` of the native-backend epic, of the runtime
-   functions each of the nine tools reaches after the hosted module is pruned of what nothing calls; and
-   the runtime's convention for each (arguments, result, how an error is told). A table in this document.
-   *Shows:* the table, and a test that fails when a tool starts to reach one more.
+1. **The exact list as a program.** The table of §2 was made by a throwaway script. It becomes a program
+   in the repository (with `scripts/ll-census.cho` of the native-backend epic, #841), and the runtime's
+   convention for each of the twenty-three is written down beside it: arguments, result, how an error is
+   told. *Shows:* the table reproduced, and a test that fails when a tool starts to reach one more.
 2. **Streams and arguments.** `out`, `err`, `in`, `flush`, `arg`, `arg_count`. The form, the checker's
    rules for it (§4, §6), the driver's functions (§5), the trap.
    *Shows:* `tests/probes/bare_system.cho`, a program for target 3 whose system writes into a slice,
