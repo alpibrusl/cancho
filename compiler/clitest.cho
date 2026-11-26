@@ -374,7 +374,7 @@ pub fn test_set[&h, &i, &a, &f, &x, &c, &l, &s, &k](heap: &!h Heap, io: &!i Io, 
     return status;
 }
 
-// `test [--host H] [--std-dir DIR] [--backend llvm] [--clang PATH] [-l LIB] [-L DIR] FILE...` (`docs/cli-in-cancho.md` section 16): the tests of the
+// `test [--host H] [--std-dir DIR] [--backend llvm|native] [--clang PATH] [-l LIB] [-L DIR] FILE...` (`docs/cli-in-cancho.md` section 16): the tests of the
 // files (`testscan.cho`) are found, one program is built of the files and the runner that is written for them, and each test is run as a process of
 // its own (the runner takes the number of the test as its argument), with the report of `cancho test`. Exit status 0 if all passed, 4 if one did not,
 // 1 for a refusal, 2 for a usage error or a program with no tests, 3 for what could not be done. The program is built next to the first file, as `run`
