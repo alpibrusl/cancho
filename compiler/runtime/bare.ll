@@ -1,8 +1,8 @@
 
 ; bare.ll -- the runtime of a program with no system under it (`--target aarch64-none-elf`, docs/freestanding.md).
 ; Written by hand. No libc and no threads: the chunks of the regions come from the memory between two symbols the
-; link provides, `__cancho_heap_start` and `__cancho_heap_end`, and the four functions LLVM itself calls for a copy
-; or a fill are defined here.
+; link provides, `__cancho_heap_start` and `__cancho_heap_end`; so do the blocks of the heap (`malloc`, `free`); and
+; the four functions LLVM itself calls for a copy or a fill are defined here.
 @__cancho_heap_start = external global i8
 @__cancho_heap_end = external global i8
 @cancho_bare_next = internal global i64 0
@@ -49,24 +49,86 @@ fresh:
   ret ptr %p
 }
 
-; What a `static` is made in, once, before `main`: zeroed memory that is never given back. This is the only caller
-; a program for this target has; the heap (`malloc`, `free`) is not here.
-define ptr @calloc(i64 %count, i64 %size) {
+; ---- the heap (`box`, `box_slice`, and so `std.buffer` and what is made of it) --------------------------------
+; A block is 32 bytes times a power of two: 16 of them are its header, which holds which power, and the rest is
+; what the caller asked for. A block that is given back is kept in the list of its size and is the next one of that
+; size to be handed out; it is never split and never joined to another. So at most half of a block is not what was
+; asked for, and memory that has been one size stays that size. The lists are threaded through the blocks themselves.
+@cancho_bare_bins = internal global [48 x ptr] zeroinitializer
+declare i64 @llvm.ctlz.i64(i64, i1)
+
+; `size` bytes, aligned to 16. No memory left is a trap, as it is for a region: there is nobody to tell.
+define ptr @malloc(i64 %size) {
 entry:
-  %m = call {i64, i1} @llvm.umul.with.overflow.i64(i64 %count, i64 %size)
-  %bytes = extractvalue {i64, i1} %m, 0
-  %carry = extractvalue {i64, i1} %m, 1
-  %up = add i64 %bytes, 15
-  %rounded = and i64 %up, -16
-  %wrapped = icmp ult i64 %rounded, %bytes
-  %bad = or i1 %carry, %wrapped
+  %total = add i64 %size, 16
+  %wrapped = icmp ult i64 %total, %size
+  %huge = icmp ugt i64 %total, 1099511627776
+  %bad = or i1 %wrapped, %huge
   br i1 %bad, label %fail, label %ok
 fail:
   call void @cancho_trap()
   unreachable
 ok:
-  %p = call ptr @cancho_bare_bump(i64 %rounded)
-  call void @llvm.memset.p0.i64(ptr %p, i8 0, i64 %rounded, i1 false)
+  ; the least k with 32 << k >= total
+  %m1 = sub i64 %total, 1
+  %lz = call i64 @llvm.ctlz.i64(i64 %m1, i1 false)
+  %bits = sub i64 64, %lz
+  %small = icmp ult i64 %bits, 5
+  %k0 = sub i64 %bits, 5
+  %k = select i1 %small, i64 0, i64 %k0
+  %slot = getelementptr [48 x ptr], ptr @cancho_bare_bins, i64 0, i64 %k
+  %head = load ptr, ptr %slot
+  %none = icmp eq ptr %head, null
+  br i1 %none, label %fresh, label %pop
+pop:
+  %user = getelementptr i8, ptr %head, i64 16
+  %link = load ptr, ptr %user
+  store ptr %link, ptr %slot
+  ret ptr %user
+fresh:
+  %bytes = shl i64 32, %k
+  %p = call ptr @cancho_bare_bump(i64 %bytes)
+  store i64 %k, ptr %p
+  %u = getelementptr i8, ptr %p, i64 16
+  ret ptr %u
+}
+
+; The block goes to the list of its size. A header that names no size is a trap: the pointer was not `malloc`'s.
+define void @free(ptr %user) {
+entry:
+  %null = icmp eq ptr %user, null
+  br i1 %null, label %done, label %some
+some:
+  %base = getelementptr i8, ptr %user, i64 -16
+  %k = load i64, ptr %base
+  %bad = icmp ugt i64 %k, 47
+  br i1 %bad, label %fail, label %ok
+fail:
+  call void @cancho_trap()
+  unreachable
+ok:
+  %slot = getelementptr [48 x ptr], ptr @cancho_bare_bins, i64 0, i64 %k
+  %head = load ptr, ptr %slot
+  store ptr %head, ptr %user
+  store ptr %base, ptr %slot
+  br label %done
+done:
+  ret void
+}
+
+; Zeroed memory: what a `static` is made in, once, before `main`, and what a `box_slice` filled with zeros is.
+define ptr @calloc(i64 %count, i64 %size) {
+entry:
+  %m = call {i64, i1} @llvm.umul.with.overflow.i64(i64 %count, i64 %size)
+  %bytes = extractvalue {i64, i1} %m, 0
+  %carry = extractvalue {i64, i1} %m, 1
+  br i1 %carry, label %fail, label %ok
+fail:
+  call void @cancho_trap()
+  unreachable
+ok:
+  %p = call ptr @malloc(i64 %bytes)
+  call void @llvm.memset.p0.i64(ptr %p, i8 0, i64 %bytes, i1 false)
   ret ptr %p
 }
 declare {i64, i1} @llvm.umul.with.overflow.i64(i64, i64)
