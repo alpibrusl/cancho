@@ -1,0 +1,839 @@
+edition 7;
+module ll_census;
+
+// ll-census.cho -- what a module of LLVM text is made of (`docs/native-backend.md` section 3): every instruction, intrinsic, type, constant form, word
+// (a flag, a linkage, an attribute, a predicate), string of inline assembly and top-level form that appears in it, each with how often. It is the count the
+// native backend's contract was drawn from, kept as a program so that the count can be made again and so that a change to what the compiler writes cannot
+// widen the contract unseen.
+//
+//     cancho run scripts/ll-census.cho --std -- FILE.ll...                    # the census of the files together: `KIND NAME<TAB>COUNT`, sorted by bytes
+//     cancho run scripts/ll-census.cho --std -- FILE.ll... --subset SET       # nothing and status 0 if every form is in SET; else `not in the subset: KIND NAME` for each, status 1
+//     ... --apart OTHER.ll     # the forms of the functions OTHER.ll defines are counted as `apart KIND NAME` (the hardware ciphers, which the native backend leaves out)
+//
+// The kinds:
+//
+//     top FORM             a line outside a function: define, declare, global, type, attributes, metadata, source_filename, comdat, module
+//     target WHICH "..."   `target triple` and `target datalayout`, with what they say
+//     instruction NAME     the opcode of an instruction
+//     intrinsic NAME       a function called `llvm.*`, where an instruction names it (a declaration alone is not counted)
+//     type NAME            a scalar type by its name, and the constructors `{...}`, `<{...}>`, `[N x T]`, `<N x T>`, `...` (a variadic function type) and `*`
+//     constant FORM        `integer`, `float` (decimal), `hex-float`, a word (null, true, false, undef, poison, zeroinitializer, none), `c"..."`, and the
+//                          aggregates `{...}`, `<{...}>`, `[...]`, `<...>`
+//     word CONTEXT WORD    any other bare word, with the instruction or the top-level form it is written in: `word add nsw`, `word icmp slt`,
+//                          `word load align`, `word define internal`, `word global unnamed_addr`. `#` is a reference to an attribute group and `!NAME` to metadata.
+//                          An instruction's name written inside another line is a constant expression: `word global getelementptr`.
+//     asm "TEXT", "CONSTRAINTS"   one string of inline assembly, as it is written
+//     string CONTEXT "..."        any other string: a section, an attribute given as a string
+//
+// Nothing here knows which words LLVM has: a word is classified by where it stands, so a form nobody thought of appears under its own name instead of being
+// passed over. A line of SET is `KIND NAME`, as printed (without the count); one that ends in `*` accepts every form that begins with what is before it (the
+// registers of `Cpu` are 171 strings of assembly, `docs/cpu.md`); a line that is empty or begins with `#` says nothing.
+//
+// The text is read as lines, which is what the compiler writes: no string spans two, and the one instruction that does is a `switch` of the runtime, whose
+// cases are a line each and begin with a type. Exit status 2 for a file that cannot be read or a
+// bad call.
+
+import std.buffer;
+import std.bytes;
+import std.io as console;
+import std.map;
+
+// What has been counted, and the buffer a key is spelled in before it is looked up (kept so that a token does not cost an allocation).
+res struct Census {
+    seen: map.Map[int],
+    key: buffer.Buffer,
+    // 1 while the lines read are of a function that is kept apart (`--apart`): its forms are counted under `apart KIND NAME`.
+    apart: int,
+}
+
+// The kinds of token: three ints each in the table, the kind and where it starts and ends in the text.
+fn t_word() -> [] int {
+    return 1;
+}
+
+fn t_number() -> [] int {
+    return 2;
+}
+
+fn t_string() -> [] int {
+    return 3;
+}
+
+fn t_cstring() -> [] int {
+    return 4;
+}
+
+fn t_global() -> [] int {
+    return 5;
+}
+
+fn t_local() -> [] int {
+    return 6;
+}
+
+fn t_meta() -> [] int {
+    return 7;
+}
+
+fn t_group() -> [] int {
+    return 8;
+}
+
+fn t_comdat() -> [] int {
+    return 9;
+}
+
+fn t_punct() -> [] int {
+    return 10;
+}
+
+fn t_dots() -> [] int {
+    return 11;
+}
+
+fn byte_at[&t](text: &t [byte], i: int) -> [] int {
+    if i < 0 || i >= len(text) {
+        return 0 - 1;
+    }
+    return int_of(text[i]);
+}
+
+// A byte of a name: of a word, of what follows a sigil, of a label.
+fn name_byte(c: int) -> [] bool {
+    return bytes.is_alpha(c) || bytes.is_digit(c) || c == '_' || c == '.' || c == '$' || c == '-';
+}
+
+// The end of the string whose opening quote is at `at`: past its closing quote, or `to` if it has none. LLVM writes a quote inside a string as `\22`, so the next
+// quote is the end.
+fn string_end[&t](text: &t [byte], at: int, to: int) -> [] int {
+    var i = at + 1;
+    while i < to && byte_at(text, i) != '"' {
+        i = i + 1;
+    }
+    if i < to {
+        return i + 1;
+    }
+    return to;
+}
+
+// The tokens of `text[from..to]`, one line, written to `toks`; how many. A `;` outside a string ends the line. `toks` has room for a token a byte.
+fn lex[&t, &k](text: &t [byte], from: int, to: int, toks: &!k [int]) -> [] int {
+    var i = from;
+    var n = 0;
+    while i < to {
+        let c = byte_at(text, i);
+        var kind = 0;
+        var end = i + 1;
+        if c == ';' {
+            return n;
+        }
+        if bytes.is_blank(c) {
+            kind = 0;
+        } else if c == '"' {
+            kind = t_string();
+            end = string_end(text, i, to);
+        } else if c == 'c' && byte_at(text, i + 1) == '"' {
+            kind = t_cstring();
+            end = string_end(text, i + 1, to);
+        } else if c == '@' || c == '%' || c == '!' || c == '#' || c == '$' {
+            kind = t_global();
+            if c == '%' {
+                kind = t_local();
+            }
+            if c == '!' {
+                kind = t_meta();
+            }
+            if c == '#' {
+                kind = t_group();
+            }
+            if c == '$' {
+                kind = t_comdat();
+            }
+            if byte_at(text, i + 1) == '"' {
+                end = string_end(text, i + 1, to);
+            } else {
+                while end < to && name_byte(byte_at(text, end)) {
+                    end = end + 1;
+                }
+            }
+        } else if bytes.is_digit(c) || c == '-' && bytes.is_digit(byte_at(text, i + 1)) {
+            kind = t_number();
+            while end < to && (bytes.is_alpha(byte_at(text, end)) || bytes.is_digit(byte_at(text, end)) || byte_at(text, end) == '.' || (byte_at(text, end) == '+' || byte_at(text, end) == '-') && (byte_at(text, end - 1) == 'e' || byte_at(text, end - 1) == 'E')) {
+                end = end + 1;
+            }
+        } else if bytes.is_alpha(c) || c == '_' {
+            kind = t_word();
+            while end < to && name_byte(byte_at(text, end)) {
+                end = end + 1;
+            }
+        } else if c == '.' && byte_at(text, i + 1) == '.' && byte_at(text, i + 2) == '.' {
+            kind = t_dots();
+            end = i + 3;
+        } else {
+            kind = t_punct();
+        }
+        if kind != 0 {
+            toks[3 * n] = kind;
+            toks[3 * n + 1] = i;
+            toks[3 * n + 2] = end;
+            n = n + 1;
+        }
+        i = end;
+    }
+    return n;
+}
+
+fn kind_of[&k](toks: &k [int], i: int, n: int) -> [] int {
+    if i < 0 || i >= n {
+        return 0;
+    }
+    return toks[3 * i];
+}
+
+// The text of token `i`, or nothing past the end.
+fn text_of[&t, &k](text: &t [byte], toks: &k [int], i: int, n: int) -> [] &t [byte] {
+    if i < 0 || i >= n {
+        return text[0..0];
+    }
+    return text[toks[3 * i + 1]..toks[3 * i + 2]];
+}
+
+// Is token `i` the punctuation `c`?
+fn is_punct[&t, &k](text: &t [byte], toks: &k [int], i: int, n: int, c: int) -> [] bool {
+    return kind_of(toks, i, n) == t_punct() && byte_at(text, toks[3 * i + 1]) == c;
+}
+
+fn is_word[&t, &k, &w](text: &t [byte], toks: &k [int], i: int, n: int, word: &w [byte]) -> [] bool {
+    return kind_of(toks, i, n) == t_word() && bytes.equal(text_of(text, toks, i, n), word);
+}
+
+// A word that names a type: `i` and digits, or one of the names LLVM gives a type that is not an integer.
+fn is_type[&w](word: &w [byte]) -> [] bool {
+    if len(word) > 1 && int_of(word[0]) == 'i' {
+        var k = 1;
+        while k < len(word) && bytes.is_digit(int_of(word[k])) {
+            k = k + 1;
+        }
+        if k == len(word) {
+            return true;
+        }
+    }
+    return bytes.equal(word, "void") || bytes.equal(word, "ptr") || bytes.equal(word, "double") || bytes.equal(word, "float") || bytes.equal(word, "half") || bytes.equal(word, "bfloat") || bytes.equal(word, "fp128") || bytes.equal(word, "x86_fp80") || bytes.equal(word, "ppc_fp128") || bytes.equal(word, "label") || bytes.equal(word, "metadata") || bytes.equal(word, "token") || bytes.equal(word, "x86_mmx") || bytes.equal(word, "x86_amx") || bytes.equal(word, "opaque");
+}
+
+// A word that is a constant.
+fn is_constant[&w](word: &w [byte]) -> [] bool {
+    return bytes.equal(word, "null") || bytes.equal(word, "true") || bytes.equal(word, "false") || bytes.equal(word, "undef") || bytes.equal(word, "poison") || bytes.equal(word, "zeroinitializer") || bytes.equal(word, "none");
+}
+
+// Where the type that begins at token `i` ends (the token after it), or -1 if what begins there is not a type: a constant, which has a value after each type.
+fn skip_type[&t, &k](text: &t [byte], toks: &k [int], i: int, n: int) -> [] int {
+    if kind_of(toks, i, n) == t_local() {
+        return i + 1;
+    }
+    if kind_of(toks, i, n) == t_word() {
+        if is_type(text_of(text, toks, i, n)) {
+            return i + 1;
+        }
+        return 0 - 1;
+    }
+    if is_punct(text, toks, i, n, '{') {
+        var j = i + 1;
+        if is_punct(text, toks, j, n, '}') {
+            return j + 1;
+        }
+        while j < n {
+            j = skip_type(text, toks, j, n);
+            if j < 0 {
+                return 0 - 1;
+            }
+            if is_punct(text, toks, j, n, '}') {
+                return j + 1;
+            }
+            if !is_punct(text, toks, j, n, ',') {
+                return 0 - 1;
+            }
+            j = j + 1;
+        }
+        return 0 - 1;
+    }
+    if is_punct(text, toks, i, n, '[') || is_punct(text, toks, i, n, '<') {
+        var close = ']';
+        if is_punct(text, toks, i, n, '<') {
+            close = '>';
+            if is_punct(text, toks, i + 1, n, '{') {
+                let packed = skip_type(text, toks, i + 1, n);
+                if packed > 0 && is_punct(text, toks, packed, n, '>') {
+                    return packed + 1;
+                }
+                return 0 - 1;
+            }
+        }
+        if kind_of(toks, i + 1, n) != t_number() || !is_word(text, toks, i + 2, n, "x") {
+            return 0 - 1;
+        }
+        let element = skip_type(text, toks, i + 3, n);
+        if element > 0 && is_punct(text, toks, element, n, close) {
+            return element + 1;
+        }
+    }
+    return 0 - 1;
+}
+
+// One more of the form `kind a b` (`b` may be empty).
+fn note[&h, &k, &a, &b](heap: &!h Heap, census: Census, kind: &k [byte], a: &a [byte], b: &b [byte]) -> [heap] Census {
+    let Census { seen, key, apart } = census;
+    var spelled = key;
+    borrow mut spelled as &!s in {
+        buffer.clear(s);
+    }
+    if apart != 0 {
+        spelled = buffer.append(heap, spelled, "apart ");
+    }
+    spelled = buffer.append(heap, spelled, kind);
+    spelled = buffer.push(heap, spelled, byte_of(' '));
+    spelled = buffer.append(heap, spelled, a);
+    if len(b) > 0 {
+        spelled = buffer.push(heap, spelled, byte_of(' '));
+        spelled = buffer.append(heap, spelled, b);
+    }
+    var counts = seen;
+    borrow spelled as &s in {
+        var entry = 0 - 1;
+        var so_far = 0;
+        borrow counts as &r in {
+            entry = map.find(r, buffer.bytes(s));
+            if entry >= 0 {
+                so_far = map.value_at(r, entry);
+            }
+        }
+        if entry >= 0 {
+            borrow mut counts as &!w in {
+                map.set_value_at(w, entry, so_far + 1);
+            }
+        } else {
+            counts = map.put(heap, counts, buffer.bytes(s), 1);
+        }
+    }
+    return Census { seen: counts, key: spelled, apart: apart };
+}
+
+// What a number is written as.
+fn number_form[&w](word: &w [byte]) -> [] &static [byte] {
+    if len(word) > 1 && int_of(word[0]) == '0' && int_of(word[1]) == 'x' {
+        return "hex-float";
+    }
+    var k = 0;
+    while k < len(word) {
+        if int_of(word[k]) == '.' || int_of(word[k]) == 'e' || int_of(word[k]) == 'E' {
+            return "float";
+        }
+        k = k + 1;
+    }
+    return "integer";
+}
+
+// A reference to metadata without its number: `!tbaa` is itself and `!12` is `!`.
+fn meta_name[&w](word: &w [byte]) -> [] &w [byte] {
+    var k = 1;
+    while k < len(word) && bytes.is_digit(int_of(word[k])) {
+        k = k + 1;
+    }
+    if k == len(word) {
+        return word[0..1];
+    }
+    return word;
+}
+
+// The tokens `from..to` of a line, counted as written in `context` (an instruction's name or a top-level form).
+fn walk[&h, &t, &k, &c](heap: &!h Heap, census: Census, text: &t [byte], toks: &k [int], from: int, to: int, context: &c [byte]) -> [heap] Census {
+    var out = census;
+    var i = from;
+    while i < to {
+        let kind = kind_of(toks, i, to);
+        let word = text_of(text, toks, i, to);
+        var next = i + 1;
+        if kind == t_word() {
+            if is_type(word) {
+                out = note(heap, out, "type", word, "");
+            } else if is_constant(word) {
+                out = note(heap, out, "constant", word, "");
+            } else if bytes.equal(word, "asm") {
+                // `asm` and the words that qualify it, then the text and the constraints: the two strings are one form.
+                out = note(heap, out, "word", context, word);
+                while kind_of(toks, next, to) == t_word() {
+                    out = note(heap, out, "word", context, text_of(text, toks, next, to));
+                    next = next + 1;
+                }
+                if kind_of(toks, next, to) == t_string() && is_punct(text, toks, next + 1, to, ',') && kind_of(toks, next + 2, to) == t_string() {
+                    out = note(heap, out, "asm", text[toks[3 * next + 1]..toks[3 * (next + 2) + 2]], "");
+                    next = next + 3;
+                }
+            } else {
+                out = note(heap, out, "word", context, word);
+            }
+        } else if kind == t_number() {
+            out = note(heap, out, "constant", number_form(word), "");
+        } else if kind == t_string() {
+            out = note(heap, out, "string", context, word);
+        } else if kind == t_cstring() {
+            out = note(heap, out, "constant", "c\"...\"", "");
+        } else if kind == t_global() {
+            if bytes.starts_with(word, "@llvm.") && !bytes.equal(context, "declare") {
+                out = note(heap, out, "intrinsic", word[1..len(word)], "");
+            }
+        } else if kind == t_meta() {
+            out = note(heap, out, "word", context, meta_name(word));
+        } else if kind == t_group() {
+            out = note(heap, out, "word", context, "#");
+        } else if kind == t_dots() {
+            out = note(heap, out, "type", "...", "");
+        } else if kind == t_punct() {
+            let c = byte_at(text, toks[3 * i + 1]);
+            if c == '*' {
+                out = note(heap, out, "type", "*", "");
+            } else if c == '{' && !bytes.equal(context, "attributes") {
+                if skip_type(text, toks, i, to) > 0 {
+                    out = note(heap, out, "type", "{...}", "");
+                } else {
+                    out = note(heap, out, "constant", "{...}", "");
+                }
+            } else if c == '[' {
+                if kind_of(toks, i + 1, to) == t_number() && is_word(text, toks, i + 2, to, "x") {
+                    out = note(heap, out, "type", "[N x T]", "");
+                    next = i + 3;
+                } else {
+                    out = note(heap, out, "constant", "[...]", "");
+                }
+            } else if c == '<' {
+                if kind_of(toks, i + 1, to) == t_number() && is_word(text, toks, i + 2, to, "x") {
+                    out = note(heap, out, "type", "<N x T>", "");
+                    next = i + 3;
+                } else if is_punct(text, toks, i + 1, to, '{') {
+                    if skip_type(text, toks, i + 1, to) > 0 {
+                        out = note(heap, out, "type", "<{...}>", "");
+                    } else {
+                        out = note(heap, out, "constant", "<{...}>", "");
+                    }
+                    next = i + 2;
+                } else {
+                    out = note(heap, out, "constant", "<...>", "");
+                }
+            }
+        }
+        i = next;
+    }
+    return out;
+}
+
+// `census` with its forms counted apart from now on, or not.
+fn set_apart(census: Census, now: int) -> [] Census {
+    let Census { seen, key, apart } = census;
+    return Census { seen: seen, key: key, apart: now };
+}
+
+// The name of the function a `define` line defines: its first global.
+fn defined[&t, &k](text: &t [byte], toks: &k [int], n: int) -> [] &t [byte] {
+    var i = 0;
+    while i < n && kind_of(toks, i, n) != t_global() {
+        i = i + 1;
+    }
+    return text_of(text, toks, i, n);
+}
+
+// One line of `n` tokens. `state[0]` is 1 inside a function, and `state[1]` and `state[2]` are where the name of its last instruction is in the text: a line
+// that begins with a type is more of that instruction (the cases of a `switch`, one a line). The functions `apart` names are counted apart.
+fn line[&h, &t, &k, &s, &m](heap: &!h Heap, census: Census, text: &t [byte], toks: &k [int], n: int, state: &!s [int], apart: &m map.Map[int]) -> [heap] Census {
+    var out = census;
+    if n == 0 {
+        return out;
+    }
+    let first = text_of(text, toks, 0, n);
+    let kind = kind_of(toks, 0, n);
+    if state[0] == 0 {
+        if kind == t_word() && bytes.equal(first, "define") {
+            if map.has(apart, defined(text, toks, n)) {
+                out = set_apart(out, 1);
+            }
+            out = note(heap, out, "top", first, "");
+            var end = n;
+            if is_punct(text, toks, n - 1, n, '{') {
+                state[0] = 1;
+                end = n - 1;
+            }
+            out = walk(heap, out, text, toks, 1, end, first);
+            if state[0] == 0 {
+                out = set_apart(out, 0);
+            }
+            return out;
+        }
+        if kind == t_word() && bytes.equal(first, "target") {
+            return note(heap, out, "target", text_of(text, toks, 1, n), text_of(text, toks, 3, n));
+        }
+        if kind == t_word() {
+            // declare, attributes, source_filename, module, and whatever else a line may begin with: under its own name.
+            out = note(heap, out, "top", first, "");
+            return walk(heap, out, text, toks, 1, n, first);
+        }
+        if kind == t_global() {
+            out = note(heap, out, "top", "global", "");
+            return walk(heap, out, text, toks, 2, n, "global");
+        }
+        if kind == t_local() {
+            // `%name = type ...`: the word `type` is the form itself.
+            out = note(heap, out, "top", "type", "");
+            return walk(heap, out, text, toks, 3, n, "type");
+        }
+        if kind == t_meta() {
+            return note(heap, out, "top", "metadata", "");
+        }
+        if kind == t_comdat() {
+            return note(heap, out, "top", "comdat", "");
+        }
+        if is_punct(text, toks, 0, n, '}') {
+            return out;
+        }
+        return note(heap, out, "top", "?", "");
+    }
+    if is_punct(text, toks, 0, n, '}') {
+        state[0] = 0;
+        return set_apart(out, 0);
+    }
+    if kind == t_word() && is_type(first) && state[2] > state[1] {
+        return walk(heap, out, text, toks, 0, n, text[state[1]..state[2]]);
+    }
+    if n == 2 && is_punct(text, toks, 1, n, ':') {
+        // A label.
+        return out;
+    }
+    var at = 0;
+    if kind == t_local() && is_punct(text, toks, 1, n, '=') {
+        at = 2;
+    }
+    if kind_of(toks, at, n) != t_word() {
+        return note(heap, out, "instruction", "?", "");
+    }
+    var name = text_of(text, toks, at, n);
+    if bytes.equal(name, "tail") || bytes.equal(name, "musttail") || bytes.equal(name, "notail") {
+        if kind_of(toks, at + 1, n) == t_word() {
+            out = note(heap, out, "word", text_of(text, toks, at + 1, n), name);
+            at = at + 1;
+            name = text_of(text, toks, at, n);
+        }
+    }
+    out = note(heap, out, "instruction", name, "");
+    state[1] = toks[3 * at + 1];
+    state[2] = toks[3 * at + 2];
+    return walk(heap, out, text, toks, at + 1, n, name);
+}
+
+// The length of the longest line of `text`.
+fn longest[&t](text: &t [byte]) -> [] int {
+    var most = 0;
+    var from = 0;
+    var i = 0;
+    while i < len(text) {
+        if int_of(text[i]) == '\n' {
+            if i - from > most {
+                most = i - from;
+            }
+            from = i + 1;
+        }
+        i = i + 1;
+    }
+    if len(text) - from > most {
+        most = len(text) - from;
+    }
+    return most;
+}
+
+// The census of one module, added to `census`.
+fn module_census[&h, &t, &m](heap: &!h Heap, census: Census, text: &t [byte], apart: &m map.Map[int]) -> [heap] Census {
+    var out = census;
+    let table = box_slice(heap, 3 * longest(text) + 3, 0);
+    let state = box_slice(heap, 3, 0);
+    borrow mut table as &!tw in {
+        borrow mut state as &!sw in {
+            let toks = contents(tw);
+            let st = contents(sw);
+            var from = 0;
+            var i = 0;
+            while i <= len(text) {
+                if i == len(text) || int_of(text[i]) == '\n' {
+                    let n = lex(text, from, i, toks);
+                    out = line(heap, out, text, toks, n, st, apart);
+                    from = i + 1;
+                }
+                i = i + 1;
+            }
+        }
+    }
+    unbox_slice(heap, state);
+    unbox_slice(heap, table);
+    return out;
+}
+
+// The functions the module `text` defines, added to `names`.
+fn defined_names[&h, &t](heap: &!h Heap, names: map.Map[int], text: &t [byte]) -> [heap] map.Map[int] {
+    var out = names;
+    let table = box_slice(heap, 3 * longest(text) + 3, 0);
+    borrow mut table as &!tw in {
+        let toks = contents(tw);
+        var from = 0;
+        var i = 0;
+        while i <= len(text) {
+            if i == len(text) || int_of(text[i]) == '\n' {
+                let n = lex(text, from, i, toks);
+                if is_word(text, toks, 0, n, "define") {
+                    out = map.put(heap, out, defined(text, toks, n), 1);
+                }
+                from = i + 1;
+            }
+            i = i + 1;
+        }
+    }
+    unbox_slice(heap, table);
+    return out;
+}
+
+// All of the file at `path` and 0, or nothing and 1 if it cannot be read.
+fn read_all[&h, &f, &p](heap: &!h Heap, fs: &f Fs(""), path: &p [byte]) -> [heap, fs_read(""), file_read] (buffer.Buffer, int) {
+    var out = buffer.empty(heap, 4096);
+    var failed = 0;
+    match open_read(fs, path) {
+        Opened::Failed(reason) => {
+            failed = 1;
+        }
+        Opened::Ok(opened) => {
+            var file = opened;
+            var chunk = buffer.empty(heap, 1048576);
+            borrow mut file as &!handle in {
+                var going = true;
+                while going {
+                    borrow mut chunk as &!c in {
+                        match file_read(handle, buffer.room(c)) {
+                            Read::Got(n) => {
+                                buffer.filled(c, n);
+                                out = buffer.append(heap, out, buffer.bytes(c));
+                                buffer.clear(c);
+                            }
+                            Read::End => {
+                                going = false;
+                            }
+                            Read::Failed(reason) => {
+                                going = false;
+                                failed = 1;
+                            }
+                        }
+                    }
+                }
+            }
+            buffer.drop(heap, chunk);
+            file_close(file);
+        }
+    }
+    return (out, failed);
+}
+
+// Is the form `key` accepted by the set `subset`? A line of it is the form, or the beginning of it and a `*`.
+fn accepted[&k, &s](key: &k [byte], subset: &s [byte]) -> [] bool {
+    var from = 0;
+    var i = 0;
+    while i <= len(subset) {
+        if i == len(subset) || int_of(subset[i]) == '\n' {
+            let entry = subset[from..i];
+            if len(entry) > 0 && int_of(entry[0]) != '#' {
+                if bytes.equal(entry, key) {
+                    return true;
+                }
+                if int_of(entry[len(entry) - 1]) == '*' && bytes.starts_with(key, entry[0..len(entry) - 1]) {
+                    return true;
+                }
+            }
+            from = i + 1;
+        }
+        i = i + 1;
+    }
+    return false;
+}
+
+// The entries of `seen` in the order of their keys' bytes: entry numbers, in `order`.
+fn sort_entries[&m, &o](seen: &m map.Map[int], order: &!o [int]) -> [] int {
+    var n = 0;
+    while n < len(order) {
+        order[n] = n;
+        var at = n;
+        while at > 0 && bytes.compare(map.key_at(seen, order[at - 1]), map.key_at(seen, order[at])) > 0 {
+            let held = order[at];
+            order[at] = order[at - 1];
+            order[at - 1] = held;
+            at = at - 1;
+        }
+        n = n + 1;
+    }
+    return n;
+}
+
+// What is said of `seen`: the census, or with a set (`checked`) the forms that are not in it. The second answer is how many were not.
+fn report[&h, &m, &s](heap: &!h Heap, seen: &m map.Map[int], checked: bool, subset: &s [byte]) -> [heap] (buffer.Buffer, int) {
+    var out = buffer.empty(heap, 4096);
+    var outside = 0;
+    let order = box_slice(heap, map.entries(seen), 0);
+    borrow mut order as &!ow in {
+        let sorted = contents(ow);
+        sort_entries(seen, sorted);
+        var k = 0;
+        while k < len(sorted) {
+            let key = map.key_at(seen, sorted[k]);
+            if !checked {
+                out = buffer.append(heap, out, key);
+                out = buffer.push(heap, out, byte_of('\t'));
+                out = buffer.push_nat(heap, out, map.value_at(seen, sorted[k]));
+                out = buffer.push(heap, out, byte_of('\n'));
+            } else if !accepted(key, subset) {
+                out = buffer.append(heap, out, "not in the subset: ");
+                out = buffer.append(heap, out, key);
+                out = buffer.push(heap, out, byte_of('\n'));
+                outside = outside + 1;
+            }
+            k = k + 1;
+        }
+    }
+    unbox_slice(heap, order);
+    return (out, outside);
+}
+
+fn run[&h, &i, &a, &f](heap: &!h Heap, io: &!i Io, args: &a Args, fs: &f Fs("")) -> [heap, io_write, err_write, args, fs_read(""), file_read] int {
+    var census = Census { seen: map.empty(heap, 512, 0, 0), key: buffer.empty(heap, 256), apart: 0 };
+    var apart = map.empty(heap, 64, 0, 0);
+    var subset = buffer.empty(heap, 0);
+    // The files that are kept apart are read first, wherever they are written, so that every module is counted against all of them.
+    var n = 1;
+    while n + 1 < arg_count(args) {
+        if bytes.equal(arg(args, n), "--apart") {
+            let (text, failed) = read_all(heap, fs, arg(args, n + 1));
+            borrow text as &tb in {
+                apart = defined_names(heap, apart, buffer.bytes(tb));
+            }
+            buffer.drop(heap, text);
+            if failed != 0 {
+                console.error_all(io, "ll-census: cannot read a file of `--apart`\n");
+                return finish(heap, census, apart, subset, 2);
+            }
+            n = n + 1;
+        }
+        n = n + 1;
+    }
+    var checked = false;
+    var files = 0;
+    var status = 0;
+    n = 1;
+    while n < arg_count(args) && status == 0 {
+        let word = arg(args, n);
+        if bytes.equal(word, "--") {
+            // `cancho run FILE -- ARGUMENTS` passes the two dashes on.
+            status = 0;
+        } else if bytes.equal(word, "--subset") && n + 1 < arg_count(args) {
+            n = n + 1;
+            let (text, failed) = read_all(heap, fs, arg(args, n));
+            buffer.drop(heap, subset);
+            subset = text;
+            checked = true;
+            if failed != 0 {
+                console.error_all(io, "ll-census: cannot read the subset\n");
+                status = 2;
+            }
+        } else if bytes.equal(word, "--apart") && n + 1 < arg_count(args) {
+            n = n + 1;
+        } else if len(word) > 0 && int_of(word[0]) == '-' {
+            status = 2;
+        } else {
+            let (text, failed) = read_all(heap, fs, word);
+            if failed != 0 {
+                console.error_all(io, "ll-census: cannot read ");
+                console.error_all(io, word);
+                console.error_all(io, "\n");
+                status = 2;
+            } else {
+                borrow text as &tb in {
+                    borrow apart as &am in {
+                        census = module_census(heap, census, buffer.bytes(tb), am);
+                    }
+                }
+                files = files + 1;
+            }
+            buffer.drop(heap, text);
+        }
+        n = n + 1;
+    }
+    if status == 0 && files == 0 {
+        status = 2;
+    }
+    if status == 2 {
+        console.error_all(io, "usage: ll-census FILE.ll... [--apart FILE.ll]... [--subset SET]\n");
+    }
+    if status == 0 {
+        status = say(heap, io, census, checked, subset);
+        map.drop(heap, apart);
+        return status;
+    }
+    return finish(heap, census, apart, subset, status);
+}
+
+// Everything given back, and `status`.
+fn finish[&h](heap: &!h Heap, census: Census, names: map.Map[int], subset: buffer.Buffer, status: int) -> [heap] int {
+    let Census { seen, key, apart } = census;
+    map.drop(heap, seen);
+    map.drop(heap, names);
+    buffer.drop(heap, key);
+    buffer.drop(heap, subset);
+    return status;
+}
+
+// The report written, and the status: 1 if a form is outside the set.
+fn say[&h, &i](heap: &!h Heap, io: &!i Io, census: Census, checked: bool, subset: buffer.Buffer) -> [heap, io_write] int {
+    var status = 0;
+    let Census { seen, key, apart } = census;
+    if true {
+        borrow seen as &m in {
+            borrow subset as &sb in {
+                let (said, outside) = report(heap, m, checked, buffer.bytes(sb));
+                borrow said as &o in {
+                    buffer.write(io, o);
+                }
+                buffer.drop(heap, said);
+                if outside > 0 {
+                    status = 1;
+                }
+            }
+        }
+    }
+    map.drop(heap, seen);
+    buffer.drop(heap, key);
+    buffer.drop(heap, subset);
+    return status;
+}
+
+fn main(world: World) -> [] int {
+    let Split { io, ffi, fs, heap, args, net, clock, signals, exec } = split(world);
+    release(ffi);
+    release(net);
+    release(clock);
+    release(signals);
+    release(exec);
+    var status = 0;
+    borrow mut heap as &!h in {
+        borrow mut io as &!i in {
+            borrow args as &a in {
+                borrow fs as &f in {
+                    status = run(h, i, a, f);
+                }
+            }
+        }
+    }
+    release(fs);
+    release(args);
+    release(heap);
+    release(io);
+    return status;
+}

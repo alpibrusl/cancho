@@ -153,6 +153,7 @@
 - [Poison instead of a trap](poison.md)
 - [What Cranelift can and cannot do](backend-limits.md)
 - [The LLVM backend](llvm-backend.md)
+- [A backend of cancho's own](native-backend.md)
 - [WebAssembly target](wasm.md)
 - [No system: a bare-metal target](freestanding.md)
 - [The memory of the machine, by address: `Mmio`](mmio.md)

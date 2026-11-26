@@ -425,6 +425,7 @@ pub fn load_files[&h, &i, &f, &s, &e, &m](heap: &!h Heap, io: &!i Io, fs: &f Fs(
 // names (linux, darwin or linux-aarch64; the default is linux): a program cannot ask what it runs on.
 pub fn program_command[&h, &i, &a, &f, &x, &c](heap: &!h Heap, io: &!i Io, args: &a Args, fs: &f Fs(""), exec: &x Exec(""), clock: &c Clock, ids: bool, layout: bool, build: bool, run: bool, authority: int) -> [heap, io_read, io_write, err_write, args, fs_read(""), fs_write(""), file_read, file_write, exec(""), clock, poll] int {
     var json = false;
+    var native = false;
     var edges = false;
     var forward = false;
     var host = 0;
@@ -471,9 +472,10 @@ pub fn program_command[&h, &i, &a, &f, &x, &c](heap: &!h Heap, io: &!i Io, args:
             if n < arg_count(args) && bytes.equal(arg(args, n), "cranelift") {
                 return clibase.not_in_this_build(heap, io, "--backend", "cranelift");
             }
-            if ids || layout || n >= arg_count(args) || !bytes.equal(arg(args, n), "llvm") {
-                return clibase.usage_error(heap, io, "`--backend`: only llvm is available in `check` of this command line");
+            if ids || layout || authority != 0 || clibase.backend_of(args, n) < 0 {
+                return clibase.usage_error(heap, io, "`--backend` needs llvm or native, and is of `check`, `build`, `run` and `test`");
             }
+            native = clibase.backend_of(args, n) == 1;
         } else if build && bytes.equal(word, "-o") {
             n = n + 1;
             if n >= arg_count(args) {
@@ -596,7 +598,12 @@ pub fn program_command[&h, &i, &a, &f, &x, &c](heap: &!h Heap, io: &!i Io, args:
                 borrow laid as &lt in {
                     borrow mut lens as &!lb in {
                         borrow names as &nm in {
-                            status = clibase.report_check(heap, io, buffer.bytes(nm), buffer.bytes(lt), contents(lb), json && authority == 0, b.status, b.rule, b.from, b.to, buffer.bytes(b.more));
+                            if native && b.status == 0 {
+                                // The program is one the front end accepts, and the backend asked for cannot build it: said by the rule, and nothing is written.
+                                status = clibase.refuse_backend(heap, io, clibase.name_at(buffer.bytes(nm), 0), json);
+                            } else {
+                                status = clibase.report_check(heap, io, buffer.bytes(nm), buffer.bytes(lt), contents(lb), json && authority == 0, b.status, b.rule, b.from, b.to, buffer.bytes(b.more));
+                            }
                         }
                     }
                 }

@@ -14,7 +14,8 @@ module fixtures_run;
 // exit status is 1; otherwise `ok: N KIND fixtures`.
 //
 // The header is a comment the compiler ignores, a line each: `//~ STDIN`, `//~ STDOUT`, `//~ STDERR` (checked even when a fixture declares none),
-// `//~ EXIT` (default 0), `//~ ERROR`, `//~ RULE`, `//~ TARGET` (the triple `check` is asked about).
+// `//~ EXIT` (default 0), `//~ ERROR`, `//~ RULE`, `//~ TARGET` (the triple `check` is asked about), `//~ BACKEND` (the backend it is asked about:
+// a refusal that is the backend's and not the program's, `docs/native-backend.md`).
 
 import std.buffer;
 import std.bytes;
@@ -234,8 +235,8 @@ fn check_program[&h, &x, &c, &f, &b, &m, &r, &s, &l, &n](heap: &!h Heap, exec: &
     return rep;
 }
 
-// `bin check SOURCE [--output json] [--target T]`.
-fn run_check[&h, &x, &c, &b, &s, &t](heap: &!h Heap, exec: &x Exec(""), clock: &c Clock, bin: &b [byte], source_path: &s [byte], target: &t [byte], json: bool) -> [heap, exec(""), clock, poll] harness.Ended {
+// `bin check SOURCE [--output json] [--target T] [--backend B]`.
+fn run_check[&h, &x, &c, &b, &s, &t, &k](heap: &!h Heap, exec: &x Exec(""), clock: &c Clock, bin: &b [byte], source_path: &s [byte], target: &t [byte], backend: &k [byte], json: bool) -> [heap, exec(""), clock, poll] harness.Ended {
     var command = harness.word(heap, buffer.empty(heap, 64), "check");
     command = harness.word(heap, command, source_path);
     if json {
@@ -246,13 +247,17 @@ fn run_check[&h, &x, &c, &b, &s, &t](heap: &!h Heap, exec: &x Exec(""), clock: &
         command = harness.word(heap, command, "--target");
         command = harness.word(heap, command, target);
     }
+    if len(backend) > 0 {
+        command = harness.word(heap, command, "--backend");
+        command = harness.word(heap, command, backend);
+    }
     return harness.spawn_capture(heap, exec, clock, bin, command, "", "PATH=/usr/bin:/bin\0");
 }
 
 // The prose of a refusal: status 1, each `ERROR` text, a location.
-fn check_prose[&h, &x, &c, &b, &s, &t, &e, &l, &n](heap: &!h Heap, exec: &x Exec(""), clock: &c Clock, bin: &b [byte], source_path: &s [byte], target: &t [byte], errors: &e [byte], label: &l [byte], name: &n [byte], report: buffer.Buffer) -> [heap, exec(""), clock, poll] buffer.Buffer {
+fn check_prose[&h, &x, &c, &b, &s, &t, &k, &e, &l, &n](heap: &!h Heap, exec: &x Exec(""), clock: &c Clock, bin: &b [byte], source_path: &s [byte], target: &t [byte], backend: &k [byte], errors: &e [byte], label: &l [byte], name: &n [byte], report: buffer.Buffer) -> [heap, exec(""), clock, poll] buffer.Buffer {
     var rep = report;
-    let harness.Ended { out, err, kind, code } = run_check(heap, exec, clock, bin, source_path, target, false);
+    let harness.Ended { out, err, kind, code } = run_check(heap, exec, clock, bin, source_path, target, backend, false);
     borrow err as &eb in {
         let said = buffer.bytes(eb);
         if kind != 0 || code != 1 {
@@ -277,12 +282,12 @@ fn check_prose[&h, &x, &c, &b, &s, &t, &e, &l, &n](heap: &!h Heap, exec: &x Exec
 }
 
 // The rule of a refusal: the one `check --output json` reports is the one the fixture names.
-fn check_rule[&h, &x, &c, &b, &s, &t, &r, &l, &n](heap: &!h Heap, exec: &x Exec(""), clock: &c Clock, bin: &b [byte], source_path: &s [byte], target: &t [byte], rule: &r [byte], label: &l [byte], name: &n [byte], report: buffer.Buffer) -> [heap, exec(""), clock, poll] buffer.Buffer {
+fn check_rule[&h, &x, &c, &b, &s, &t, &k, &r, &l, &n](heap: &!h Heap, exec: &x Exec(""), clock: &c Clock, bin: &b [byte], source_path: &s [byte], target: &t [byte], backend: &k [byte], rule: &r [byte], label: &l [byte], name: &n [byte], report: buffer.Buffer) -> [heap, exec(""), clock, poll] buffer.Buffer {
     var rep = report;
     if len(rule) == 0 {
         return harness.failure(heap, rep, label, name, "declares no `//~ RULE`", "");
     }
-    let harness.Ended { out, err, kind, code } = run_check(heap, exec, clock, bin, source_path, target, true);
+    let harness.Ended { out, err, kind, code } = run_check(heap, exec, clock, bin, source_path, target, backend, true);
     borrow out as &ob in {
         let json = buffer.bytes(ob);
         let found = bytes.find(json, "\"rule\": \"");
@@ -320,6 +325,7 @@ fn check_refusal[&h, &x, &c, &f, &b, &s, &l, &n](heap: &!h Heap, exec: &x Exec("
         let errors = collect(heap, text, "ERROR");
         let rule = first_value(heap, text, "RULE", "");
         let target = first_value(heap, text, "TARGET", "");
+        let backend = first_value(heap, text, "BACKEND", "");
         var declares = false;
         borrow errors as &db in {
             declares = buffer.size(db) > 0;
@@ -330,21 +336,24 @@ fn check_refusal[&h, &x, &c, &f, &b, &s, &l, &n](heap: &!h Heap, exec: &x Exec("
             rep = harness.failure(heap, rep, label, name, "declares no expected error", "");
         } else {
             borrow target as &tb in {
-                borrow errors as &eb in {
-                    if selfhost {
-                        rep = check_prose(heap, exec, clock, bin, source_path, buffer.bytes(tb), "", label, name, rep);
-                    } else {
-                        rep = check_prose(heap, exec, clock, bin, source_path, buffer.bytes(tb), buffer.bytes(eb), label, name, rep);
+                borrow backend as &kb in {
+                    borrow errors as &eb in {
+                        if selfhost {
+                            rep = check_prose(heap, exec, clock, bin, source_path, buffer.bytes(tb), buffer.bytes(kb), "", label, name, rep);
+                        } else {
+                            rep = check_prose(heap, exec, clock, bin, source_path, buffer.bytes(tb), buffer.bytes(kb), buffer.bytes(eb), label, name, rep);
+                        }
                     }
-                }
-                borrow rule as &rb in {
-                    rep = check_rule(heap, exec, clock, bin, source_path, buffer.bytes(tb), buffer.bytes(rb), label, name, rep);
+                    borrow rule as &rb in {
+                        rep = check_rule(heap, exec, clock, bin, source_path, buffer.bytes(tb), buffer.bytes(kb), buffer.bytes(rb), label, name, rep);
+                    }
                 }
             }
         }
         buffer.drop(heap, errors);
         buffer.drop(heap, rule);
         buffer.drop(heap, target);
+        buffer.drop(heap, backend);
     }
     buffer.drop(heap, data);
     return rep;

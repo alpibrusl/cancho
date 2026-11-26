@@ -254,6 +254,11 @@ pub fn r_unsupported_on_target() -> [] int {
     return 57;
 }
 
+// A program the backend that was asked for cannot build (`docs/native-backend.md`): today, any program with `--backend native`.
+pub fn r_unsupported_by_backend() -> [] int {
+    return 58;
+}
+
 pub fn rule_tag(r: int) -> [] &static [byte] {
     if r < 3 {
         return lc.rule_name(r);
@@ -422,6 +427,9 @@ pub fn rule_tag(r: int) -> [] &static [byte] {
     }
     if r == 57 {
         return "unsupported-on-target";
+    }
+    if r == 58 {
+        return "unsupported-by-backend";
     }
     if r == 59 {
         return "thread-payload-type";

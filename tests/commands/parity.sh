@@ -33,7 +33,7 @@ parity() {
 }
 
 begin every_rule_of_the_rust_front_end_is_known_to_the_compiler_in_cancho
-same "$(wc -l < tests/rules.golden | tr -d ' ')" 63 "tests/rules.golden has 63 rules"
+same "$(wc -l < tests/rules.golden | tr -d ' ')" 64 "tests/rules.golden has 64 rules"
 parity rule tests/rules.golden tests/unported_rules.txt $D/*.cho
 # And the other way: a name in rules.cho that Rust does not have is a stale one.
 sort -u tests/rules.golden > "$work/wanted"

@@ -1,0 +1,288 @@
+# subset.txt -- the forms of LLVM text the compiler writes, by name: what scripts/ll-census.cho may find in a module (docs/native-backend.md, section 3).
+# A line is `KIND NAME` as the census prints it, without the count; one that ends in `*` accepts every form that begins so; `#` begins a comment.
+# tests/commands/native_subset.sh fails, naming the form, when the compiler's own module or the probe for no system holds a form that is not here: a change
+# to compiler/emit.cho or to compiler/runtime/ that widens what a reader of this text must take is then a change to this file, in the same pull request,
+# and to the table of section 3 of the document.
+#
+# Drawn on 2026-11-26 from the census of 459 modules: every program of tests/accept and examples that is one file, and the compiler, for linux, darwin and
+# linux-aarch64 (`--host`), and the six probes of tests/probes that build for aarch64-none-elf. Section 3 of the document says which forms no measured
+# program used and the sources can still write; there were none left out of this list for that reason.
+
+# Lines outside a function.
+string source_filename "cancho"
+top declare
+top define
+top global
+top source_filename
+top type
+
+# Instructions.
+instruction add
+instruction alloca
+instruction and
+instruction ashr
+instruction atomicrmw
+instruction bitcast
+instruction br
+instruction call
+instruction cmpxchg
+instruction extractvalue
+instruction fadd
+instruction fcmp
+instruction fdiv
+instruction fmul
+instruction fneg
+instruction fpext
+instruction fptosi
+instruction fptrunc
+instruction fsub
+instruction getelementptr
+instruction icmp
+instruction insertelement
+instruction insertvalue
+instruction inttoptr
+instruction load
+instruction lshr
+instruction mul
+instruction or
+instruction phi
+instruction ptrtoint
+instruction ret
+instruction sdiv
+instruction select
+instruction sext
+instruction shl
+instruction shufflevector
+instruction sitofp
+instruction srem
+instruction store
+instruction sub
+instruction switch
+instruction trunc
+instruction udiv
+instruction unreachable
+instruction xor
+instruction zext
+
+# Intrinsics.
+intrinsic llvm.ctlz.i64
+intrinsic llvm.ctpop.i64
+intrinsic llvm.cttz.i64
+intrinsic llvm.memset.p0.i64
+intrinsic llvm.sadd.with.overflow.i64
+intrinsic llvm.smul.with.overflow.i64
+intrinsic llvm.sqrt.f32
+intrinsic llvm.sqrt.f64
+intrinsic llvm.ssub.with.overflow.i64
+intrinsic llvm.uadd.with.overflow.i64
+intrinsic llvm.umul.with.overflow.i64
+intrinsic llvm.usub.with.overflow.i64
+
+# Types. `label` is what `br` writes before a block; `...` is a function type with more arguments, of a foreign call.
+type ...
+type <N x T>
+type [N x T]
+type double
+type float
+type i1
+type i128
+type i16
+type i32
+type i64
+type i8
+type label
+type ptr
+type void
+type {...}
+
+# Constants.
+constant [...]
+constant c"..."
+constant false
+constant hex-float
+constant integer
+constant null
+constant poison
+constant true
+constant undef
+constant zeroinitializer
+constant {...}
+
+# Inline assembly: the trap of each processor, the value barrier of `ct` code (an empty string, the value in a register), and for aarch64-none-elf the
+# registers and instructions of `Cpu` (docs/cpu.md): 171 names, read with `mrs` and written with `msr` and an `isb`, so the two are accepted by how they begin.
+asm "", "=r,0"
+asm "tlbi vmalle1\0Adsb nsh\0Aisb", ""
+asm "ud2", ""
+asm "udf #0xc11f", ""
+asm "wfi", ""
+asm "mrs $0, *
+asm "msr *
+
+# Words of a function's or a global's line: linkage, and what a function is marked with.
+string define "no-builtins"
+word define internal
+word define noinline
+word define noreturn
+word global align
+word global common
+word global constant
+word global external
+word global global
+word global internal
+word global private
+word global unnamed_addr
+
+# Words inside an instruction: flags, predicates, the `to` of a conversion, and the name of an instruction written as a constant expression.
+word add getelementptr
+word add nsw
+word add ptrtoint
+word add to
+word alloca align
+word atomicrmw add
+word atomicrmw align
+word atomicrmw getelementptr
+word atomicrmw inbounds
+word atomicrmw seq_cst
+word bitcast to
+word call align
+word call asm
+word call getelementptr
+word call ptrtoint
+word call sideeffect
+word call to
+word cmpxchg align
+word cmpxchg seq_cst
+word fcmp oeq
+word fcmp oge
+word fcmp ogt
+word fcmp ole
+word fcmp olt
+word fcmp une
+word fcmp uno
+word fpext to
+word fptosi to
+word fptrunc to
+word getelementptr inbounds
+word getelementptr nuw
+word icmp eq
+word icmp inttoptr
+word icmp ne
+word icmp sge
+word icmp sgt
+word icmp sle
+word icmp slt
+word icmp to
+word icmp uge
+word icmp ugt
+word icmp ule
+word icmp ult
+word inttoptr to
+word load acquire
+word load align
+word load atomic
+word load getelementptr
+word load inbounds
+word load volatile
+word mul getelementptr
+word mul nsw
+word mul ptrtoint
+word mul to
+word ptrtoint to
+word sext to
+word sitofp to
+word store align
+word store atomic
+word store release
+word store volatile
+word sub nsw
+word trunc to
+word zext to
+
+# The functions of the three files of hardware ciphers (compiler/runtime/crypto_*.ll), counted apart (`--apart`). They are NOT in the reader's contract:
+# the native backend leaves these functions out and the software paths run (epic #840, N5). They are listed so that this file accepts today's modules,
+# and so that a form new to them is seen too.
+apart asm "cpuid", "={ax},={bx},={cx},={dx},{ax},{cx}"
+apart constant <...>
+apart constant [...]
+apart constant integer
+apart constant null
+apart constant poison
+apart constant undef
+apart constant zeroinitializer
+apart instruction add
+apart instruction alloca
+apart instruction and
+apart instruction bitcast
+apart instruction br
+apart instruction call
+apart instruction extractelement
+apart instruction extractvalue
+apart instruction getelementptr
+apart instruction icmp
+apart instruction insertelement
+apart instruction insertvalue
+apart instruction load
+apart instruction lshr
+apart instruction or
+apart instruction phi
+apart instruction ret
+apart instruction select
+apart instruction shl
+apart instruction shufflevector
+apart instruction store
+apart instruction sub
+apart instruction trunc
+apart instruction xor
+apart instruction zext
+apart intrinsic llvm.aarch64.crypto.aese
+apart intrinsic llvm.aarch64.crypto.aesmc
+apart intrinsic llvm.aarch64.crypto.sha256h
+apart intrinsic llvm.aarch64.crypto.sha256h2
+apart intrinsic llvm.aarch64.crypto.sha256su0
+apart intrinsic llvm.aarch64.crypto.sha256su1
+apart intrinsic llvm.aarch64.neon.pmull64
+apart intrinsic llvm.bswap.v4i32
+apart intrinsic llvm.x86.aesni.aesenc
+apart intrinsic llvm.x86.aesni.aesenclast
+apart intrinsic llvm.x86.pclmulqdq
+apart intrinsic llvm.x86.sha256msg1
+apart intrinsic llvm.x86.sha256msg2
+apart intrinsic llvm.x86.sha256rnds2
+apart string define "+aes,+neon"
+apart string define "+aes,+pclmul,+ssse3,+sse2"
+apart string define "+sha,+sse2,+ssse3,+sse4.1"
+apart string define "+sha2,+neon"
+apart string define "target-features"
+apart top define
+apart type <N x T>
+apart type [N x T]
+apart type i1
+apart type i128
+apart type i32
+apart type i64
+apart type i8
+apart type i96
+apart type label
+apart type ptr
+apart type void
+apart type {...}
+apart word alloca align
+apart word bitcast to
+apart word call asm
+apart word call sideeffect
+apart word define alwaysinline
+apart word define internal
+apart word define noinline
+apart word icmp eq
+apart word icmp ne
+apart word icmp uge
+apart word icmp ult
+apart word load align
+apart word load atomic
+apart word load monotonic
+apart word store align
+apart word store atomic
+apart word store monotonic
+apart word store volatile
+apart word trunc to
+apart word zext to

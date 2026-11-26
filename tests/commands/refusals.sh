@@ -5,7 +5,8 @@ root=$(pwd)
 work=$2
 
 # The `--target T` of a fixture that names one on a `//~ TARGET T` line (a refusal that is a property of a target), else nothing.
-target_of() { sed -n 's/^[ \t]*\/\/~ TARGET \(.*\)$/\1/p' "$1" | head -1 | tr -d ' \t'; }
+# A fixture with a `//~ BACKEND B` line is a refusal that is a backend's (docs/native-backend.md), and is passed over here in the same way.
+target_of() { sed -n -e 's/^[ \t]*\/\/~ TARGET \(.*\)$/\1/p' -e 's/^[ \t]*\/\/~ BACKEND \(.*\)$/\1/p' "$1" | head -1 | tr -d ' \t'; }
 check() { # FILE JSONOUT PROSEOUT: check a reject fixture in both forms
     target=$(target_of "$1")
     if [ -n "$target" ]; then

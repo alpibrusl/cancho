@@ -180,6 +180,44 @@ pub fn not_in_this_build[&h, &i, &f, &v](heap: &!h Heap, io: &!i Io, flag: &f [b
     return status;
 }
 
+// The value of `--backend` at argument `n`: 0 for `llvm`, 1 for `native` (cancho's own, `docs/native-backend.md`), -1 for anything else or nothing.
+pub fn backend_of[&a](args: &a Args, n: int) -> [args] int {
+    if n < arg_count(args) && bytes.equal(arg(args, n), "llvm") {
+        return 0;
+    }
+    if n < arg_count(args) && bytes.equal(arg(args, n), "native") {
+        return 1;
+    }
+    return 0 - 1;
+}
+
+// `--backend native` for the program whose first file is `path`: refused by `unsupported-by-backend` (`docs/native-backend.md` section 8), as a refusal about the
+// program and not about a place in it, in the form `report_check` gives one. Nothing of the native backend is built yet, so this is every program; when it is,
+// this is where a module outside the subset is refused. Status 1, and the caller writes nothing.
+pub fn refuse_backend[&h, &i, &p](heap: &!h Heap, io: &!i Io, path: &p [byte], json: bool) -> [heap, io_write, err_write] int {
+    if json {
+        var out = buffer.append(heap, buffer.empty(heap, 512), "{\n  \"refused\": [\n");
+        let sentence = rules.sentence(rules.rule_tag(rules.r_unsupported_by_backend()));
+        out = buffer.append(heap, out, "    {\n      \"rule\": ");
+        out = diagnose.json_string(heap, out, rules.rule_tag(rules.r_unsupported_by_backend()));
+        out = buffer.append(heap, out, ",\n      \"message\": ");
+        out = diagnose.json_string(heap, out, sentence);
+        out = buffer.append(heap, out, ",\n      \"explanation\": ");
+        out = diagnose.json_string(heap, out, sentence);
+        out = buffer.append(heap, out, ",\n      \"position\": null\n    }");
+        out = buffer.append(heap, out, "\n  ]\n}\n");
+        show(heap, io, out);
+    } else {
+        var out = diagnose.render_program(heap, buffer.empty(heap, 512), path, rules.r_unsupported_by_backend(), 0);
+        out = buffer.append(heap, out, "\n    the native backend is not built yet: nothing was written, and `--backend llvm` builds this program\n");
+        borrow out as &t in {
+            console.error_all(io, buffer.bytes(t));
+        }
+        buffer.drop(heap, out);
+    }
+    return 1;
+}
+
 // A bad command line: what is wrong, then the usage, on the standard error. Status 2.
 pub fn usage_error[&h, &i, &w](heap: &!h Heap, io: &!i Io, why: &w [byte]) -> [heap, err_write] int {
     console.error_all(io, why);
