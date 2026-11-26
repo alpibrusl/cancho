@@ -272,7 +272,7 @@ differences; neither is built.
 
 ## 16. Slice 10: `test`
 
-`cli.cho test [--host H] [--std-dir DIR] [--backend llvm] [--clang PATH] [-l NAME]... [-L PATH]... FILE...` finds the `test_*` functions of the
+`cli.cho test [--host H] [--std-dir DIR] [--backend llvm|native] [--clang PATH] [-l NAME]... [-L PATH]... FILE...` finds the `test_*` functions of the
 files, builds one program of the files and a runner written for them, and runs each test as a process of its own, as `cancho test` does
 (`docs/testing.md` §3, `test_cli.rs`).
 

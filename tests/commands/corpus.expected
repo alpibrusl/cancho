@@ -1,5 +1,5 @@
 ok the_three_walkers_are_stage_walk_of_the_gate
-rules: 63 in the catalogue, 58 declared by a fixture
+rules: 64 in the catalogue, 59 declared by a fixture
 ok every_rule_has_a_fixture
 ok run_builds_and_executes_in_one_step
 ok the_multi_file_example_builds_and_runs

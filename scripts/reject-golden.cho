@@ -136,16 +136,16 @@ fn rows_of_json[&h, &n, &s](heap: &!h Heap, out: buffer.Buffer, name: &n [byte],
     return (b, good);
 }
 
-// The first `//~ TARGET T` line of `source`: its `T`, trimmed, in `target`; whether there is one.
-fn target_of[&h, &s](heap: &!h Heap, source: &s [byte]) -> [heap] (buffer.Buffer, bool) {
+// The first `//~ TARGET T` line of `source` (or, for another `key`, `//~ BACKEND B`): its `T`, trimmed, in `target`; whether there is one.
+fn header_of[&h, &s, &k](heap: &!h Heap, source: &s [byte], key: &k [byte]) -> [heap] (buffer.Buffer, bool) {
     var target = buffer.empty(heap, 16);
     var found = false;
     let lines = bytes.count_byte(source, 10) + 1;
     var n = 1;
     while n <= lines && !found {
         let line = bytes.field(source, 10, n);
-        if bytes.starts_with(line, "//~ TARGET ") {
-            target = buffer.append(heap, target, bytes.trim(line[11..len(line)]));
+        if bytes.starts_with(line, key) {
+            target = buffer.append(heap, target, bytes.trim(line[len(key)..len(line)]));
             found = true;
         }
         n = n + 1;
@@ -153,7 +153,7 @@ fn target_of[&h, &s](heap: &!h Heap, source: &s [byte]) -> [heap] (buffer.Buffer
     return (target, found);
 }
 
-// One program of tests/reject: `cancho check PATH --output json [--target T]` and what it said, as rows added to `out`.
+// One program of tests/reject: `cancho check PATH --output json [--target T] [--backend B]` and what it said, as rows added to `out`.
 fn refusals_of[&h, &x, &c, &f, &b, &p, &n](heap: &!h Heap, exec: &x Exec(""), clock: &c Clock, fs: &f Fs(""), bin: &b [byte], path: &p [byte], name: &n [byte], acc: buffer.Buffer) -> [heap, exec(""), clock, poll, fs_read(""), file_read] buffer.Buffer {
     var rows = acc;
     let harness.Contents { data, failed } = harness.read_file(heap, fs, path);
@@ -162,7 +162,7 @@ fn refusals_of[&h, &x, &c, &f, &b, &p, &n](heap: &!h Heap, exec: &x Exec(""), cl
     command = harness.word(heap, command, "--output");
     command = harness.word(heap, command, "json");
     borrow data as &db in {
-        let (target, found) = target_of(heap, buffer.bytes(db));
+        let (target, found) = header_of(heap, buffer.bytes(db), "//~ TARGET ");
         if found {
             command = harness.word(heap, command, "--target");
             borrow target as &tb in {
@@ -170,6 +170,14 @@ fn refusals_of[&h, &x, &c, &f, &b, &p, &n](heap: &!h Heap, exec: &x Exec(""), cl
             }
         }
         buffer.drop(heap, target);
+        let (backend, asked) = header_of(heap, buffer.bytes(db), "//~ BACKEND ");
+        if asked {
+            command = harness.word(heap, command, "--backend");
+            borrow backend as &kb in {
+                command = harness.word(heap, command, buffer.bytes(kb));
+            }
+        }
+        buffer.drop(heap, backend);
     }
     buffer.drop(heap, data);
     let harness.Ended { out, err, kind, code } = harness.spawn_capture(heap, exec, clock, bin, command, "", "PATH=/usr/bin:/bin\0");

@@ -60,4 +60,5 @@ unknown-escape
 unknown-name
 unreachable-statement
 unsized-type
+unsupported-by-backend
 unsupported-on-target

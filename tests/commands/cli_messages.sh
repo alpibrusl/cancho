@@ -15,7 +15,7 @@ begin the_message_of_a_refusal_holds_the_text_its_fixture_expects
 # One awk pass over the reply of `check --output json` for each fixture: the first `"message": "..."` unescaped, and whether it contains the expected text.
 n=0
 for f in tests/reject/*.cho; do
-    grep -q '^//~ TARGET ' "$f" && continue
+    grep -q '^//~ TARGET \|^//~ BACKEND ' "$f" && continue
     want=$(sed -n 's|^//~ ERROR ||p' "$f" | head -1 | sed 's/^[ \t]*//; s/[ \t]*$//')
     [ -n "$want" ] || continue
     n=$((n + 1))

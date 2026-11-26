@@ -1,0 +1,14 @@
+//~ ERROR The backend that was asked for cannot build this program
+//~ RULE unsupported-by-backend
+//~ BACKEND native
+// `docs/native-backend.md` section 8: `--backend native` is cancho's own backend, and nothing of it is built yet, so it refuses every program by this rule and
+// writes nothing. The same file passes `cancho check` with no `--backend`, or with `--backend llvm`: the refusal is the backend's, not the program's.
+fn main(world: World) -> [] int {
+    let Split { io, ffi, fs, heap, args } = split(world);
+    release(io);
+    release(ffi);
+    release(fs);
+    release(heap);
+    release(args);
+    return 0;
+}

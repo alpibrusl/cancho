@@ -1,24 +1,24 @@
 ok the_command_line_in_cancho_writes_the_agent_guidelines
---help: exit 0 out 804504465 err 4294967295 file 
--h: exit 0 out 804504465 err 4294967295 file 
-help: exit 0 out 804504465 err 4294967295 file 
-introspect: exit 0 out 296021289 err 4294967295 file 
-introspect --output json: exit 0 out 646927898 err 4294967295 file 
-introspect --output=table: exit 0 out 4237825822 err 4294967295 file 
-introspect --output text: exit 0 out 296021289 err 4294967295 file 
-introspect extra --output=json: exit 0 out 646927898 err 4294967295 file 
-skill: exit 0 out 1191175917 err 4294967295 file 
-skill --output json: exit 0 out 1722268986 err 4294967295 file 
-skill --output=table: exit 0 out 1191175917 err 4294967295 file 
-skill out.md: exit 0 out 2426419078 err 4294967295 file 1191175917
-skill --output json out.md: exit 0 out 1037416790 err 4294967295 file 1191175917
-skill --output table out.md: exit 0 out 2426419078 err 4294967295 file 1191175917
-skill out.md --output text: exit 0 out 2426419078 err 4294967295 file 1191175917
-introspect --output: exit 2 out 4294967295 err 2283858039 file 
-introspect --output bogus: exit 2 out 4294967295 err 3233607574 file 
-skill --output=bogus: exit 2 out 4294967295 err 3233607574 file 
-skill --output: exit 2 out 4294967295 err 2283858039 file 
-skill --output json QUOTED: exit 0 out 3374784316 err 4294967295 file 1191175917
+--help: exit 0 out 4253089873 err 4294967295 file 
+-h: exit 0 out 4253089873 err 4294967295 file 
+help: exit 0 out 4253089873 err 4294967295 file 
+introspect: exit 0 out 538676803 err 4294967295 file 
+introspect --output json: exit 0 out 83526123 err 4294967295 file 
+introspect --output=table: exit 0 out 3295537487 err 4294967295 file 
+introspect --output text: exit 0 out 538676803 err 4294967295 file 
+introspect extra --output=json: exit 0 out 83526123 err 4294967295 file 
+skill: exit 0 out 1752399717 err 4294967295 file 
+skill --output json: exit 0 out 3371037471 err 4294967295 file 
+skill --output=table: exit 0 out 1752399717 err 4294967295 file 
+skill out.md: exit 0 out 2426419078 err 4294967295 file 1752399717
+skill --output json out.md: exit 0 out 3143159841 err 4294967295 file 1752399717
+skill --output table out.md: exit 0 out 2426419078 err 4294967295 file 1752399717
+skill out.md --output text: exit 0 out 2426419078 err 4294967295 file 1752399717
+introspect --output: exit 2 out 4294967295 err 2887002836 file 
+introspect --output bogus: exit 2 out 4294967295 err 601118921 file 
+skill --output=bogus: exit 2 out 4294967295 err 601118921 file 
+skill --output: exit 2 out 4294967295 err 2887002836 file 
+skill --output json QUOTED: exit 0 out 3875530449 err 4294967295 file 1752399717
 ok the_command_line_in_cancho_answers_help_and_the_command_tree_like_cancho
 ok the_command_line_in_cancho_reads_a_path_with_dot_dot_like_cancho
 exit 1

@@ -374,13 +374,14 @@ pub fn test_set[&h, &i, &a, &f, &x, &c, &l, &s, &k](heap: &!h Heap, io: &!i Io, 
     return status;
 }
 
-// `test [--host H] [--std-dir DIR] [--backend llvm] [--clang PATH] [-l LIB] [-L DIR] FILE...` (`docs/cli-in-cancho.md` section 16): the tests of the
+// `test [--host H] [--std-dir DIR] [--backend llvm|native] [--clang PATH] [-l LIB] [-L DIR] FILE...` (`docs/cli-in-cancho.md` section 16): the tests of the
 // files (`testscan.cho`) are found, one program is built of the files and the runner that is written for them, and each test is run as a process of
 // its own (the runner takes the number of the test as its argument), with the report of `cancho test`. Exit status 0 if all passed, 4 if one did not,
 // 1 for a refusal, 2 for a usage error or a program with no tests, 3 for what could not be done. The program is built next to the first file, as `run`
 // does, and taken away.
 pub fn test_command[&h, &i, &a, &f, &x, &c](heap: &!h Heap, io: &!i Io, args: &a Args, fs: &f Fs(""), exec: &x Exec(""), clock: &c Clock) -> [heap, io_write, err_write, args, fs_read(""), fs_write(""), file_read, file_write, exec(""), clock, poll] int {
     var host = 0;
+    var native = false;
     var host_given = false;
     var clang_at = 0 - 1;
     var std_dir = 0 - 1;
@@ -411,9 +412,10 @@ pub fn test_command[&h, &i, &a, &f, &x, &c](heap: &!h Heap, io: &!i Io, args: &a
             if n < arg_count(args) && bytes.equal(arg(args, n), "cranelift") {
                 return clibase.not_in_this_build(heap, io, "--backend", "cranelift");
             }
-            if n >= arg_count(args) || !bytes.equal(arg(args, n), "llvm") {
-                return clibase.usage_error(heap, io, "`--backend`: only llvm is available in this command line");
+            if clibase.backend_of(args, n) < 0 {
+                return clibase.usage_error(heap, io, "`--backend` needs llvm or native, and is of `check`, `build`, `run` and `test`");
             }
+            native = clibase.backend_of(args, n) == 1;
         } else if bytes.equal(word, "-l") || bytes.equal(word, "-L") {
             n = n + 1;
             if n >= arg_count(args) {
@@ -446,6 +448,16 @@ pub fn test_command[&h, &i, &a, &f, &x, &c](heap: &!h Heap, io: &!i Io, args: &a
     }
     if files == 0 {
         return clibase.usage_error(heap, io, "no file given");
+    }
+    if native {
+        // Nothing of the native backend is built yet (`docs/native-backend.md` section 8), so there is no program to run the tests of: said before anything is read.
+        let given = cliprog.files_of_args(heap, args, true, false);
+        var refused = 1;
+        borrow given as &gb in {
+            refused = clibase.refuse_backend(heap, io, clibase.name_at(buffer.bytes(gb), 0), false);
+        }
+        buffer.drop(heap, given);
+        return refused;
     }
     var std_path = buffer.empty(heap, 0);
     if std_dir >= 0 {
