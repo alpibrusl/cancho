@@ -1,10 +1,9 @@
 # A backend of cancho's own
 
-> **Status: the contract, the flag and the reader are built; no code generator is** (epic #840; N0 in #858, N1 in #860, N2 in #863. What exists: `scripts/ll-census.cho` and `tests/native/subset.txt` (what the compiler may write, by name), the reader
+> **Status: it builds programs for AArch64 on Linux, and objects for AArch64 with no system; it is not the default, and writes no image** (epic #840; N0 in #858, N1 in #860, N2 in #863. What exists: `scripts/ll-census.cho` and `tests/native/subset.txt` (what the compiler may write, by name), the reader
 > and its printer (`compiler/native/`, section 10), `--backend roundtrip` (every program a test of the reader) and `--backend native`,
-> which reads the module with vectors refused and then refuses the program by `unsupported-by-backend`, since nothing can yet write
-> code for it. The AArch64 encoder (section 11, N2) is held to clang's assembler, and the first code generator (section 12, N3) makes code that was
-> run under qemu, the compiler's own included; there is no object writer yet. Objects and images are N4 to N15. Every number below was produced by the command next to it
+> which reads the module with vectors refused and, for a machine it has no code for, refuses the program by `unsupported-by-backend`. The AArch64 encoder (section 11, N2) is held to clang's assembler, and the first code generator (section 12, N3) makes code that was
+> run under qemu, the compiler's own included; N4 writes ELF objects, and `--backend native` builds programs for AArch64 on Linux and objects for no system (section 13). Images, and the other machines, are N5 to N15. Every number below was produced by the command next to it
 > on linux-x86_64 (clang 18.1.3), at the commit that adds the section it is in, unless it says it is the epic's.
 
 The goal, in one sentence: from a cancho program to machine code and to a file that runs, with no clang, no LLVM and no system
@@ -233,15 +232,19 @@ covers both and is run by hand; it is cheap to make a nightly job of, and N1's r
 
 ```sh
 cancho build x.cho --backend llvm     # the default; the module and the program are byte for byte what they were
-cancho build x.cho --backend native   # status 1, `unsupported-by-backend`, nothing written
-cancho check x.cho --backend native --output json   # the same refusal, as data
+cancho build x.cho --backend native   # for AArch64 on Linux or with no system: the program, with no clang and no LLVM (section 13)
+cancho build x.cho --backend native --host linux   # another machine: status 1, `unsupported-by-backend`, nothing written
+cancho check x.cho --backend native --host linux --output json   # the same refusal, as data
 ```
+
+(Until N4 the second line was true of every machine, and this section said so.)
 
 `--backend` is taken by `build`, `check`, `run` and `test` (`compiler/cliprog.cho`, `clitest.cho`, `clibase.backend_of`); a
 command that builds nothing (`ids`, `layout`, `authority`) refuses it as a usage error, and so is a value that is neither.
 All four check the program first. (`test --backend native` refused before it read the files until N1, when there was nothing
 to read a module with.) `tests/reject/backend_native_not_built.cho` is the rule's fixture, with a new header line,
-`//~ BACKEND native`, that the fixture walker passes to `check` as it passes `//~ TARGET`.
+`//~ BACKEND native --host linux`, that the fixture walker passes to `check` as it passes `//~ TARGET` (the words after the
+backend's name are passed too, since N4: the fixture must be refused on a machine the backend does write code for).
 
 ---
 
@@ -643,13 +646,96 @@ which the kernel's module showed.
 
 ### 12.7 Not done
 
-- **Objects, and so `--backend native` building anything**: N4. Today it reads the module, makes its code for
-  `linux-aarch64` and `aarch64-none-elf`, drops it, and says there is no object to put it in; for another machine it says so
-  after reading.
-- **Vectors.** `byte_mask64` is still one; the proposal of section 3.4 stands, and N6 cannot do without an answer.
-- **The hardware ciphers**: their functions were made traps for the runs above, and the two functions that say whether the
-  processor has the instructions were made to say no. N5 has the driver write that.
+- ~~Objects, and so `--backend native` building anything~~: done, section 13.
+- ~~Vectors: `byte_mask64` is still one~~: for the native backend the driver writes it with none, section 13.2. The generator
+  still has no vector, and refuses one.
+- ~~The hardware ciphers~~: the driver writes the two answers "no" and the traps that the runs above were given by hand,
+  section 13.2. The instructions themselves are still not used by the native backend's programs.
 - **Speed.** Nothing is measured against clang's code but the 5 min 31 s above, which is mostly qemu's.
 - **The stack is not probed.** A frame of megabytes is taken in one step past any guard page.
 - macOS and x86-64 (N15, N14).
+
+---
+
+## 13. Objects (N4)
+
+`compiler/native/elf.cho` writes what the generator made as an ELF relocatable object for AArch64, and `cancho build
+--backend native` is then a program: the object is linked by the system's linker, started through the same `--clang` as
+before, which is given an object and compiles nothing. For a machine with no system, `--emit obj` is the object and nothing
+is started at all.
+
+### 13.1 The file
+
+Eleven sections, always the same ones in the same order, so that two runs write the same bytes:
+
+| section | holds |
+|---|---|
+| `.text` | the functions, one after another, each aligned to 4 |
+| `.rodata` | the constants in which no address is written |
+| `.data` | the other values of the module, a constant that holds an address among them |
+| `.bss` | the values that are all zero (no bytes in the file) |
+| `.symtab`, `.strtab` | a symbol for each name the module defines (the `internal` ones first, as the format asks), and an undefined one for each name it only uses |
+| `.rela.text` | `R_AARCH64_CALL26` for a call; `ADR_PREL_PG_HI21` and `ADD_ABS_LO12_NC` for the address of a name of the module; `ADR_GOT_PAGE` and `LD64_GOT_LO12_NC` for one of another object |
+| `.rela.data` | `R_AARCH64_ABS64` for an address written in a value |
+| `.shstrtab`, `.note.GNU-stack` | the sections' names; and the empty note that says the stack is not code |
+
+The generator's relocations (section 12.5) already had these six kinds; the writer gives each its symbol and its addend and
+changes no word of the code. There is one `.text`, not a section for each function, so a link drops nothing the program does
+not reach: N7 needs that for a kernel, and section 12.6's 1.69 MB is what it costs today.
+
+### 13.2 What the module carries for this backend
+
+The generator has no vectors and none of the processor's cipher instructions, and three pieces of the text the driver writes
+are made of them. Asked for the native backend, the driver (`compiler/nativert.cho`, a bit of the feature cell) writes each
+another way; asked for LLVM it writes what it always wrote, byte for byte.
+
+| what | for LLVM | for the native backend |
+|---|---|---|
+| `byte_mask64`, the search of `std.bytes` | four compares of 16 bytes | `@cancho_byte_mask64`: a loop of 64 single compares |
+| "has the processor AES and the carry-less multiply?", "has it SHA-256?" | asked of the processor | no, both |
+| the functions that use those instructions | the instructions | traps that nothing reaches, since the answers are no |
+
+So the library takes the paths it takes on a processor with no such instruction, which the suites already test. This is
+slower, and it is the answer section 3.4 asked for only in part: a search of bytes is 64 loads where it was four.
+
+### 13.3 The gate
+
+Stage `native` of `scripts/gate.sh` builds the programs of stage `walk` that are run (`tests/accept`, `examples`) and every
+`cancho test` run of stage `tests` with `--backend native`, and holds each to what its fixture says it prints and to its number
+of tests. It runs where the backend has a machine, Linux on AArch64 (a job of its own in CI, `gate-native`); elsewhere it says
+it does not run and passes. The programs of `tests/reject` are not run again: a program the front end refuses never reaches a
+backend, and `tests/commands/native_elf.sh` holds three of them to the same answer with either.
+
+On every machine, `tests/commands/native_elf.sh` holds the writer to the bytes of the object that was linked and run
+(`tests/native/gen/tricky.o.hex`, 9,592 bytes; `llvm-readelf -a` and `llvm-objdump -dr` read it with no warning, and what
+`readelf` says is kept beside it), shows that one instruction or one value changed is another object, and builds the four
+programs for no system as objects with a `--clang` that does not exist.
+
+### 13.4 What was measured
+
+Linux on x86-64, clang 18.1.3 as the other compiler, `qemu-aarch64` 8.2.2 as the machine. The linker was `aarch64-linux-gnu-gcc`,
+given as `--clang`, and for the runs below it left a script at the output that starts the program under qemu, so that the
+compiler on x86-64 and the walker could run what they had built.
+
+| what | result |
+|---|---|
+| `tests/native/gen/tricky.ll` as an object | 9,592 bytes; `llvm-readelf -a` and `llvm-objdump -dr` read it with no warning; linked, it prints what section 12.6's run printed |
+| **Every `cancho test` run of `tests/cancho-tests.txt`** (17 runs, 266 tests), built with `--backend native` and run under qemu | **all pass**, with the number of tests each must have. `native_reader`, whose tests damage a module a byte at a time, takes 410 s there |
+| **`tests/accept` and `examples`, by the gate's own walker** (134 and 16 programs) | all the examples, and all of `tests/accept` **but two**: `exec_spawn_under` and `exec_spawn_detached_under` print `worker code 127`. Built by clang and run under the same qemu they print the same: the emulator does not start a program by a directory and a name. **On a real machine they pass**: the first run of the CI job of section 13.3 (Linux on AArch64, a GitHub runner) passed the whole stage, these two included, in 9 minutes from the checkout, the compiler's own build from the seed among them |
+| **The compiler, built by the native backend, building itself with the native backend** (under qemu), and that one again | the second object and the third are the same 11,673,352 bytes, **and they are the bytes the clang-built compiler writes for the same sources**. 517 s for one build under qemu |
+| The compiler's object, from its sources, on x86-64 | 10.6 s with `--backend native`, of which 9.7 s is the front end writing the module; clang takes 45 s for the object alone. 11.7 MB against clang's 5.2 MB |
+| The four programs for no system (`freestanding`, `cpu`, `mmio`, `bare_heap`) with `--emit obj` and a `--clang` that does not exist | four objects for AArch64; the LLVM backend, asked the same, fails for want of clang |
+| `llvm-nm -u` on the objects | for a program of Linux, functions of the C library and nothing else; for `bare_heap`, the heap's two ends and nothing else. (The first objects also named LLVM's own functions, `llvm.ctlz.i64` and eleven more, as symbols for the linker to find; nothing used them, so every link passed, and `nm` showed it) |
+| One `sub` made an `add` in the module, and one value 5 made 6 | each one line of the object's bytes changed: the gate's comparison can fail |
+
+A `cancho test` run built natively was also the first time section 13.2 was run whole: the searches of `std.bytes` and the
+ciphers' tests pass with no vector and no cipher instruction in the program.
+
+### 13.5 Not done
+
+- **A section for each function**, and so a link that drops what is not reached: N7.
+- **Debug information, and unwinding tables.** A debugger sees symbols and no lines.
+- **Vectors and the cipher instructions** in the generator (section 13.2 goes round them).
+- **The linker.** It is still the system's; N7 writes an image for no system without one.
+- macOS and x86-64 (N15, N14): `--backend native` refuses them by the rule.
 

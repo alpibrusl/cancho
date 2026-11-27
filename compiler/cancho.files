@@ -72,6 +72,7 @@ native/a64fn.cho
 native/a64frame.cho
 native/a64gen.cho
 native/a64sys.cho
+native/elf.cho
 native/llback.cho
 native/llbody.cho
 native/lllayout.cho
@@ -80,6 +81,7 @@ native/llout.cho
 native/llprint.cho
 native/llread.cho
 native/lltop.cho
+nativert.cho
 netcode.cho
 pass1.cho
 platform.cho

@@ -1,0 +1,564 @@
+edition 7;
+module selfhost.elf;
+
+// elf.cho -- the code of a module and its data as an ELF relocatable object for AArch64 (`docs/native-backend.md` section 13): what the system's linker
+// takes where it took clang's object. `.text` is the functions, one after another; `.rodata` the constants that hold no address; `.data` the other values;
+// `.bss` the ones that are zero. A name of the module is a symbol; a name the module only uses is an undefined one, for the linker to find.
+//
+// No trap on any module the reader read and the code generator made code for: what cannot be written (a value the object has no form for) is a refusal.
+
+import std.buffer;
+import selfhost.llmod as lm;
+import selfhost.llread as lr;
+import selfhost.lllayout as ly;
+import selfhost.llout as out;
+import selfhost.a64frame as fr;
+
+// `n` bytes of `value`, the low one first.
+fn le[&h](heap: &!h Heap, b: buffer.Buffer, value: int, n: int) -> [heap] buffer.Buffer {
+    var o = b;
+    var k = 0;
+    while k < n {
+        if k < 8 {
+            o = buffer.push(heap, o, byte_of(value >> 8 * k & 255));
+        } else {
+            // Past 64 bits: the sign.
+            o = buffer.push(heap, o, byte_of(value >> 63 & 255));
+        }
+        k = k + 1;
+    }
+    return o;
+}
+
+fn zeros[&h](heap: &!h Heap, b: buffer.Buffer, n: int) -> [heap] buffer.Buffer {
+    var o = b;
+    var k = 0;
+    while k < n {
+        o = buffer.push(heap, o, byte_of(0));
+        k = k + 1;
+    }
+    return o;
+}
+
+// `b` padded with zeros to a multiple of `align`.
+fn pad[&h](heap: &!h Heap, b: buffer.Buffer, align: int) -> [heap] buffer.Buffer {
+    var size = 0;
+    borrow b as &r in {
+        size = buffer.size(r);
+    }
+    if align <= 1 {
+        return b;
+    }
+    return zeros(heap, b, (align - size % align) % align);
+}
+
+fn size_of_buffer(b: buffer.Buffer) -> [] (buffer.Buffer, int) {
+    var size = 0;
+    borrow b as &r in {
+        size = buffer.size(r);
+    }
+    return (b, size);
+}
+
+// The bits of a single that is the double whose bits are `d` (a constant of type `float` is written as that double, and is one a single holds exactly).
+fn single_bits(d: int) -> [] int {
+    let sign = d >> 63 & 1;
+    let exponent = d >> 52 & 2047;
+    let mantissa = d & (1 << 52) - 1;
+    if exponent == 0 {
+        return sign << 31;
+    }
+    if exponent == 2047 {
+        return sign << 31 | 255 << 23 | mantissa >> 29;
+    }
+    let e = exponent - 1023 + 127;
+    if e <= 0 {
+        return sign << 31;
+    }
+    if e >= 255 {
+        return sign << 31 | 255 << 23;
+    }
+    return sign << 31 | e << 23 | mantissa >> 29;
+}
+
+// ---- what is known of each name: four cells a slot of the module's table of names ----
+
+// The section a name is in (0 undefined, or one of the numbers below), where it is in it, its size, and its number among the symbols (0: it has none).
+fn s_text() -> [] int {
+    return 1;
+}
+
+fn s_rodata() -> [] int {
+    return 2;
+}
+
+fn s_data() -> [] int {
+    return 3;
+}
+
+fn s_bss() -> [] int {
+    return 4;
+}
+
+fn info_of[&m](m: &m [int], slot: int) -> [] int {
+    return (slot - lm.cell(m, lm.h_gh())) / 4 * 4;
+}
+
+// Does the constant operand at `at` hold the address of a name anywhere in it?
+fn has_address[&m](m: &m [int], at: int, depth: int) -> [] bool {
+    let kind = lm.cell(m, at + 1);
+    let a = lm.cell(m, at + 2);
+    if kind == lr.o_global() {
+        return true;
+    }
+    if kind != lr.o_const() || depth > lm.deepest() {
+        return false;
+    }
+    let which = lm.cell(m, a + 2);
+    if which == lr.c_ints() || which == lr.c_cstring() {
+        return false;
+    }
+    if which == lr.c_expr() {
+        return fr.constant(m, at, 0).slot >= 0;
+    }
+    var k = 0;
+    while k < lm.cell(m, a + 4) {
+        if has_address(m, a + lr.const_head() + 4 * k, depth + 1) {
+            return true;
+        }
+        k = k + 1;
+    }
+    return false;
+}
+
+// Is the constant operand at `at` all zeros?
+fn is_zero[&m](m: &m [int], at: int) -> [] bool {
+    let kind = lm.cell(m, at + 1);
+    return kind == lr.o_word() && lm.cell(m, at + 2) != 5 || kind == lr.o_int() && lm.cell(m, at + 2) == 0;
+}
+
+// One relocation of 24 bytes.
+fn rela[&h](heap: &!h Heap, b: buffer.Buffer, offset: int, symbol: int, kind: int, addend: int) -> [heap] buffer.Buffer {
+    var o = le(heap, b, offset, 8);
+    o = le(heap, o, symbol << 32 | kind, 8);
+    return le(heap, o, addend, 8);
+}
+
+// The value of the constant operand at `at`, of type `ty`, as its bytes at the end of `bytes` (a section); an address in it is eight zeros and a relocation
+// at the end of `relocs`. The third answer is 1 for a value the object has no form for.
+fn value[&h, &t, &m, &i](heap: &!h Heap, text: &t [byte], m: &m [int], info: &i [int], bytes: buffer.Buffer, relocs: buffer.Buffer, at: int, ty: int, depth: int) -> [heap] (buffer.Buffer, buffer.Buffer, int) {
+    var b = bytes;
+    var r = relocs;
+    var bad = 0;
+    let kind = lm.cell(m, at + 1);
+    let a = lm.cell(m, at + 2);
+    let size = ly.size_of(m, ty);
+    let t = lm.resolved(m, ty);
+    if depth > lm.deepest() {
+        return (b, r, 1);
+    }
+    if fr.word_size(m, ty) >= 0 || fr.is_wide(m, ty) {
+        let c = fr.constant(m, at, 0);
+        if !c.good {
+            return (zeros(heap, b, size), r, 1);
+        }
+        if c.slot >= 0 {
+            // An address: the linker writes it. R_AARCH64_ABS64 is 257.
+            if size != 8 || info[info_of(m, c.slot) + 3] == 0 {
+                bad = 1;
+            }
+            let (kept, here) = size_of_buffer(b);
+            r = rela(heap, r, here, info[info_of(m, c.slot) + 3], 257, c.offset);
+            return (zeros(heap, kept, 8), r, bad);
+        }
+        return (le(heap, b, c.offset, size), r, 0);
+    }
+    if fr.float_kind(m, ty) >= 0 {
+        var bits = 0;
+        if kind == lr.o_float() {
+            bits = a;
+        } else if kind != lr.o_word() {
+            bad = 1;
+        }
+        if fr.float_kind(m, ty) == 0 {
+            bits = single_bits(bits);
+        }
+        return (le(heap, b, bits, size), r, bad);
+    }
+    if kind == lr.o_word() {
+        return (zeros(heap, b, size), r, 0);
+    }
+    if kind != lr.o_const() {
+        return (zeros(heap, b, size), r, 1);
+    }
+    let which = lm.cell(m, a + 2);
+    let n = lm.cell(m, a + 4);
+    let items = a + lr.const_head();
+    let (kept, start) = size_of_buffer(b);
+    b = kept;
+    if which == lr.c_ints() {
+        let each = ly.size_of(m, lm.cell(m, a + 3));
+        var k = 0;
+        while k < n {
+            b = le(heap, b, lm.cell(m, items + k), each);
+            k = k + 1;
+        }
+    } else if which == lr.c_cstring() {
+        var i = lm.cell(m, a + 5) + 2;
+        let end = lm.cell(m, a + 6) - 1;
+        while i < end {
+            var c = lm.at(text, i);
+            i = i + 1;
+            if c == '\\' {
+                c = fr.hex(lm.at(text, i)) * 16 + fr.hex(lm.at(text, i + 1));
+                i = i + 2;
+            }
+            b = buffer.push(heap, b, byte_of(c & 255));
+        }
+    } else if which == lr.c_struct() || which == lr.c_array() {
+        var k = 0;
+        while k < n && bad == 0 {
+            let offset = ly.offset_of(m, t, k);
+            let (still, here) = size_of_buffer(b);
+            b = still;
+            if offset < 0 || start + offset < here {
+                bad = 1;
+            } else {
+                b = zeros(heap, b, start + offset - here);
+                let (b2, r2, bad2) = value(heap, text, m, info, b, r, items + 4 * k, lm.cell(m, items + 4 * k), depth + 1);
+                b = b2;
+                r = r2;
+                bad = bad2;
+            }
+            k = k + 1;
+        }
+    } else {
+        bad = 1;
+    }
+    // Whatever was written, the value takes its type's size.
+    let (kept2, now) = size_of_buffer(b);
+    b = kept2;
+    if now - start > size {
+        bad = 1;
+    } else {
+        b = zeros(heap, b, size - (now - start));
+    }
+    return (b, r, bad);
+}
+
+// How a name is bound: 0 it is not a symbol (a type's name, a function of LLVM's, a name declared and never used), 1 a symbol of this object alone, 2 one
+// other objects see, 3 one another object must define.
+fn binding[&t, &m](text: &t [byte], m: &m [int], slot: int) -> [] int {
+    let record = lm.cell(m, slot + 2);
+    let kind = lm.cell(m, record);
+    if lm.at(text, lm.cell(m, slot)) != '@' {
+        return 0;
+    }
+    if kind == lr.r_func() {
+        if lm.cell(m, record + 4) & 2 != 0 {
+            return 1;
+        }
+        return 2;
+    }
+    if kind == lr.r_global() {
+        let flags = lm.cell(m, record + 4);
+        if flags & 4 != 0 {
+            if lm.cell(m, slot + 3) != 0 {
+                return 3;
+            }
+            return 0;
+        }
+        if flags & 3 != 0 {
+            return 1;
+        }
+        return 2;
+    }
+    if kind == lr.r_declare() && lm.cell(m, slot + 3) != 0 {
+        // A function of LLVM's is not one the linker finds: the generator wrote its instructions where it was called.
+        let name = lm.cell(m, slot);
+        if lm.at(text, name + 1) == 'l' && lm.at(text, name + 2) == 'l' && lm.at(text, name + 3) == 'v' && lm.at(text, name + 4) == 'm' && lm.at(text, name + 5) == '.' {
+            return 0;
+        }
+        return 3;
+    }
+    return 0;
+}
+
+// The slot of the name a record of the module gives (a function, a global, a declaration), or -1.
+fn named[&m](m: &m [int], record: int) -> [] int {
+    let kind = lm.cell(m, record);
+    if kind == lr.r_func() || kind == lr.r_global() || kind == lr.r_declare() {
+        return lm.cell(m, record + 3);
+    }
+    return 0 - 1;
+}
+
+// One entry of the symbol table (24 bytes) and its name in the table of names.
+fn symbol[&h, &t, &m, &i](heap: &!h Heap, text: &t [byte], m: &m [int], info: &i [int], symtab: buffer.Buffer, strtab: buffer.Buffer, slot: int, bound: int) -> [heap] (buffer.Buffer, buffer.Buffer) {
+    let (names, at) = size_of_buffer(strtab);
+    let from = lm.cell(m, slot) + 1;
+    let to = lm.cell(m, slot) + lm.cell(m, slot + 1);
+    var n = names;
+    if from >= 0 && to <= len(text) && from < to {
+        n = buffer.append(heap, n, text[from..to]);
+    }
+    n = buffer.push(heap, n, byte_of(0));
+    let cell = info_of(m, slot);
+    let section = info[cell];
+    // The type: a function, or an object; none for a name another object defines.
+    var kind = 1;
+    if section == s_text() {
+        kind = 2;
+    }
+    if bound == 3 {
+        kind = 0;
+    }
+    var bind = 1;
+    if bound == 1 {
+        bind = 0;
+    }
+    var s = le(heap, symtab, at, 4);
+    s = le(heap, s, bind << 4 | kind, 1);
+    s = le(heap, s, 0, 1);
+    s = le(heap, s, section, 2);
+    s = le(heap, s, info[cell + 1], 8);
+    s = le(heap, s, info[cell + 2], 8);
+    return (s, n);
+}
+
+// One section header (64 bytes).
+fn section[&h](heap: &!h Heap, b: buffer.Buffer, name: int, kind: int, flags: int, offset: int, size: int, link: int, extra: int, align: int, entry: int) -> [heap] buffer.Buffer {
+    var o = le(heap, b, name, 4);
+    o = le(heap, o, kind, 4);
+    o = le(heap, o, flags, 8);
+    o = le(heap, o, 0, 8);
+    o = le(heap, o, offset, 8);
+    o = le(heap, o, size, 8);
+    o = le(heap, o, link, 4);
+    o = le(heap, o, extra, 4);
+    o = le(heap, o, align, 8);
+    return le(heap, o, entry, 8);
+}
+
+// The object: the module in `m` (read from `text`) and its code in `o`, as the bytes of an ELF relocatable file for AArch64. The second answer is 0, or 1
+// for a module with a value the object has no form for, or with no code.
+pub fn object[&h, &t, &m, &o](heap: &!h Heap, text: &t [byte], m: &m [int], o: &o [int]) -> [heap] (buffer.Buffer, int) {
+    var file = buffer.empty(heap, 4096);
+    if len(m) < lm.header() || len(o) < out.header() || lm.failed(m) || out.failed(o) || lm.cell(m, lm.h_ready()) == 0 {
+        return (file, 1);
+    }
+    var bad = 0;
+    let slots = lm.cell(m, lm.h_gh_size());
+    let table = box_slice(heap, 4 * slots + 4, 0);
+    var rodata = buffer.empty(heap, 4096);
+    var data = buffer.empty(heap, 4096);
+    var rela_data = buffer.empty(heap, 256);
+    var rela_text = buffer.empty(heap, 24 * out.relocations(o) + 24);
+    var symtab = zeros(heap, buffer.empty(heap, 4096), 24);
+    var strtab = buffer.push(heap, buffer.empty(heap, 4096), byte_of(0));
+    var bss = 0;
+    var locals = 1;
+    let first = lm.cell(m, lm.h_rec());
+    let last = lm.cell(m, lm.h_top());
+    borrow mut table as &!tw in {
+        let info = contents(tw);
+        // The symbols are numbered: the ones of this object alone first, as the format asks, each kind in the order of the text.
+        var number = 1;
+        var pass = 1;
+        while pass <= 3 {
+            var at = first;
+            while at < last && lm.cell(m, at + 1) >= 2 {
+                let slot = named(m, at);
+                if slot >= 0 && binding(text, m, slot) == pass && info[info_of(m, slot) + 3] == 0 {
+                    info[info_of(m, slot) + 3] = number;
+                    number = number + 1;
+                }
+                at = at + lm.cell(m, at + 1);
+            }
+            if pass == 1 {
+                locals = number;
+            }
+            pass = pass + 1;
+        }
+        // Where each function is.
+        var f = 0;
+        while f < out.functions(o) {
+            let cell = info_of(m, lm.cell(m, out.function(o, f, 0) + 3));
+            info[cell] = s_text();
+            info[cell + 1] = 4 * out.function(o, f, 1);
+            info[cell + 2] = 4 * (out.function(o, f, 2) - out.function(o, f, 1));
+            f = f + 1;
+        }
+        // The values, each in its section.
+        var at = first;
+        while at < last && lm.cell(m, at + 1) >= 2 {
+            if lm.cell(m, at) == lr.r_global() && lm.cell(m, at + 4) & 4 == 0 {
+                let cell = info_of(m, lm.cell(m, at + 3));
+                let flags = lm.cell(m, at + 4);
+                let ty = lm.cell(m, at + 5);
+                let size = ly.size_of(m, ty);
+                var align = ly.align_of(m, ty);
+                if lm.cell(m, at + 6) > align {
+                    align = lm.cell(m, at + 6);
+                }
+                if align > 16 {
+                    bad = 1;
+                    align = 16;
+                }
+                info[cell + 2] = size;
+                if is_zero(m, at + 8) || flags & 8 != 0 {
+                    bss = ly.up(bss, align);
+                    info[cell] = s_bss();
+                    info[cell + 1] = bss;
+                    bss = bss + size;
+                } else if has_address(m, at + 8, 0) || flags & 32 == 0 {
+                    data = pad(heap, data, align);
+                    let (kept, here) = size_of_buffer(data);
+                    info[cell] = s_data();
+                    info[cell + 1] = here;
+                    let (b2, r2, bad2) = value(heap, text, m, info, kept, rela_data, at + 8, ty, 0);
+                    data = b2;
+                    rela_data = r2;
+                    bad = bad | bad2;
+                } else {
+                    rodata = pad(heap, rodata, align);
+                    let (kept, here) = size_of_buffer(rodata);
+                    info[cell] = s_rodata();
+                    info[cell + 1] = here;
+                    // A constant with no address in it has no relocation: the buffer for them is passed and comes back as it went.
+                    let (b2, r2, bad2) = value(heap, text, m, info, kept, rela_data, at + 8, ty, 0);
+                    rodata = b2;
+                    rela_data = r2;
+                    bad = bad | bad2;
+                }
+            }
+            at = at + lm.cell(m, at + 1);
+        }
+        // The table of symbols, in the order they were numbered.
+        pass = 1;
+        number = 1;
+        while pass <= 3 {
+            at = first;
+            while at < last && lm.cell(m, at + 1) >= 2 {
+                let slot = named(m, at);
+                if slot >= 0 && binding(text, m, slot) == pass && info[info_of(m, slot) + 3] == number {
+                    let (s2, n2) = symbol(heap, text, m, info, symtab, strtab, slot, pass);
+                    symtab = s2;
+                    strtab = n2;
+                    number = number + 1;
+                }
+                at = at + lm.cell(m, at + 1);
+            }
+            pass = pass + 1;
+        }
+        // The relocations of the code: R_AARCH64_CALL26 283, ADR_PREL_PG_HI21 275, ADD_ABS_LO12_NC 277, ADR_GOT_PAGE 311, LD64_GOT_LO12_NC 312.
+        var k = 0;
+        while k < out.relocations(o) {
+            let which = out.relocation(o, k, 0);
+            let sym = info[info_of(m, out.relocation(o, k, 2)) + 3];
+            var kind = 283;
+            if which == out.r_page() {
+                kind = 275;
+            } else if which == out.r_lo12() {
+                kind = 277;
+            } else if which == out.r_got_page() {
+                kind = 311;
+            } else if which == out.r_got_lo12() {
+                kind = 312;
+            }
+            if sym == 0 {
+                bad = 1;
+            }
+            rela_text = rela(heap, rela_text, 4 * out.relocation(o, k, 1), sym, kind, out.relocation(o, k, 3));
+            k = k + 1;
+        }
+    }
+    unbox_slice(heap, table);
+    // The file: the header, the sections one after another, and the table of sections last.
+    let names = "\0.text\0.rodata\0.data\0.bss\0.symtab\0.strtab\0.shstrtab\0.rela.text\0.rela.data\0.note.GNU-stack\0";
+    let words = out.here(o);
+    let (ro, ro_size) = size_of_buffer(rodata);
+    let (da, da_size) = size_of_buffer(data);
+    let (sy, sy_size) = size_of_buffer(symtab);
+    let (st, st_size) = size_of_buffer(strtab);
+    let (rt, rt_size) = size_of_buffer(rela_text);
+    let (rd, rd_size) = size_of_buffer(rela_data);
+    let text_at = 64;
+    let ro_at = ly.up(text_at + 4 * words, 16);
+    let da_at = ly.up(ro_at + ro_size, 16);
+    let sy_at = ly.up(da_at + da_size, 8);
+    let st_at = sy_at + sy_size;
+    let sh_at = st_at + st_size;
+    let rt_at = ly.up(sh_at + len(names), 8);
+    let rd_at = rt_at + rt_size;
+    let headers_at = ly.up(rd_at + rd_size, 8);
+    // The identification: ELF, 64 bits, the low byte first; a relocatable file (1) for AArch64 (183).
+    file = le(heap, file, 127, 1);
+    file = buffer.append(heap, file, "ELF");
+    file = le(heap, file, 2, 1);
+    file = le(heap, file, 1, 1);
+    file = le(heap, file, 1, 1);
+    file = zeros(heap, file, 9);
+    file = le(heap, file, 1, 2);
+    file = le(heap, file, 183, 2);
+    file = le(heap, file, 1, 4);
+    file = le(heap, file, 0, 8);
+    file = le(heap, file, 0, 8);
+    file = le(heap, file, headers_at, 8);
+    file = le(heap, file, 0, 4);
+    file = le(heap, file, 64, 2);
+    file = le(heap, file, 0, 2);
+    file = le(heap, file, 0, 2);
+    file = le(heap, file, 64, 2);
+    file = le(heap, file, 11, 2);
+    file = le(heap, file, 7, 2);
+    var w = 0;
+    while w < words {
+        file = le(heap, file, out.word(o, w), 4);
+        w = w + 1;
+    }
+    file = pad(heap, file, 16);
+    borrow ro as &b in {
+        file = buffer.append(heap, file, buffer.bytes(b));
+    }
+    file = pad(heap, file, 16);
+    borrow da as &b in {
+        file = buffer.append(heap, file, buffer.bytes(b));
+    }
+    file = pad(heap, file, 8);
+    borrow sy as &b in {
+        file = buffer.append(heap, file, buffer.bytes(b));
+    }
+    borrow st as &b in {
+        file = buffer.append(heap, file, buffer.bytes(b));
+    }
+    file = buffer.append(heap, file, names);
+    file = pad(heap, file, 8);
+    borrow rt as &b in {
+        file = buffer.append(heap, file, buffer.bytes(b));
+    }
+    borrow rd as &b in {
+        file = buffer.append(heap, file, buffer.bytes(b));
+    }
+    file = pad(heap, file, 8);
+    // The sections: none; .text (1); .rodata (2); .data (3); .bss (4); .symtab (5); .strtab (6); .shstrtab (7); .rela.text (8); .rela.data (9); the note
+    // that says the stack holds no code (10). The numbers after a name are where it is in `names`.
+    file = zeros(heap, file, 64);
+    file = section(heap, file, 1, 1, 6, text_at, 4 * words, 0, 0, 4, 0);
+    file = section(heap, file, 7, 1, 2, ro_at, ro_size, 0, 0, 16, 0);
+    file = section(heap, file, 15, 1, 3, da_at, da_size, 0, 0, 16, 0);
+    file = section(heap, file, 21, 8, 3, sy_at, bss, 0, 0, 16, 0);
+    file = section(heap, file, 26, 2, 0, sy_at, sy_size, 6, locals, 8, 24);
+    file = section(heap, file, 34, 3, 0, st_at, st_size, 0, 0, 1, 0);
+    file = section(heap, file, 42, 3, 0, sh_at, len(names), 0, 0, 1, 0);
+    file = section(heap, file, 52, 4, 64, rt_at, rt_size, 5, 1, 8, 24);
+    file = section(heap, file, 63, 4, 64, rd_at, rd_size, 5, 3, 8, 24);
+    file = section(heap, file, 74, 1, 0, headers_at, 0, 0, 0, 1, 0);
+    buffer.drop(heap, ro);
+    buffer.drop(heap, da);
+    buffer.drop(heap, sy);
+    buffer.drop(heap, st);
+    buffer.drop(heap, rt);
+    buffer.drop(heap, rd);
+    return (file, bad);
+}
