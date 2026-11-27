@@ -499,6 +499,10 @@ fn line[&h, &t, &k, &s, &m](heap: &!h Heap, census: Census, text: &t [byte], tok
         state[0] = 0;
         return set_apart(out, 0);
     }
+    if is_punct(text, toks, 0, n, ']') {
+        // The end of a `switch` whose cases are a line each, on a line of its own (as LLVM itself prints one).
+        return out;
+    }
     if kind == t_word() && is_type(first) && state[2] > state[1] {
         return walk(heap, out, text, toks, 0, n, text[state[1]..state[2]]);
     }

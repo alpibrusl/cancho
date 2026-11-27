@@ -1,0 +1,327 @@
+// reader_test.cho -- the reader of the native backend (`docs/native-backend.md` section 10), held to three small modules: one as the compiler writes a hosted
+// program, one as it writes a program for no system (inline assembly, volatile accesses, floating point, a named type), and one as clang wrote the runtime
+// (numbered values, atomics, a first block with no label, vectors). Each was compiled by clang before and after the reader and the printer, to the same
+// object. What is tested here needs no clang: they are read; what is printed is read again and prints the same; a form outside the subset is refused with
+// its line; and no single damaged byte and no truncation of any of them reaches a trap.
+//
+//     cancho test --std compiler/native/llmod.cho compiler/native/llread.cho compiler/native/llbody.cho compiler/native/lltop.cho compiler/native/llprint.cho tests/native/reader_test.cho
+
+import std.buffer;
+import std.bytes;
+import std.test;
+import selfhost.llmod as lm;
+import selfhost.lltop as lt;
+import selfhost.llprint as lp;
+
+fn hosted() -> [] &static [byte] {
+    return "source_filename = \"cancho\"\n@str.0 = private unnamed_addr constant [3 x i8] [i8 104, i8 105, i8 10]\n@table = private constant [2 x i64] [i64 -9223372036854775808, i64 7]\n@pair = internal constant { ptr, i64 } { ptr @str.0, i64 3 }\n@state = internal global { ptr, i64 } zeroinitializer\n@count = global i64 0\n@stdout = external global ptr, align 8\ndeclare i64 @write(i32, ptr, i64)\ndeclare { i64, i1 } @llvm.sadd.with.overflow.i64(i64, i64)\ndeclare i32 @printf(ptr, ...)\ndefine void @cancho_trap() noreturn {\nentry:\n  call void asm sideeffect \"ud2\", \"\"()\n  unreachable\n}\ndefine i64 @lexs_1(ptr %arg0, i64 %arg1) {\nentry:\n  %s0 = alloca { ptr, i64 }\n  %s1 = alloca i8, i64 1\n  %t0 = insertvalue { ptr, i64 } undef, ptr %arg0, 0\n  %t1 = insertvalue { ptr, i64 } %t0, i64 %arg1, 1\n  store { ptr, i64 } %t1, ptr %s0\n  %t2 = call { i64, i1 } @llvm.sadd.with.overflow.i64(i64 %arg1, i64 1)\n  %t3 = extractvalue { i64, i1 } %t2, 0\n  %t4 = extractvalue { i64, i1 } %t2, 1\n  br i1 %t4, label %trap1, label %ok1\ntrap1:\n  call void @cancho_trap()\n  unreachable\nok1:\n  %t5 = icmp slt i64 %t3, 10\n  br i1 %t5, label %then2, label %else2\nthen2:\n  %t6 = mul i64 %t3, ptrtoint (ptr getelementptr ({ ptr, i64 }, ptr null, i32 1) to i64)\n  br label %end2\nelse2:\n  %t7 = getelementptr i8, ptr %arg0, i64 %t3\n  %t8 = load i8, ptr %t7\n  %t9 = zext i8 %t8 to i64\n  br label %end2\nend2:\n  %t10 = phi i64 [ %t6, %then2 ], [ %t9, %else2 ]\n  %t11 = select i1 %t5, i64 %t10, i64 0\n  %t12 = call i64 @write(i32 1, ptr @str.0, i64 3)\n  %t13 = call i32 (ptr, ...) @printf(ptr @str.0, i64 %t11)\n  switch i32 %t13, label %dead3 [\n    i32 0, label %then2x\n    i32 1, label %dead3\n  ]\nthen2x:\n  ret i64 %t11\ndead3:\n  ret i64 -1\n}\n";
+}
+
+fn bare() -> [] &static [byte] {
+    return "%struct.pair = type { i32, i64 }\n@msg = private constant [4 x i8] c\"ab\\0A\\00\"\n@__heap_start = external global i8\n@slots = common global [4 x i64] zeroinitializer, align 8\n@one = internal constant %struct.pair { i32 1, i64 2 }\ndeclare double @llvm.sqrt.f64(double)\ndefine ptr @memset(ptr %p, i32 %c, i64 %n) noinline \"no-builtins\" {\nentry:\n  %b = trunc i32 %c to i8\n  %end = getelementptr inbounds i8, ptr %p, i64 %n\n  %e = ptrtoint ptr %end to i64\n  %q = inttoptr i64 %e to ptr\n  store volatile i8 %b, ptr %p, align 1\n  %v = load volatile i32, ptr %q, align 4\n  %w = sext i32 %v to i64\n  %x = add nsw i64 %w, 1\n  %y = lshr i64 %x, 3\n  %z = ashr i64 %y, 1\n  %o = or i64 %z, 255\n  %a = and i64 %o, -2\n  %r = xor i64 %a, %x\n  %d = sdiv i64 %r, 7\n  %m = srem i64 %d, 3\n  %u = udiv i64 %m, 2\n  %s = shl i64 %u, 4\n  %k = sub i64 %s, %n\n  %reg = call i64 asm sideeffect \"mrs $0, midr_el1\", \"=r\"()\n  call void asm sideeffect \"msr daif, $0\\0Aisb\", \"r\"(i64 %k)\n  %ct = call i64 asm \"\", \"=r,0\"(i64 %reg)\n  ret ptr %p\n}\ndefine double @half(double %x, i64 %n) {\nentry:\n  %f = sitofp i64 %n to double\n  %g = fmul double %x, 0x3FE0000000000000\n  %h = fadd double %g, %f\n  %i = fsub double %h, %x\n  %j = fdiv double %i, %f\n  %k = fneg double %j\n  %c = fcmp olt double %k, 0x0000000000000000\n  %u = fcmp uno double %k, %x\n  %both = or i1 %c, %u\n  %root = call double @llvm.sqrt.f64(double %k)\n  %bits = bitcast double %root to i64\n  %back = fptosi double %root to i64\n  %small = fptrunc double %root to float\n  %wide = fpext float %small to double\n  %pick = select i1 %both, double %wide, double %root\n  %field = load i64, ptr getelementptr inbounds (%struct.pair, ptr @one, i32 0, i32 1)\n  %sum = add i64 %bits, %back\n  %all = add i64 %sum, %field\n  %cmp = icmp eq ptr inttoptr (i64 -1 to ptr), null\n  ret double %pick\n}\n";
+}
+
+fn runtime() -> [] &static [byte] {
+    return "@counter = internal global i32 0, align 4\n@peers = global [8 x i64] zeroinitializer\ndeclare void @abort()\ndeclare <2 x i64> @llvm.bswap.v2i64(<2 x i64>)\ndefine i32 @bump(ptr %0, i32 %1) {\n  %3 = alloca i32, align 4\n  store i32 %1, ptr %3, align 4\n  %4 = load atomic i32, ptr @counter monotonic, align 4\n  store atomic i32 %4, ptr %0 release, align 4\n  %5 = atomicrmw add ptr @counter, i32 1 seq_cst, align 4\n  %6 = cmpxchg ptr %0, i32 %5, i32 %1 seq_cst seq_cst, align 4\n  %7 = extractvalue { i32, i1 } %6, 1\n  br i1 %7, label %if.then, label %if.end\n\nif.then:                                          ; preds = %2\n  %8 = atomicrmw add ptr getelementptr inbounds (i8, ptr @peers, i64 8), i64 1 seq_cst, align 8\n  %add.ptr = getelementptr inbounds i64, ptr @peers, i64 1\n  %9 = mul nsw i32 %5, 3\n  br label %if.end\n\nif.end:                                           ; preds = %if.then, %2\n  %ret-val = phi i32 [ %9, %if.then ], [ %1, %2 ]\n  %10 = icmp ugt i32 %ret-val, 100\n  br i1 %10, label %11, label %12\n\n11:\n  call void @abort()\n  unreachable\n\n12:\n  ret i32 %ret-val\n}\ndefine <2 x i64> @lanes(<2 x i64> %v, i64 %x) {\nentry:\n  %a = insertelement <2 x i64> %v, i64 %x, i64 0\n  %b = shufflevector <2 x i64> %a, <2 x i64> poison, <2 x i32> <i32 1, i32 0>\n  %c = extractelement <2 x i64> %b, i64 1\n  %d = insertelement <2 x i64> zeroinitializer, i64 %c, i64 1\n  %e = call <2 x i64> @llvm.bswap.v2i64(<2 x i64> %d)\n  %f = icmp eq <2 x i64> %e, %v\n  %g = bitcast <2 x i1> %f to i2\n  ret <2 x i64> %e\n}\n";
+}
+
+// What reading `text` comes to: 0 or 1, the line and the reason of a refusal, and how many functions and instructions were read.
+struct Outcome {
+    status: int,
+    line: int,
+    why: int,
+    functions: int,
+    instructions: int,
+}
+
+fn outcome[&h, &t](heap: &!h Heap, text: &t [byte], strict: int) -> [heap] Outcome {
+    let table = box_slice(heap, lm.room(text), 0);
+    var got = Outcome { status: 0, line: 0, why: 0, functions: 0, instructions: 0 };
+    borrow mut table as &!tw in {
+        let m = contents(tw);
+        let status = lt.read(text, m, strict);
+        got = Outcome { status: status, line: m[lm.h_fail_line()], why: m[lm.h_fail_why()], functions: m[lm.h_nfuncs()], instructions: m[lm.h_ninstr()] };
+    }
+    unbox_slice(heap, table);
+    return got;
+}
+
+// `text` read and printed: the text, or nothing if it is refused.
+fn printed[&h, &t](heap: &!h Heap, text: &t [byte]) -> [heap] buffer.Buffer {
+    let table = box_slice(heap, lm.room(text), 0);
+    var out = buffer.empty(heap, 0);
+    borrow mut table as &!tw in {
+        let m = contents(tw);
+        if lt.read(text, m, 0) == 0 {
+            buffer.drop(heap, out);
+            out = lp.print(heap, text, m);
+        }
+    }
+    unbox_slice(heap, table);
+    return out;
+}
+
+// `text` with the first `old` in it made `new`.
+fn with[&h, &t, &o, &n](heap: &!h Heap, text: &t [byte], old: &o [byte], new: &n [byte]) -> [heap] buffer.Buffer {
+    let at = bytes.find(text, old);
+    test.assert(at >= 0);
+    var out = buffer.empty(heap, len(text) + len(new));
+    if at < 0 {
+        return buffer.append(heap, out, text);
+    }
+    out = buffer.append(heap, out, text[0..at]);
+    out = buffer.append(heap, out, new);
+    return buffer.append(heap, out, text[at + len(old)..len(text)]);
+}
+
+// The line (from 1) on which `word` first is in `text`.
+fn line_with[&t, &w](text: &t [byte], word: &w [byte]) -> [] int {
+    return lt.line_of(text, bytes.find(text, word));
+}
+
+// `text` with `old` made `new` is refused for the reason `why`, on the line where `new` is.
+fn refuses[&h, &t, &o, &n](heap: &!h Heap, text: &t [byte], old: &o [byte], new: &n [byte], strict: int, why: int) -> [heap] int {
+    let changed = with(heap, text, old, new);
+    borrow changed as &cb in {
+        let got = outcome(heap, buffer.bytes(cb), strict);
+        test.assert_eq(got.status, 1);
+        test.assert_eq(got.why, why);
+        test.assert_eq(got.line, line_with(buffer.bytes(cb), new));
+    }
+    buffer.drop(heap, changed);
+    return 0;
+}
+
+fn test_the_three_modules_are_read[&h](heap: &!h Heap) -> [heap] int {
+    let a = outcome(heap, hosted(), 1);
+    test.assert_eq(a.status, 0);
+    test.assert_eq(a.functions, 2);
+    test.assert_eq(a.instructions, 28);
+    let b = outcome(heap, bare(), 1);
+    test.assert_eq(b.status, 0);
+    test.assert_eq(b.functions, 2);
+    test.assert_eq(b.instructions, 42);
+    let c = outcome(heap, runtime(), 0);
+    test.assert_eq(c.status, 0);
+    test.assert_eq(c.functions, 2);
+    test.assert_eq(c.instructions, 26);
+    return 0;
+}
+
+// What the printer writes is a module the reader reads, and printing that gives the same bytes: nothing is lost on the way round.
+fn fixed_point[&h, &t](heap: &!h Heap, text: &t [byte]) -> [heap] int {
+    let once = printed(heap, text);
+    borrow once as &ob in {
+        test.assert(buffer.size(ob) > len(text) / 2);
+        let twice = printed(heap, buffer.bytes(ob));
+        borrow twice as &tb in {
+            test.assert(bytes.equal(buffer.bytes(ob), buffer.bytes(tb)));
+        }
+        buffer.drop(heap, twice);
+    }
+    buffer.drop(heap, once);
+    return 0;
+}
+
+fn test_what_is_printed_reads_and_prints_the_same[&h](heap: &!h Heap) -> [heap] int {
+    fixed_point(heap, hosted());
+    fixed_point(heap, bare());
+    fixed_point(heap, runtime());
+    return 0;
+}
+
+// The printer keeps the words: each of these is in what it writes for the module that has it.
+fn test_the_printer_keeps_flags_and_constants[&h](heap: &!h Heap) -> [heap] int {
+    let a = printed(heap, hosted());
+    borrow a as &ab in {
+        let text = buffer.bytes(ab);
+        test.assert(bytes.find(text, "@table = private constant [2 x i64] [i64 -9223372036854775808, i64 7]\n") >= 0);
+        test.assert(bytes.find(text, "  %t6 = mul i64 %t3, ptrtoint (ptr getelementptr ({ ptr, i64 }, ptr null, i32 1) to i64)\n") >= 0);
+        test.assert(bytes.find(text, "  %t13 = call i32 (ptr, ...) @printf(ptr @str.0, i64 %t11)\n") >= 0);
+        test.assert(bytes.find(text, "  call void asm sideeffect \"ud2\", \"\"()\n") >= 0);
+        test.assert(bytes.find(text, "define void @cancho_trap() noreturn {\n") >= 0);
+        test.assert(bytes.find(text, "    i32 1, label %dead3\n  ]\n") >= 0);
+        test.assert(bytes.find(text, "@stdout = external global ptr, align 8\n") >= 0);
+    }
+    buffer.drop(heap, a);
+    let b = printed(heap, bare());
+    borrow b as &bb in {
+        let text = buffer.bytes(bb);
+        test.assert(bytes.find(text, "@msg = private constant [4 x i8] c\"ab\\0A\\00\"\n") >= 0);
+        test.assert(bytes.find(text, "  store volatile i8 %b, ptr %p, align 1\n") >= 0);
+        test.assert(bytes.find(text, "  call void asm sideeffect \"msr daif, $0\\0Aisb\", \"r\"(i64 %k)\n") >= 0);
+        test.assert(bytes.find(text, "  %g = fmul double %x, 0x3FE0000000000000\n") >= 0);
+        test.assert(bytes.find(text, "  %field = load i64, ptr getelementptr inbounds (%struct.pair, ptr @one, i32 0, i32 1)\n") >= 0);
+        test.assert(bytes.find(text, "define ptr @memset(ptr %p, i32 %c, i64 %n) noinline \"no-builtins\" {\n") >= 0);
+    }
+    buffer.drop(heap, b);
+    let c = printed(heap, runtime());
+    borrow c as &cb in {
+        let text = buffer.bytes(cb);
+        test.assert(bytes.find(text, "  %6 = cmpxchg ptr %0, i32 %5, i32 %1 seq_cst seq_cst, align 4\n") >= 0);
+        test.assert(bytes.find(text, "  %4 = load atomic i32, ptr @counter monotonic, align 4\n") >= 0);
+        test.assert(bytes.find(text, "  %ret-val = phi i32 [ %9, %if.then ], [ %1, %2 ]\n") >= 0);
+        test.assert(bytes.find(text, "  %b = shufflevector <2 x i64> %a, <2 x i64> poison, <2 x i32> <i32 1, i32 0>\n") >= 0);
+    }
+    buffer.drop(heap, c);
+    return 0;
+}
+
+// A vector is read for the round trip and refused by a reader that is asked to take none, with the line of the first one.
+fn test_a_vector_is_refused_when_asked_with_its_line[&h](heap: &!h Heap) -> [heap] int {
+    let lenient = outcome(heap, runtime(), 0);
+    test.assert_eq(lenient.status, 0);
+    let strict = outcome(heap, runtime(), 1);
+    test.assert_eq(strict.status, 1);
+    test.assert_eq(strict.why, lm.why_vector());
+    test.assert_eq(strict.line, line_with(runtime(), "<2 x i64>"));
+    return 0;
+}
+
+fn test_what_is_outside_the_subset_is_refused_with_its_line[&h](heap: &!h Heap) -> [heap] int {
+    let a = hosted();
+    refuses(heap, a, "%t12 = call i64 @write", "%t12 = invoke i64 @write", 1, lm.why_instruction());
+    refuses(heap, a, "%t5 = icmp slt i64", "%t5 = frobnicate slt i64", 1, lm.why_instruction());
+    refuses(heap, a, "%t6 = mul i64", "%t6 = urem i64", 1, lm.why_instruction());
+    refuses(heap, a, "%t12 = call i64", "%t12 = tail call i64", 1, lm.why_instruction());
+    refuses(heap, a, "%t6 = mul i64", "%t6 = mul exact i64", 1, lm.why_type());
+    refuses(heap, a, "%s0 = alloca { ptr, i64 }", "%s0 = alloca half", 1, lm.why_type());
+    refuses(heap, a, "%s0 = alloca { ptr, i64 }", "%s0 = alloca <{ ptr, i64 }>", 0, lm.why_type());
+    refuses(heap, a, "ret i64 %t11", "ret i64 %t11, !dbg !7", 1, lm.why_shape());
+    refuses(heap, a, "%t9 = zext i8 %t8 to i64", "%t9 = zext nneg i8 %t8 to i64", 1, lm.why_type());
+    refuses(heap, a, "icmp slt i64", "icmp samesign i64", 1, lm.why_word());
+    refuses(heap, a, "ret i64 -1", "ret i64 1.5", 1, lm.why_constant());
+    refuses(heap, a, "ret i64 -1", "ret i64 blockaddress(@lexs_1, %ok1)", 1, lm.why_constant());
+    refuses(heap, bare(), "0x3FE0000000000000", "0x3FE00000000000001", 1, lm.why_constant());
+    refuses(heap, bare(), "0x3FE0000000000000", "0xK3FE0000000000000", 1, lm.why_constant());
+    refuses(heap, a, "declare i64 @write(i32, ptr, i64)", "declare i64 @write(i32, ptr, i64) nounwind", 1, lm.why_word());
+    refuses(heap, a, "define i64 @lexs_1(ptr %arg0", "define i64 @lexs_1(ptr noundef %arg0", 1, lm.why_word());
+    refuses(heap, a, "@count = global i64 0", "@count = thread_local global i64 0", 1, lm.why_word());
+    refuses(heap, a, "source_filename = \"cancho\"", "target triple = \"riscv64-unknown-elf\"", 1, lm.why_target());
+    refuses(heap, a, "source_filename = \"cancho\"", "module asm \"nop\"", 1, lm.why_top());
+    refuses(heap, a, "@count = global i64 0", "@\"count\" = global i64 0", 1, lm.why_name());
+    return 0;
+}
+
+fn test_a_name_is_defined_once_and_used_only_if_defined[&h](heap: &!h Heap) -> [heap] int {
+    let a = hosted();
+    refuses(heap, a, "%t9 = zext i8 %t8 to i64", "%t8 = zext i8 %t8 to i64", 1, lm.why_twice());
+    refuses(heap, a, "@count = global i64 0", "@table = global i64 0", 1, lm.why_twice());
+    refuses(heap, a, "end2:\n  %t10", "ok1:\n  %t10", 1, lm.why_twice());
+    // A name used and never defined is found when the function, or the module, ends; the line is where it is used.
+    refuses(heap, a, "%t11 = select i1 %t5, i64 %t10, i64 0", "%t11 = select i1 %t5, i64 %nowhere, i64 0", 1, lm.why_undefined());
+    refuses(heap, a, "br label %end2\nelse2:", "br label %never\nelse2:", 1, lm.why_undefined());
+    refuses(heap, a, "call void @cancho_trap()\n  unreachable\nok1", "call void @cancho_missing()\n  unreachable\nok1", 1, lm.why_undefined());
+    // A function of LLVM's own needs no declaration, as for clang.
+    let undeclared = with(heap, a, "declare { i64, i1 } @llvm.sadd.with.overflow.i64(i64, i64)\n", "");
+    borrow undeclared as &ub in {
+        test.assert_eq(outcome(heap, buffer.bytes(ub), 1).status, 0);
+    }
+    buffer.drop(heap, undeclared);
+    // A function that does not end.
+    let open = outcome(heap, a[0..len(a) - 2], 1);
+    test.assert_eq(open.status, 1);
+    test.assert_eq(open.why, lm.why_open());
+    return 0;
+}
+
+// A table smaller than the module needs is a refusal, not a write outside it; and so is no table at all.
+fn test_too_little_room_is_a_refusal[&h](heap: &!h Heap) -> [heap] int {
+    let text = hosted();
+    let need = lm.room(text);
+    var size = 0;
+    while size < need {
+        let table = box_slice(heap, size, 0);
+        borrow mut table as &!tw in {
+            test.assert_eq(lt.read(text, contents(tw), 0), 1);
+        }
+        unbox_slice(heap, table);
+        size = size + 1 + size / 3;
+    }
+    return 0;
+}
+
+// The records' own check, which no text reaches while `room` is right: a table laid out and then told its records end sooner refuses the write that would
+// pass that end, and writes nothing there.
+fn test_a_record_past_the_room_is_refused_not_written[&h](heap: &!h Heap) -> [heap] int {
+    let text = hosted();
+    let table = box_slice(heap, lm.room(text), 0);
+    borrow mut table as &!tw in {
+        let m = contents(tw);
+        lm.layout(text, m, 0);
+        test.assert(!lm.failed(m));
+        let first = m[lm.h_rec()];
+        m[lm.h_end()] = first + 2;
+        test.assert_eq(lm.put(m, 7), first);
+        test.assert_eq(lm.put(m, 8), first + 1);
+        test.assert(!lm.failed(m));
+        test.assert_eq(lm.put(m, 9), 0);
+        test.assert(lm.failed(m));
+        test.assert_eq(m[lm.h_fail_why()], lm.why_room());
+        test.assert_eq(m[first + 2], 0);
+        test.assert_eq(m[lm.h_top()], first + 2);
+        // The operand stack has the same check.
+        m[lm.h_ops_end()] = m[lm.h_ops_top()] + 4;
+        lm.push_op(m, 1, 2, 3, 4);
+        let top = m[lm.h_ops_top()];
+        lm.push_op(m, 5, 6, 7, 8);
+        test.assert_eq(m[lm.h_ops_top()], top);
+    }
+    unbox_slice(heap, table);
+    return 0;
+}
+
+// Every byte of `text` made each byte of `with`, and every beginning of `text`: read, strict or not, and what is read is printed. How many were read; the
+// test is that this returns.
+fn damage[&h, &t, &w](heap: &!h Heap, text: &t [byte], with: &w [byte]) -> [heap] int {
+    var read = 0;
+    let copy = box_slice(heap, len(text), byte_of(0));
+    borrow mut copy as &!cw in {
+        let c = contents(cw);
+        var k = 0;
+        while k < len(text) {
+            c[k] = text[k];
+            k = k + 1;
+        }
+        k = 0;
+        while k < len(text) {
+            var j = 0;
+            while j < len(with) {
+                c[k] = with[j];
+                if outcome(heap, c, 1).status == 0 {
+                    read = read + 1;
+                }
+                let out = printed(heap, c);
+                buffer.drop(heap, out);
+                j = j + 1;
+            }
+            c[k] = text[k];
+            let cut = printed(heap, text[0..k]);
+            buffer.drop(heap, cut);
+            k = k + 1;
+        }
+    }
+    unbox_slice(heap, copy);
+    return read;
+}
+
+fn test_no_damage_to_the_hosted_module_reaches_a_trap[&h](heap: &!h Heap) -> [heap] int {
+    let read = damage(heap, hosted(), " %0{,x\n\"@-");
+    // Some damage is still a module (a digit for a digit, a space for a space) and most is not.
+    test.assert(read > 0);
+    test.assert(read < 5 * len(hosted()));
+    return 0;
+}
+
+fn test_no_damage_to_the_bare_module_reaches_a_trap[&h](heap: &!h Heap) -> [heap] int {
+    let read = damage(heap, bare(), " %0{,x\n\"@-");
+    test.assert(read > 0);
+    test.assert(read < 5 * len(bare()));
+    return 0;
+}
+
+fn test_no_damage_to_the_runtime_module_reaches_a_trap[&h](heap: &!h Heap) -> [heap] int {
+    let read = damage(heap, runtime(), " %0[<x\n(:)");
+    test.assert(read < 5 * len(runtime()));
+    return 0;
+}

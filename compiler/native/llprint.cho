@@ -1,0 +1,553 @@
+edition 7;
+module selfhost.llprint;
+
+// llprint.cho -- the module in memory written back as LLVM text (`docs/native-backend.md` section 10). What it writes is not the bytes that were read (the
+// comments are gone, the spacing is its own) but it is the same module: clang accepts it and the program behaves the same, which is how every program the
+// compiler builds is made a test of the reader (`--backend roundtrip`). Names and numbers are copied from the text that was read.
+
+import std.buffer;
+import selfhost.llmod as lm;
+import selfhost.llread as lr;
+import selfhost.llbody as lb;
+import selfhost.lltop as lt;
+
+fn say[&h, &w](heap: &!h Heap, out: buffer.Buffer, words: &w [byte]) -> [heap] buffer.Buffer {
+    return buffer.append(heap, out, words);
+}
+
+// `text[from..to]`, with the bounds checked.
+fn copy[&h, &t](heap: &!h Heap, out: buffer.Buffer, text: &t [byte], from: int, to: int) -> [heap] buffer.Buffer {
+    if from < 0 || to > len(text) || from >= to {
+        return out;
+    }
+    return buffer.append(heap, out, text[from..to]);
+}
+
+// An integer in decimal.
+fn number[&h](heap: &!h Heap, out: buffer.Buffer, n: int) -> [heap] buffer.Buffer {
+    if n >= 0 {
+        return buffer.push_nat(heap, out, n);
+    }
+    if n == 0 - 9223372036854775807 - 1 {
+        return say(heap, out, "-9223372036854775808");
+    }
+    return buffer.push_nat(heap, buffer.push(heap, out, byte_of('-')), 0 - n);
+}
+
+// The type `ty`.
+pub fn type_text[&h, &t, &m](heap: &!h Heap, out: buffer.Buffer, text: &t [byte], m: &m [int], ty: int) -> [heap] buffer.Buffer {
+    let kind = lm.type_kind(m, ty);
+    var b = out;
+    if kind == lm.k_int() {
+        return buffer.push_nat(heap, buffer.push(heap, b, byte_of('i')), lm.type_count(m, ty));
+    }
+    if kind == lm.k_ptr() {
+        return say(heap, b, "ptr");
+    }
+    if kind == lm.k_void() {
+        return say(heap, b, "void");
+    }
+    if kind == lm.k_double() {
+        return say(heap, b, "double");
+    }
+    if kind == lm.k_float() {
+        return say(heap, b, "float");
+    }
+    if kind == lm.k_label() {
+        return say(heap, b, "label");
+    }
+    if kind == lm.k_named() {
+        let slot = lm.type_part(m, ty, 0);
+        return copy(heap, b, text, lm.cell(m, slot), lm.cell(m, slot) + lm.cell(m, slot + 1));
+    }
+    if kind == lm.k_struct() {
+        if lm.type_count(m, ty) == 0 {
+            return say(heap, b, "{}");
+        }
+        b = say(heap, b, "{ ");
+        var k = 0;
+        while k < lm.type_count(m, ty) {
+            if k > 0 {
+                b = say(heap, b, ", ");
+            }
+            b = type_text(heap, b, text, m, lm.type_part(m, ty, k));
+            k = k + 1;
+        }
+        return say(heap, b, " }");
+    }
+    if kind == lm.k_array() || kind == lm.k_vector() {
+        if kind == lm.k_array() {
+            b = say(heap, b, "[");
+        } else {
+            b = say(heap, b, "<");
+        }
+        b = buffer.push_nat(heap, b, lm.type_count(m, ty));
+        b = say(heap, b, " x ");
+        b = type_text(heap, b, text, m, lm.type_part(m, ty, 0));
+        if kind == lm.k_array() {
+            return say(heap, b, "]");
+        }
+        return say(heap, b, ">");
+    }
+    if kind == lm.k_function() {
+        b = type_text(heap, b, text, m, lm.type_part(m, ty, 0));
+        b = say(heap, b, " ");
+        return parameters(heap, b, text, m, ty);
+    }
+    return b;
+}
+
+// The parameter types of the function type `ty`, in their brackets.
+fn parameters[&h, &t, &m](heap: &!h Heap, out: buffer.Buffer, text: &t [byte], m: &m [int], ty: int) -> [heap] buffer.Buffer {
+    var b = say(heap, out, "(");
+    let n = lm.type_count(m, ty);
+    var k = 0;
+    while k < n {
+        if k > 0 {
+            b = say(heap, b, ", ");
+        }
+        b = type_text(heap, b, text, m, lm.type_part(m, ty, 1 + k));
+        k = k + 1;
+    }
+    if lm.type_part(m, ty, 1 + n) != 0 {
+        if n > 0 {
+            b = say(heap, b, ", ");
+        }
+        b = say(heap, b, "...");
+    }
+    return say(heap, b, ")");
+}
+
+// The operands `n` of them at `at`, each with its type, with commas between.
+fn typed_list[&h, &t, &m](heap: &!h Heap, out: buffer.Buffer, text: &t [byte], m: &m [int], at: int, n: int) -> [heap] buffer.Buffer {
+    var b = out;
+    var k = 0;
+    while k < n {
+        if k > 0 {
+            b = say(heap, b, ", ");
+        }
+        b = typed(heap, b, text, m, at + 4 * k);
+        k = k + 1;
+    }
+    return b;
+}
+
+// A constant's record, as a value.
+fn constant[&h, &t, &m](heap: &!h Heap, out: buffer.Buffer, text: &t [byte], m: &m [int], record: int) -> [heap] buffer.Buffer {
+    let kind = lm.cell(m, record + 2);
+    let n = lm.cell(m, record + 4);
+    let parts = record + lr.const_head();
+    var b = out;
+    if kind == lr.c_cstring() {
+        return copy(heap, b, text, lm.cell(m, record + 5), lm.cell(m, record + 6));
+    }
+    if kind == lr.c_ints() {
+        b = say(heap, b, "[");
+        var k = 0;
+        while k < n {
+            if k > 0 {
+                b = say(heap, b, ", ");
+            }
+            b = type_text(heap, b, text, m, lm.cell(m, record + 3));
+            b = say(heap, b, " ");
+            b = number(heap, b, lm.cell(m, parts + k));
+            k = k + 1;
+        }
+        return say(heap, b, "]");
+    }
+    if kind == lr.c_array() {
+        return say(heap, typed_list(heap, say(heap, b, "["), text, m, parts, n), "]");
+    }
+    if kind == lr.c_vector() {
+        return say(heap, typed_list(heap, say(heap, b, "<"), text, m, parts, n), ">");
+    }
+    if kind == lr.c_struct() {
+        if n == 0 {
+            return say(heap, b, "{}");
+        }
+        return say(heap, typed_list(heap, say(heap, b, "{ "), text, m, parts, n), " }");
+    }
+    // A constant expression.
+    let op = lm.cell(m, record + 5);
+    let flags = lm.cell(m, record + 6);
+    b = say(heap, b, lr.word_at(lr.ops(), op));
+    if flags & lr.f_inbounds() != 0 {
+        b = say(heap, b, " inbounds");
+    }
+    if flags & lr.f_nuw() != 0 {
+        b = say(heap, b, " nuw");
+    }
+    b = say(heap, b, " (");
+    if op == lr.op_gep() {
+        b = type_text(heap, b, text, m, lm.cell(m, parts));
+        b = say(heap, b, ", ");
+        b = typed_list(heap, b, text, m, parts + 4, n - 1);
+    } else {
+        b = typed(heap, b, text, m, parts);
+        b = say(heap, b, " to ");
+        b = type_text(heap, b, text, m, lm.cell(m, parts + 4));
+    }
+    return say(heap, b, ")");
+}
+
+// The operand at `at`, without its type.
+fn value[&h, &t, &m](heap: &!h Heap, out: buffer.Buffer, text: &t [byte], m: &m [int], at: int) -> [heap] buffer.Buffer {
+    let kind = lm.cell(m, at + 1);
+    let a = lm.cell(m, at + 2);
+    let b = lm.cell(m, at + 3);
+    if kind == lr.o_local() || kind == lr.o_label() {
+        return copy(heap, buffer.push(heap, out, byte_of('%')), text, b, lm.name_end(text, b));
+    }
+    if kind == lr.o_global() {
+        return copy(heap, out, text, b, lm.name_end(text, b));
+    }
+    if kind == lr.o_int() || kind == lr.o_big() || kind == lr.o_float() {
+        var end = b;
+        if lm.at(text, end) == '-' {
+            end = end + 1;
+        }
+        while lm.at(text, end) >= '0' && lm.at(text, end) <= '9' || lm.at(text, end) >= 'A' && lm.at(text, end) <= 'F' || lm.at(text, end) >= 'a' && lm.at(text, end) <= 'f' || lm.at(text, end) == 'x' {
+            end = end + 1;
+        }
+        return copy(heap, out, text, b, end);
+    }
+    if kind == lr.o_word() {
+        return say(heap, out, lr.word_at(lr.constant_words(), a));
+    }
+    if kind == lr.o_const() {
+        return constant(heap, out, text, m, a);
+    }
+    if kind == lr.o_index() {
+        return buffer.push_nat(heap, out, a);
+    }
+    return out;
+}
+
+// The operand at `at`: its type and its value.
+fn typed[&h, &t, &m](heap: &!h Heap, out: buffer.Buffer, text: &t [byte], m: &m [int], at: int) -> [heap] buffer.Buffer {
+    var b = type_text(heap, out, text, m, lm.cell(m, at));
+    if lm.cell(m, at + 1) == lr.o_type() {
+        return b;
+    }
+    b = say(heap, b, " ");
+    return value(heap, b, text, m, at);
+}
+
+fn ordering[&h](heap: &!h Heap, out: buffer.Buffer, which: int) -> [heap] buffer.Buffer {
+    if which == 0 {
+        return out;
+    }
+    return say(heap, say(heap, out, " "), lr.word_at(lr.orderings(), which));
+}
+
+fn align[&h](heap: &!h Heap, out: buffer.Buffer, n: int) -> [heap] buffer.Buffer {
+    if n == 0 {
+        return out;
+    }
+    return buffer.push_nat(heap, say(heap, out, ", align "), n);
+}
+
+// What a call calls, and its arguments: the operands at `at`.
+fn call[&h, &t, &m](heap: &!h Heap, out: buffer.Buffer, text: &t [byte], m: &m [int], at: int, n: int, flags: int, result: int) -> [heap] buffer.Buffer {
+    var b = type_text(heap, out, text, m, result);
+    b = say(heap, b, " ");
+    if flags & lr.f_typed() != 0 {
+        b = parameters(heap, b, text, m, lm.cell(m, at));
+        b = say(heap, b, " ");
+    }
+    if lm.cell(m, at + 1) == lr.o_asm() {
+        b = say(heap, b, "asm ");
+        if flags & lr.f_sideeffect() != 0 {
+            b = say(heap, b, "sideeffect ");
+        }
+        b = copy(heap, b, text, lm.cell(m, at + 2), lm.cell(m, at + 3));
+    } else {
+        b = value(heap, b, text, m, at);
+    }
+    b = say(heap, b, "(");
+    var k = 1;
+    var first = true;
+    while k < n {
+        let arg = at + 4 * k;
+        if !first {
+            b = say(heap, b, ", ");
+        }
+        first = false;
+        if lm.cell(m, arg + 1) == lr.o_align() && k + 1 < n {
+            b = type_text(heap, b, text, m, lm.cell(m, arg + 4));
+            b = buffer.push_nat(heap, say(heap, b, " align "), lm.cell(m, arg + 2));
+            b = say(heap, b, " ");
+            b = value(heap, b, text, m, arg + 4);
+            k = k + 1;
+        } else {
+            b = typed(heap, b, text, m, arg);
+        }
+        k = k + 1;
+    }
+    return say(heap, b, ")");
+}
+
+// The instruction whose record is at `record`, as its line.
+fn instruction[&h, &t, &m](heap: &!h Heap, out: buffer.Buffer, text: &t [byte], m: &m [int], record: int) -> [heap] buffer.Buffer {
+    let op = lm.cell(m, record + 2);
+    let flags = lm.cell(m, record + 3);
+    let name = lm.cell(m, record + 5);
+    let ty = lm.cell(m, record + 6);
+    let aux = lm.cell(m, record + 7);
+    let n = lm.cell(m, record + 9);
+    let at = record + lb.instr_head();
+    var b = say(heap, out, "  ");
+    if lm.cell(m, record + 4) >= 0 {
+        b = copy(heap, buffer.push(heap, b, byte_of('%')), text, name, lm.name_end(text, name));
+        b = say(heap, b, " = ");
+    }
+    b = say(heap, b, lr.word_at(lr.ops(), op));
+    if op >= 1 && op <= 16 || op == lr.op_fneg() {
+        if flags & lr.f_nuw() != 0 {
+            b = say(heap, b, " nuw");
+        }
+        if flags & lr.f_nsw() != 0 {
+            b = say(heap, b, " nsw");
+        }
+        b = say(heap, b, " ");
+        b = typed(heap, b, text, m, at);
+        if n > 1 {
+            b = say(heap, b, ", ");
+            b = value(heap, b, text, m, at + 4);
+        }
+    } else if op == lr.op_icmp() || op == lr.op_fcmp() {
+        b = say(heap, b, " ");
+        if op == lr.op_icmp() {
+            b = say(heap, b, lr.word_at(lr.icmp_words(), aux));
+        } else {
+            b = say(heap, b, lr.word_at(lr.fcmp_words(), aux));
+        }
+        b = say(heap, b, " ");
+        b = typed(heap, b, text, m, at);
+        b = say(heap, b, ", ");
+        b = value(heap, b, text, m, at + 4);
+    } else if op == lr.op_phi() {
+        b = say(heap, b, " ");
+        b = type_text(heap, b, text, m, ty);
+        var k = 0;
+        while k + 1 < n {
+            if k > 0 {
+                b = say(heap, b, ",");
+            }
+            b = say(heap, b, " [ ");
+            b = value(heap, b, text, m, at + 4 * k);
+            b = say(heap, b, ", ");
+            b = value(heap, b, text, m, at + 4 * k + 4);
+            b = say(heap, b, " ]");
+            k = k + 2;
+        }
+    } else if op >= 22 && op <= 31 {
+        b = say(heap, b, " ");
+        b = typed(heap, b, text, m, at);
+        b = say(heap, b, " to ");
+        b = type_text(heap, b, text, m, ty);
+    } else if op == lr.op_alloca() {
+        b = say(heap, b, " ");
+        b = typed_list(heap, b, text, m, at, n);
+        b = align(heap, b, aux);
+    } else if op == lr.op_load() || op == lr.op_store() {
+        if flags & lr.f_atomic() != 0 {
+            b = say(heap, b, " atomic");
+        }
+        if flags & lr.f_volatile() != 0 {
+            b = say(heap, b, " volatile");
+        }
+        b = say(heap, b, " ");
+        if op == lr.op_load() {
+            b = type_text(heap, b, text, m, ty);
+            b = say(heap, b, ", ");
+            b = typed(heap, b, text, m, at);
+        } else {
+            b = typed_list(heap, b, text, m, at, n);
+        }
+        b = ordering(heap, b, flags >> lr.ordering_shift() & 7);
+        b = align(heap, b, aux);
+    } else if op == lr.op_gep() {
+        if flags & lr.f_inbounds() != 0 {
+            b = say(heap, b, " inbounds");
+        }
+        if flags & lr.f_nuw() != 0 {
+            b = say(heap, b, " nuw");
+        }
+        b = say(heap, b, " ");
+        b = typed_list(heap, b, text, m, at, n);
+    } else if op == lr.op_extractvalue() || op == lr.op_insertvalue() {
+        b = say(heap, b, " ");
+        var k = 0;
+        while k < n {
+            if k > 0 {
+                b = say(heap, b, ", ");
+            }
+            if lm.cell(m, at + 4 * k + 1) == lr.o_index() {
+                b = value(heap, b, text, m, at + 4 * k);
+            } else {
+                b = typed(heap, b, text, m, at + 4 * k);
+            }
+            k = k + 1;
+        }
+    } else if op == lr.op_call() {
+        b = say(heap, b, " ");
+        b = call(heap, b, text, m, at, n, flags, ty);
+    } else if op == lr.op_ret() {
+        if n == 0 {
+            b = say(heap, b, " void");
+        } else {
+            b = say(heap, b, " ");
+            b = typed(heap, b, text, m, at);
+        }
+    } else if op == lr.op_br() || op == lr.op_select() || op == lr.op_insertelement() || op == lr.op_shufflevector() || op == lr.op_extractelement() {
+        b = say(heap, b, " ");
+        b = typed_list(heap, b, text, m, at, n);
+    } else if op == lr.op_switch() {
+        b = say(heap, b, " ");
+        b = typed_list(heap, b, text, m, at, 2);
+        b = say(heap, b, " [");
+        var k = 2;
+        while k + 1 < n {
+            b = say(heap, b, "\n    ");
+            b = typed_list(heap, b, text, m, at + 4 * k, 2);
+            k = k + 2;
+        }
+        b = say(heap, b, "\n  ]");
+    } else if op == lr.op_atomicrmw() || op == lr.op_cmpxchg() {
+        if flags & lr.f_volatile() != 0 {
+            b = say(heap, b, " volatile");
+        }
+        if op == lr.op_atomicrmw() {
+            b = say(heap, b, " ");
+            b = say(heap, b, lr.word_at(lr.rmw_words(), flags >> lr.rmw_shift() & 15));
+        }
+        b = say(heap, b, " ");
+        b = typed_list(heap, b, text, m, at, n);
+        b = ordering(heap, b, flags >> lr.ordering_shift() & 7);
+        if op == lr.op_cmpxchg() {
+            b = ordering(heap, b, flags >> lr.ordering_shift() + 3 & 7);
+        }
+        b = align(heap, b, aux);
+    }
+    return say(heap, b, "\n");
+}
+
+// The global whose record is at `record`.
+fn global[&h, &t, &m](heap: &!h Heap, out: buffer.Buffer, text: &t [byte], m: &m [int], record: int) -> [heap] buffer.Buffer {
+    let name = lm.cell(m, record + 2);
+    let flags = lm.cell(m, record + 4);
+    var b = copy(heap, out, text, name, lm.name_end(text, name));
+    b = say(heap, b, " =");
+    if flags & lt.g_private() != 0 {
+        b = say(heap, b, " private");
+    }
+    if flags & lt.g_internal() != 0 {
+        b = say(heap, b, " internal");
+    }
+    if flags & lt.g_external() != 0 {
+        b = say(heap, b, " external");
+    }
+    if flags & lt.g_common() != 0 {
+        b = say(heap, b, " common");
+    }
+    if flags & lt.g_unnamed_addr() != 0 {
+        b = say(heap, b, " unnamed_addr");
+    }
+    if flags & lt.g_constant() != 0 {
+        b = say(heap, b, " constant ");
+    } else {
+        b = say(heap, b, " global ");
+    }
+    if lm.cell(m, record + 9) == 0 {
+        b = type_text(heap, b, text, m, lm.cell(m, record + 5));
+    } else {
+        b = typed(heap, b, text, m, record + 8);
+    }
+    b = align(heap, b, lm.cell(m, record + 6));
+    return say(heap, b, "\n");
+}
+
+// The first line of the function whose record is at `record`.
+fn function[&h, &t, &m](heap: &!h Heap, out: buffer.Buffer, text: &t [byte], m: &m [int], record: int) -> [heap] buffer.Buffer {
+    let name = lm.cell(m, record + 2);
+    let n = lm.cell(m, record + 6);
+    var b = say(heap, out, "define ");
+    if lm.cell(m, record + 4) & lt.g_internal() != 0 {
+        b = say(heap, b, "internal ");
+    }
+    b = type_text(heap, b, text, m, lm.cell(m, record + 5));
+    b = say(heap, b, " ");
+    b = copy(heap, b, text, name, lm.name_end(text, name));
+    b = say(heap, b, "(");
+    var k = 0;
+    while k < n {
+        let p = record + lt.func_head() + 3 * k;
+        if k > 0 {
+            b = say(heap, b, ", ");
+        }
+        b = type_text(heap, b, text, m, lm.cell(m, p));
+        if lm.cell(m, p + 1) >= 0 {
+            b = say(heap, b, " %");
+            b = copy(heap, b, text, lm.cell(m, p + 2), lm.name_end(text, lm.cell(m, p + 2)));
+        }
+        k = k + 1;
+    }
+    b = say(heap, b, ")");
+    if lm.cell(m, record + 8) > lm.cell(m, record + 7) {
+        b = say(heap, b, " ");
+        b = copy(heap, b, text, lm.cell(m, record + 7), lm.cell(m, record + 8));
+    }
+    return say(heap, b, " {\n");
+}
+
+// The module in `m`, read from `text`, as LLVM text. A table that holds a refusal, or none that was read, prints as nothing.
+pub fn print[&h, &t, &m](heap: &!h Heap, text: &t [byte], m: &m [int]) -> [heap] buffer.Buffer {
+    var b = buffer.empty(heap, len(text) + 4096);
+    if len(m) < lm.header() || lm.failed(m) || m[lm.h_ready()] == 0 {
+        return b;
+    }
+    var at = m[lm.h_rec()];
+    let end = m[lm.h_top()];
+    while at < end {
+        let kind = lm.cell(m, at);
+        let size = lm.cell(m, at + 1);
+        if size < 2 {
+            return b;
+        }
+        if kind == lr.r_instr() {
+            b = instruction(heap, b, text, m, at);
+        } else if kind == lr.r_block() {
+            if lm.cell(m, at + 3) >= 0 {
+                b = copy(heap, b, text, lm.cell(m, at + 3), lm.name_end(text, lm.cell(m, at + 3)));
+                b = say(heap, b, ":\n");
+            }
+        } else if kind == lr.r_global() {
+            b = global(heap, b, text, m, at);
+        } else if kind == lr.r_func() {
+            b = function(heap, b, text, m, at);
+        } else if kind == lr.r_end() {
+            b = say(heap, b, "}\n");
+        } else if kind == lr.r_declare() {
+            let name = lm.cell(m, at + 2);
+            let ty = lm.cell(m, at + 4);
+            b = say(heap, b, "declare ");
+            b = type_text(heap, b, text, m, lm.type_part(m, ty, 0));
+            b = say(heap, b, " ");
+            b = copy(heap, b, text, name, lm.name_end(text, name));
+            b = parameters(heap, b, text, m, ty);
+            b = say(heap, b, "\n");
+        } else if kind == lr.r_typedef() {
+            let slot = lm.cell(m, at + 2);
+            b = copy(heap, b, text, lm.cell(m, slot), lm.cell(m, slot) + lm.cell(m, slot + 1));
+            b = say(heap, b, " = type ");
+            b = type_text(heap, b, text, m, lm.cell(m, at + 3));
+            b = say(heap, b, "\n");
+        } else if kind == lr.r_line() {
+            b = copy(heap, b, text, lm.cell(m, at + 2), lm.cell(m, at + 3));
+            b = say(heap, b, "\n");
+        }
+        at = at + size;
+    }
+    return b;
+}

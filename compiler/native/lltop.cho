@@ -1,0 +1,456 @@
+edition 7;
+module selfhost.lltop;
+
+// lltop.cho -- the reader's lines outside a function, and the reader itself (`docs/native-backend.md` section 10): `read` turns a module of LLVM text into
+// the table of `llmod.cho`, or refuses it with the line and the reason. Pure, and no trap on any text.
+//
+// The records, in the order of the text (each begins with its kind and its size):
+//     a line kept as written   from, to                                   (`source_filename`, `target ...`)
+//     a named type             the slot of its name, the type it names
+//     a global                 where its name is, its slot, flags, type, alignment (0 for none), the line, and its value as an operand (kind 0: none)
+//     a declaration            where its name is, its slot, its function type, the line
+//     a function               where its name is, its slot, flags, the type of its result, how many parameters, where its attributes start and end in the
+//                              text, the record of its names, how many blocks and instructions it has, the line of its first vector (0: none), its line;
+//                              then a parameter's type, its number (-1: not named) and where its name is, for each
+//     ...its blocks and instructions (`llbody.cho`), with the constants they use before them...
+//     a function's names       how many, then for each where the name is, the record that defines it, its type, and 1 for a label
+//     the end of a function
+
+import selfhost.llmod as lm;
+import selfhost.llread as lr;
+import selfhost.llbody as lb;
+
+// Flags of a global and of a function.
+pub fn g_private() -> [] int {
+    return 1;
+}
+
+pub fn g_internal() -> [] int {
+    return 2;
+}
+
+pub fn g_external() -> [] int {
+    return 4;
+}
+
+pub fn g_common() -> [] int {
+    return 8;
+}
+
+pub fn g_unnamed_addr() -> [] int {
+    return 16;
+}
+
+pub fn g_constant() -> [] int {
+    return 32;
+}
+
+pub fn func_head() -> [] int {
+    return 14;
+}
+
+pub fn global_head() -> [] int {
+    return 12;
+}
+
+// The machines a module may say it is for. A module of the compiler says none: clang is told on its command line.
+fn triples() -> [] &static [byte] {
+    return " aarch64-none-elf aarch64-unknown-linux-gnu x86_64-unknown-linux-gnu x86_64-pc-linux-gnu arm64-apple-darwin arm64-apple-macosx ";
+}
+
+// The line (from 1) that byte `place` of the text is on.
+pub fn line_of[&t](text: &t [byte], place: int) -> [] int {
+    var line = 1;
+    var i = 0;
+    while i < place && i < len(text) {
+        if int_of(text[i]) == '\n' {
+            line = line + 1;
+        }
+        i = i + 1;
+    }
+    return line;
+}
+
+// A line kept as it is written.
+fn keep[&m](m: &!m [int]) -> [] int {
+    lm.put(m, lr.r_line());
+    lm.put(m, 4);
+    lm.put(m, lm.ts(m, 0));
+    lm.put(m, lm.te(m, m[lm.h_ntok()] - 1));
+    return 0;
+}
+
+// `target triple = "..."` and `target datalayout = "..."`.
+fn target[&t, &m](text: &t [byte], m: &!m [int]) -> [] int {
+    if m[lm.h_ntok()] != 4 || !lm.is_punct(text, m, 2, '=') || lm.tk(m, 3) != lm.t_string() {
+        return lm.fail(m, lm.why_shape(), lm.ts(m, 0));
+    }
+    if lm.is_word(text, m, 1, "triple") {
+        if lr.word_index(text, lm.ts(m, 3) + 1, lm.te(m, 3) - 1, triples()) == 0 {
+            return lm.fail(m, lm.why_target(), lm.ts(m, 3));
+        }
+        return keep(m);
+    }
+    if lm.is_word(text, m, 1, "datalayout") {
+        return keep(m);
+    }
+    return lm.fail(m, lm.why_top(), lm.ts(m, 0));
+}
+
+// `%name = type { ... }`.
+fn typedef[&t, &m](text: &t [byte], m: &!m [int]) -> [] int {
+    if !lm.is_punct(text, m, 1, '=') || !lm.is_word(text, m, 2, "type") {
+        return lm.fail(m, lm.why_top(), lm.ts(m, 0));
+    }
+    let slot = lm.global_slot(text, m, lm.ts(m, 0), lm.te(m, 0));
+    if slot < 0 {
+        return 0;
+    }
+    if m[slot + 2] != 0 {
+        return lm.fail(m, lm.why_twice(), lm.ts(m, 0));
+    }
+    m[lm.h_pos()] = 3;
+    let ty = lr.parse_type(text, m);
+    if ty < 0 {
+        return 0;
+    }
+    if !lm.at_end(m) || lm.type_kind(m, ty) != lm.k_struct() {
+        return lm.fail(m, lm.why_shape(), lm.ts(m, lm.pos(m)));
+    }
+    m[slot + 2] = ty + 1;
+    lm.put(m, lr.r_typedef());
+    lm.put(m, 4);
+    lm.put(m, slot);
+    lm.put(m, ty);
+    return 0;
+}
+
+// `@name = [private | internal | external | common] [unnamed_addr] (global | constant) T [value] [, align N]`.
+fn global[&t, &m](text: &t [byte], m: &!m [int]) -> [] int {
+    if !lm.is_punct(text, m, 1, '=') {
+        return lm.fail(m, lm.why_top(), lm.ts(m, 0));
+    }
+    m[lm.h_pos()] = 2;
+    var flags = 0;
+    var kind = 0;
+    while kind == 0 {
+        if lm.take_word(text, m, "private") {
+            flags = flags | g_private();
+        } else if lm.take_word(text, m, "internal") {
+            flags = flags | g_internal();
+        } else if lm.take_word(text, m, "external") {
+            flags = flags | g_external();
+        } else if lm.take_word(text, m, "common") {
+            flags = flags | g_common();
+        } else if lm.take_word(text, m, "unnamed_addr") {
+            flags = flags | g_unnamed_addr();
+        } else if lm.take_word(text, m, "constant") {
+            flags = flags | g_constant();
+            kind = 1;
+        } else if lm.take_word(text, m, "global") {
+            kind = 1;
+        } else {
+            return lm.fail(m, lm.why_word(), lm.ts(m, lm.pos(m)));
+        }
+    }
+    let ty = lr.parse_type(text, m);
+    if ty < 0 {
+        return 0;
+    }
+    let mark = m[lm.h_ops_top()];
+    if lm.at_end(m) || lm.is_punct(text, m, lm.pos(m), ',') {
+        if flags & g_external() == 0 {
+            return lm.fail(m, lm.why_shape(), lm.ts(m, 0));
+        }
+        lm.push_op(m, ty, 0, 0, 0);
+    } else if flags & g_external() != 0 || !lr.parse_value(text, m, ty) {
+        return lm.fail(m, lm.why_shape(), lm.ts(m, lm.pos(m)));
+    }
+    var align = 0;
+    if lm.take_punct(text, m, ',') {
+        if !lm.need_word(text, m, "align") {
+            return 0;
+        }
+        align = lm.take_count(text, m);
+    }
+    if align < 0 || !lm.at_end(m) {
+        return lm.fail(m, lm.why_shape(), lm.ts(m, lm.pos(m)));
+    }
+    let record = lm.put(m, lr.r_global());
+    lm.put(m, global_head());
+    lm.put(m, lm.ts(m, 0));
+    let slot = lm.define_global(text, m, lm.ts(m, 0), lm.te(m, 0), record);
+    lm.put(m, slot);
+    lm.put(m, flags);
+    lm.put(m, ty);
+    lm.put(m, align);
+    lm.put(m, m[lm.h_line()]);
+    lm.flush_ops(m, mark);
+    m[lm.h_nglobals()] = m[lm.h_nglobals()] + 1;
+    return 0;
+}
+
+// `declare T @name(T, ..., [...])`.
+fn declare[&t, &m](text: &t [byte], m: &!m [int]) -> [] int {
+    m[lm.h_pos()] = 1;
+    let result = lr.parse_type(text, m);
+    if result < 0 {
+        return 0;
+    }
+    let name = lm.pos(m);
+    if lm.tk(m, name) != lm.t_global() || !lm.is_punct(text, m, name + 1, '(') {
+        return lm.fail(m, lm.why_shape(), lm.ts(m, name));
+    }
+    m[lm.h_pos()] = name + 2;
+    let ty = lr.parse_function_type(text, m, result);
+    if ty < 0 {
+        return 0;
+    }
+    if !lm.at_end(m) {
+        return lm.fail(m, lm.why_word(), lm.ts(m, lm.pos(m)));
+    }
+    let record = lm.put(m, lr.r_declare());
+    lm.put(m, 6);
+    lm.put(m, lm.ts(m, name));
+    lm.put(m, lm.define_global(text, m, lm.ts(m, name), lm.te(m, name), record));
+    lm.put(m, ty);
+    lm.put(m, m[lm.h_line()]);
+    m[lm.h_ndecls()] = m[lm.h_ndecls()] + 1;
+    return 0;
+}
+
+// `define [internal] T @name(T %a, ...) [noreturn | noinline | alwaysinline | "key"[="value"]]... {`. The attributes are kept as their text.
+fn define[&t, &m](text: &t [byte], m: &!m [int]) -> [] int {
+    m[lm.h_pos()] = 1;
+    var flags = 0;
+    if lm.take_word(text, m, "internal") {
+        flags = g_internal();
+    }
+    let result = lr.parse_type(text, m);
+    if result < 0 {
+        return 0;
+    }
+    let name = lm.pos(m);
+    if lm.tk(m, name) != lm.t_global() || !lm.is_punct(text, m, name + 1, '(') {
+        return lm.fail(m, lm.why_shape(), lm.ts(m, name));
+    }
+    m[lm.h_pos()] = name + 2;
+    lm.new_function(m);
+    let mark = m[lm.h_ops()];
+    m[lm.h_ops_top()] = mark;
+    var params = 0;
+    if !lm.take_punct(text, m, ')') {
+        var going = true;
+        while going {
+            let ty = lr.parse_type(text, m);
+            if ty < 0 {
+                return 0;
+            }
+            var id = 0 - 1;
+            var where_name = 0 - 1;
+            let p = lm.pos(m);
+            if lm.tk(m, p) == lm.t_local() {
+                where_name = lm.ts(m, p) + 1;
+                id = lm.local_id(text, m, where_name, lm.te(m, p));
+                if id < 0 {
+                    return 0;
+                }
+                lm.step(m);
+            } else if !lm.is_punct(text, m, p, ',') && !lm.is_punct(text, m, p, ')') {
+                // An attribute of the parameter (`noundef`, `nocapture`): the compiler writes none.
+                return lm.fail(m, lm.why_word(), lm.ts(m, p));
+            }
+            if id < 0 || lm.at(text, where_name) >= '0' && lm.at(text, where_name) <= '9' {
+                // A parameter with no name, or with the number LLVM would give it: one more number taken before the first block's.
+                m[lm.h_first_number()] = m[lm.h_first_number()] + 1;
+            }
+            lm.push_op(m, ty, id, where_name, 0);
+            params = params + 1;
+            if !lm.take_punct(text, m, ',') {
+                going = false;
+            }
+        }
+        if !lm.need_punct(text, m, ')') {
+            return 0;
+        }
+    }
+    let last = m[lm.h_ntok()] - 1;
+    if !lm.is_punct(text, m, last, '{') {
+        return lm.fail(m, lm.why_shape(), lm.ts(m, last));
+    }
+    let attrs_from = lm.ts(m, lm.pos(m));
+    var attrs_to = attrs_from;
+    while lm.pos(m) < last {
+        let i = lm.pos(m);
+        if lm.tk(m, i) == lm.t_word() {
+            if lr.word_index(text, lm.ts(m, i), lm.te(m, i), " noreturn noinline alwaysinline nounwind ") == 0 {
+                return lm.fail(m, lm.why_word(), lm.ts(m, i));
+            }
+        } else if lm.tk(m, i) != lm.t_string() && !lm.is_punct(text, m, i, '=') {
+            return lm.fail(m, lm.why_word(), lm.ts(m, i));
+        }
+        attrs_to = lm.te(m, i);
+        lm.step(m);
+    }
+    let record = lm.put(m, lr.r_func());
+    lm.put(m, func_head() + 3 * params);
+    lm.put(m, lm.ts(m, name));
+    lm.put(m, lm.define_global(text, m, lm.ts(m, name), lm.te(m, name), record));
+    lm.put(m, flags);
+    lm.put(m, result);
+    lm.put(m, params);
+    lm.put(m, attrs_from);
+    lm.put(m, attrs_to);
+    lm.put(m, 0);
+    lm.put(m, 0);
+    lm.put(m, 0);
+    lm.put(m, 0);
+    lm.put(m, m[lm.h_line()]);
+    var k = 0;
+    while k < params {
+        let ty = m[mark + 4 * k];
+        let id = m[mark + 4 * k + 1];
+        lm.put(m, ty);
+        lm.put(m, id);
+        lm.put(m, m[mark + 4 * k + 2]);
+        if id >= 0 {
+            lm.define_local(m, id, record, ty, 0, m[mark + 4 * k + 2]);
+        }
+        k = k + 1;
+    }
+    m[lm.h_ops_top()] = mark;
+    if !lm.failed(m) {
+        m[lm.h_func()] = record;
+    }
+    return 0;
+}
+
+// Is the name at `place` the number `n`, in decimal?
+fn is_number[&t](text: &t [byte], place: int, n: int) -> [] bool {
+    var value = 0;
+    var i = place;
+    while lm.at(text, i) >= '0' && lm.at(text, i) <= '9' && i - place < 12 {
+        value = value * 10 + (lm.at(text, i) - '0');
+        i = i + 1;
+    }
+    return i > place && i == lm.name_end(text, place) && value == n;
+}
+
+// The `}` that ends a function: its names are written, each one must have been defined, and the function's record is completed.
+fn end_function[&t, &m](text: &t [byte], m: &!m [int]) -> [] int {
+    let func = m[lm.h_func()];
+    if m[lm.h_in_switch()] != 0 || m[lm.h_ntok()] != 1 {
+        return lm.fail(m, lm.why_shape(), lm.ts(m, 0));
+    }
+    let n = m[lm.h_nlocals()];
+    let names = lm.put(m, lr.r_locals());
+    lm.put(m, 3 + 4 * n);
+    lm.put(m, n);
+    var k = 0;
+    while k < n && !lm.failed(m) {
+        let info = m[lm.h_li()] + 4 * k;
+        if m[info + 1] == 0 && m[lm.h_first_block()] != 0 && is_number(text, m[info], m[lm.h_first_number()]) {
+            // The first block, which has no label written, named by its number.
+            m[info + 1] = m[lm.h_first_block()];
+            m[info + 2] = lm.ty_label();
+            m[info + 3] = 1;
+            lm.set(m, m[lm.h_first_block()] + 2, k);
+        }
+        if m[info + 1] == 0 {
+            m[lm.h_line()] = line_of(text, m[info]);
+            return lm.fail(m, lm.why_undefined(), m[info]);
+        }
+        lm.put(m, m[info]);
+        lm.put(m, m[info + 1]);
+        lm.put(m, m[info + 2]);
+        lm.put(m, m[info + 3]);
+        k = k + 1;
+    }
+    lm.put(m, lr.r_end());
+    lm.put(m, 2);
+    lm.set(m, func + 9, names);
+    lm.set(m, func + 10, m[lm.h_fblocks()]);
+    lm.set(m, func + 11, m[lm.h_finstr()]);
+    lm.set(m, func + 12, m[lm.h_fvector()]);
+    m[lm.h_func()] = 0;
+    m[lm.h_nfuncs()] = m[lm.h_nfuncs()] + 1;
+    return 0;
+}
+
+// One line outside a function, lexed.
+fn top[&t, &m](text: &t [byte], m: &!m [int]) -> [] int {
+    let kind = lm.tk(m, 0);
+    if kind == lm.t_global() {
+        return global(text, m);
+    }
+    if kind == lm.t_local() {
+        return typedef(text, m);
+    }
+    if lm.is_word(text, m, 0, "define") {
+        return define(text, m);
+    }
+    if lm.is_word(text, m, 0, "declare") {
+        return declare(text, m);
+    }
+    if lm.is_word(text, m, 0, "target") {
+        return target(text, m);
+    }
+    if lm.is_word(text, m, 0, "source_filename") {
+        if m[lm.h_ntok()] != 3 || !lm.is_punct(text, m, 1, '=') || lm.tk(m, 2) != lm.t_string() {
+            return lm.fail(m, lm.why_shape(), lm.ts(m, 0));
+        }
+        return keep(m);
+    }
+    return lm.fail(m, lm.why_top(), lm.ts(m, 0));
+}
+
+// Every name the module uses is one it defines or declares; a function of LLVM's own (`llvm.`) needs no declaration, as for clang.
+fn resolve[&t, &m](text: &t [byte], m: &!m [int]) -> [] int {
+    var s = 0;
+    while s < m[lm.h_gh_size()] && !lm.failed(m) {
+        let c = m[lm.h_gh()] + 4 * s;
+        if m[c + 1] != 0 && m[c + 2] == 0 && !lm.spells(text, m[c], m[c] + 6, "@llvm.") {
+            m[lm.h_line()] = line_of(text, m[c]);
+            lm.fail(m, lm.why_undefined(), m[c]);
+        }
+        s = s + 1;
+    }
+    return 0;
+}
+
+// The module `text` read into `m`, which has `llmod.room(text)` cells: 0, or 1 for a refusal (its line, its reason and its place are in the header). With
+// `strict` 1 a vector is a refusal.
+pub fn read[&t, &m](text: &t [byte], m: &!m [int], strict: int) -> [] int {
+    lm.layout(text, m, strict);
+    if len(m) < lm.header() {
+        return 1;
+    }
+    var from = 0;
+    var i = 0;
+    while i <= len(text) && !lm.failed(m) {
+        if i == len(text) || int_of(text[i]) == '\n' {
+            m[lm.h_line()] = m[lm.h_line()] + 1;
+            if lm.lex(text, m, from, i) > 0 && !lm.failed(m) {
+                if m[lm.h_func()] == 0 {
+                    top(text, m);
+                } else if lm.is_punct(text, m, 0, '}') {
+                    end_function(text, m);
+                } else {
+                    lb.line(text, m);
+                }
+            }
+            from = i + 1;
+        }
+        i = i + 1;
+    }
+    if !lm.failed(m) && m[lm.h_func()] != 0 {
+        lm.fail(m, lm.why_open(), len(text));
+    }
+    if !lm.failed(m) {
+        resolve(text, m);
+    }
+    if lm.failed(m) {
+        return 1;
+    }
+    return 0;
+}

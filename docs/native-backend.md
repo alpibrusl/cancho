@@ -1,11 +1,11 @@
 # A backend of cancho's own
 
-> **Status: designed; the contract and the flag are built, no backend is** (epic #840, task N0, #858). What exists: this document,
-> `scripts/ll-census.cho` (the count as a program), `tests/native/subset.txt` (what the compiler may write, by name),
-> `tests/commands/native_subset.sh` (the gate's test of both) and `--backend llvm|native`, where `native` is refused by a new
-> rule, `unsupported-by-backend`. There is no reader, no encoder and no code generator: those are N1 to N15, each an issue.
-> Every number below was produced by the command next to it on linux-x86_64 (clang 18.1.3), at the commit that adds this file,
-> unless it says it is the epic's.
+> **Status: the contract, the flag and the reader are built; no code generator is** (epic #840; N0 in #858, N1 in #860, which adds
+> section 10). What exists: `scripts/ll-census.cho` and `tests/native/subset.txt` (what the compiler may write, by name), the reader
+> and its printer (`compiler/native/`, section 10), `--backend roundtrip` (every program a test of the reader) and `--backend native`,
+> which reads the module with vectors refused and then refuses the program by `unsupported-by-backend`, since nothing can yet write
+> code for it. Encoder, code generator, objects and images are N2 to N15. Every number below was produced by the command next to it
+> on linux-x86_64 (clang 18.1.3), at the commit that adds the section it is in, unless it says it is the epic's.
 
 The goal, in one sentence: from a cancho program to machine code and to a file that runs, with no clang, no LLVM and no system
 linker in the path. The first user is [cancho-os](https://github.com/alpibrusl/cancho-os), a kernel that should one day rebuild
@@ -80,9 +80,9 @@ cancho build $(sed 's|^|compiler/|' compiler/cancho.files) --std --emit ll --hos
   `floatcode.cho`, `threadcode.cho`, `cryptocode.cho`, `filecode.cho`, `netcode.cho`, `externcode.cho`, `consteval.cho`,
   `platform.cho`, `bare.cho`) and the runtime files, read for every form. Nothing was found there that the 459 modules do not
   also hold, so the committed set is the census and nothing was added by hand.
-- **Not re-measured here: cancho-os's kernel.** It needs `cancho-ssh`, which this work could not read. The epic's count of the
-  kernel stands as the epic's; every form it lists is in the set (the floating-point instructions, `inttoptr`, the volatile
-  accesses and the registers all come from probes and fixtures here).
+- **cancho-os's kernel** (0.0.30 at `adaf83e`, with cancho-ssh at the commit it pins), counted again with N1, when cancho-ssh
+  could be read: 143,933 lines, **834 functions, 846 globals and 18 strings of assembly, as the epic said**, and every form of
+  it is in the set. (N0 wrote here that it had not been measured, and relied on probes for the forms a kernel uses.)
 
 The compiler's module for darwin, counted again: **454,230 lines, 2,947 functions, 8,719 globals**, the epic's numbers exactly,
 and `load` 114,283, `call` 51,779, `br` 46,825, `store` 44,788, as it said. Writing it takes 7.2 s on this machine (3.7 s on the
@@ -185,9 +185,11 @@ N1's first test is this table: the reader's sizes against clang's, for every typ
 ## 5. What is refused, and how
 
 - **`unsupported-by-backend`** is the one rule (number 58, the 64th tag). Today it refuses every program given `--backend native`,
-  as a refusal about the program (no place in it is at fault), after the front end has accepted the program: a program that is
-  wrong is refused by its own rule first. `check --output json` carries the tag; the status is 1; nothing is written.
-- From N1 the same rule refuses a module with a form outside section 3.2, **naming the line of the text**. A person who meets
+  as a refusal about the program (no place in its source is at fault), after the front end has accepted the program: a program
+  that is wrong is refused by its own rule first. `check --output json` carries the tag; the status is 1; nothing is written.
+- Since N1 the reader runs first, and a module with a form it does not read is refused **naming the line of the module** and the
+  reason (thirteen of them, `llmod.why_text`): `line 3008 of the module (--emit ll writes it): a vector, which the native backend
+  has no code for`. A module it reads is refused for the code generator there is not yet. A person who meets
   it has either called something the native backend does not build yet (said in words) or found a change to the compiler that
   widened the text without widening the reader (a bug, which the test of section 6 exists to catch first).
 - No input reaches a panic: N1 carries a test in which every single-byte damage and every truncation of three modules is read
@@ -237,17 +239,187 @@ cancho check x.cho --backend native --output json   # the same refusal, as data
 
 `--backend` is taken by `build`, `check`, `run` and `test` (`compiler/cliprog.cho`, `clitest.cho`, `clibase.backend_of`); a
 command that builds nothing (`ids`, `layout`, `authority`) refuses it as a usage error, and so is a value that is neither.
-`test --backend native` refuses before it reads the files, since there is no program to run the tests of; the other three
-check the program first. `tests/reject/backend_native_not_built.cho` is the rule's fixture, with a new header line,
+All four check the program first. (`test --backend native` refused before it read the files until N1, when there was nothing
+to read a module with.) `tests/reject/backend_native_not_built.cho` is the rule's fixture, with a new header line,
 `//~ BACKEND native`, that the fixture walker passes to `check` as it passes `//~ TARGET`.
 
 ---
 
 ## 9. Not done
 
-- Any reader, encoder, code generator, object or image writer: N1 to N8.
-- The tables of the form in memory (how a value, a type, an instruction, a block and a function are numbered; where a constant
-  expression is kept): N1 writes them here, before its code.
-- The table of instruction shapes (operands, result type, flags) in full: section 3.2 is its outline, N1 completes it.
-- The census of cancho-os's kernel, made again (section 3.1).
+- Any encoder, code generator, object or image writer: N2 to N8.
 - The census as a job over every module of every host; today it is the gate's host and the bare probe.
+- Section 10.7 lists what the reader itself leaves for later.
+
+---
+
+## 10. The reader (N1)
+
+`compiler/native/`: `llmod.cho` (the table, the tokens, the names, the types), `llread.cho` (types, values, constants),
+`llbody.cho` (instructions), `lltop.cho` (the lines outside a function, and `read`), `llprint.cho` (the module written back),
+`llback.cho` (what the command line asks of them). 3,700 lines; all but the printer are pure: no capability, no heap, and no trap
+on any text.
+
+```
+room(text)                 how many cells the table needs
+read(text, m, strict)      0, or 1 with the line, the reason and the place in the header of m
+print(heap, text, m)       the module as LLVM text
+```
+
+### 10.1 One table
+
+The module is one `[int]` the caller allocates. Nothing is copied out of the text: a name, a number and a string are where
+they are in it, so the text must live as long as the table. The first 64 cells are the header; then come regions laid out once,
+from a count of the text (lines, tokens, the longest line, the longest function, names, brackets):
+
+| region | what it holds | sized from |
+|---|---|---|
+| tokens | the tokens of the line being read: kind, start, end | the longest line |
+| operands | a stack: the operands of the instruction being read, the fields of the type being read | the longest line and the longest function (a `switch` keeps its cases there across lines) |
+| types | a record a type, found again by a hash of its kind and parts | the brackets in the text |
+| names of the module | a hash table: where the name is, its length, the record that defines it, whether it is used | the lines that begin `@`, `define`, `declare` |
+| names of the function | a hash table stamped with the function's number, so that a new function empties it at no cost; and what is known of each name | the longest function |
+| records | everything else, in the order of the text | 16 cells a line and 2 a token |
+
+A write past a region's end is a refusal (`the module is larger than the room the reader was given for it`), never a trap; a test
+gives the reader every table size from none to enough.
+
+Measured on the compiler's module (453,709 lines, 19.9 MB): `room` asks for 37.1 million cells (297 MB), of which the records use
+9.9 million (79 MB). The bound is loose on purpose: it must hold for any text, and the count that makes it is one pass. Tightening
+it is worth doing before the compiler runs on a board with 1 GB (section 10.7).
+
+### 10.2 Types
+
+A type is a number. `void i1 i8 i16 i32 i64 i128 float double ptr label` are 0 to 10; every other type is made when the text first
+names it and is the same number each time after (466 types in the compiler's module). A type's record is its kind, a count and
+its parts:
+
+| kind | count | parts |
+|---|---|---|
+| integer | bits (1 to 128) | |
+| struct | fields | the type of each |
+| array, vector | length | the element |
+| function | parameters | the result, each parameter, 1 if more may follow |
+| named (`%struct.x`) | | the slot of its name, where the type it names is kept |
+
+### 10.3 Values, and what a use refers to
+
+An operand is four cells: its type, its kind, and two cells the kind gives a meaning to.
+
+| kind | first cell | second cell |
+|---|---|---|
+| local | its number in the function | where its name is |
+| global | the slot of its name | where its name is |
+| integer | the value | where it is written |
+| integer too large for 64 bits | | where it is written |
+| floating point | its 64 bits (`0x` and sixteen digits) | where it is written |
+| word | which of `null undef poison zeroinitializer true false none` | |
+| constant with parts | its record | |
+| label | the block's number | where its name is |
+| type alone | | |
+| index (of `extractvalue`) | the index | |
+| inline assembly | where its two strings start | where they end |
+| `align N` of a call's argument | N | |
+
+**A local is a number, dense in its function**, given at its first sight, use or definition. When the function ends its names
+are written as a record, four cells each (the name, the record that defines it, its type, whether it is a label), so that a use
+finds its definition in one step; a name used and never defined is refused there, with the line of the use. **A global is a
+slot** in the module's table, so a function may be called before the line that defines it; the slot holds the defining record
+once that line is read, and a name still undefined at the end is refused, unless it is a function of LLVM's own (`llvm.`), which
+clang too takes without a declaration (section 3.2).
+
+**A constant with parts is a record written before the record that uses it**: an array, a struct, a vector, a `c"..."` string,
+or a constant expression (`getelementptr`, `ptrtoint`, `inttoptr`, `bitcast`, each with the operands of the instruction of that
+name). An array whose elements are all integers of one type is one cell an element: the compiler's string literals are such
+arrays, 1.9 million elements in its own module.
+
+### 10.4 Records
+
+Each begins with its kind and its size, so a reader of the table walks it with no index:
+
+| record | cells after the kind and the size |
+|---|---|
+| line kept as written | start, end (`source_filename`, `target`) |
+| named type | the slot of its name, the type |
+| global | name, slot, flags (`private internal external common unnamed_addr constant`), type, alignment, line, value (an operand; kind 0 for none) |
+| declaration | name, slot, function type, line |
+| function | name, slot, flags, result type, parameters, where its attributes start and end, the record of its names, blocks, instructions, the line of its first vector, line; then each parameter's type, number and name |
+| block | the label's number, where its name is (-1: the first block, with no label written) |
+| instruction | its number in the list below, flags, the local it defines and where that name is, the type of its result, a number (alignment or predicate), line, operands |
+| constant | its kind, type, parts, two cells for the kind, the parts |
+| names of a function | how many, then four cells each |
+| end of a function | |
+
+### 10.5 The shape of each instruction
+
+A line of another shape is refused. `T` is a type, `a` a value of the type before it, `N` a number.
+
+| instruction | shape | flags | result |
+|---|---|---|---|
+| `add sub mul sdiv srem udiv and or xor shl ashr lshr` | `T a, b` | `nsw`, `nuw` | `T` |
+| `fadd fsub fmul fdiv` · `fneg` | `T a, b` · `T a` | | `T` |
+| `icmp` · `fcmp` | `PREDICATE T a, b` | | `i1`, or a vector of them |
+| `select` | `T c, T a, T b` | | the type of `a` |
+| `phi` | `T [ a, %from ], ...` | | `T` |
+| `trunc zext sext fptrunc fpext fptosi sitofp bitcast inttoptr ptrtoint` | `T a to T` | | the second `T` |
+| `alloca` | `T [, T count] [, align N]` | | `ptr` |
+| `load` | `[atomic] [volatile] T, ptr p [ORDERING] [, align N]` | | `T` |
+| `store` | `[atomic] [volatile] T a, ptr p [ORDERING] [, align N]` | | none |
+| `getelementptr` | `[inbounds] [nuw] T, ptr p, T i, ...` | | `ptr` |
+| `extractvalue` · `insertvalue` | `T a, N, ...` · `T a, T b, N, ...` | | the part the indices lead to · `T` |
+| `call` | `T [(T, ..., [...])] CALLEE(T [align N] a, ...)` where the callee is `@name`, `%pointer` or `asm [sideeffect] "text", "constraints"` | | `T` |
+| `ret` · `unreachable` | `void` or `T a` · nothing | | none |
+| `br` | `label %to` or `i1 c, label %then, label %else` | | none |
+| `switch` | `T a, label %default [ T k, label %to ... ]`, the cases a line each or not | | none |
+| `atomicrmw` | `[volatile] OPERATION ptr p, T a ORDERING [, align N]` | | `T` |
+| `cmpxchg` | `[volatile] ptr p, T old, T new ORDERING ORDERING [, align N]` | | `{ T, i1 }` |
+| `insertelement` · `extractelement` · `shufflevector` | `T v, T a, T i` · `T v, T i` · `T a, T b, T mask` | | the vector · its element · a vector as long as the mask |
+
+Predicates, orderings and the operations of `atomicrmw` are LLVM's lists (`llread.cho`); an attribute of a parameter or of a
+function other than `noreturn noinline alwaysinline nounwind` and a string, metadata, `tail`, `exact`, a fast-math flag and a
+decimal floating-point number are refused, each with the reason of section 5 that fits.
+
+**Vectors are read, and refused only when asked.** N1's issue has the reader refuse a vector; but the compiler's own module has
+them (section 3.2), so a reader that refused them could not be tested on the compiler. The reader reads them, notes for each
+function the line of its first one, and takes a flag: with `strict` a vector type is a refusal. `--backend roundtrip` reads
+without it; `--backend native` reads with it, which is what a code generator with no vectors needs to be told.
+
+**A first block with no label** has a number all the same (LLVM numbers what has no name as it comes: the parameters, that
+block, the instructions), and a `phi` may name it by that number. The reader gives it that number when the function ends; found
+by the third test module, which is as clang wrote the runtime.
+
+### 10.6 What was measured
+
+```sh
+cancho build FILES --std --emit ll --backend roundtrip -o module.ll     # the module read and written back
+cancho build | run | test ... --backend roundtrip                       # the same, then clang as usual
+cancho test --std compiler/native/llmod.cho compiler/native/llread.cho compiler/native/llbody.cho compiler/native/lltop.cho compiler/native/llprint.cho tests/native/reader_test.cho
+```
+
+`--backend roundtrip` is not in `--help`: it is a way to test, not a backend to build with.
+
+| what | result |
+|---|---|
+| The compiler's module (478,646 lines with the reader in it), read | 0.9 s; writing it takes 7.2 s. Read and written back: 1.2 s on top of the 7.2 |
+| The same, for `--host linux`, `darwin`, `linux-aarch64` | all three read; 2,947 functions and 366,000 instructions each at N0's commit |
+| What clang makes of the compiler's module before and after (`clang -O2 -c`) | **the same object, byte for byte** |
+| The census of the compiler's module before and after | the same line for line: every form counted the same (the gate's test) |
+| The compiler built from modules that went through the reader, three times over | stage 2 equals stage 3, **and both equal the compiler built without it** (one sha256) |
+| `tests/accept` and `examples` with every build through the reader (stage `walk`) | 133 and 16 fixtures pass |
+| The `cancho test` suites of `tests/cancho-tests.txt` through the reader | all 14 pass (the issue says 18; the list has 13, and this adds one) |
+| Probes for no system (`freestanding`, `cpu`, `mmio`, `bare_heap`), `clang -O1 -c` before and after | the same objects (the gate's test) |
+| A vector, `invoke`, `urem`, `tail`, metadata, an attribute, a quoted name, an unknown target: 18 forms | each refused with its reason and its line |
+| Every byte of three modules (5,000 bytes) made each of ten bytes, strict and not; every truncation | each read or refused; none reaches a trap (100,000 reads, 6 s) |
+| The reader broken on purpose in seven ways (the printer drops `volatile`; an undefined name, a name defined twice, a vector and an unknown instruction let through; the room's check removed; a hexadecimal number of any length taken) | five were caught by the suite as it was written; the last two had no test, and have one now |
+| cancho-os's kernel (0.0.30, `adaf83e`) built by its own `build.sh` with every module through the reader | `kernel.o`, `kernel8.img` and `kernel-virt.elf` are **the same bytes** as without it; the image boots in QEMU 8.2.2 (`raspi3b`) and `./test.sh about 'echo ci' ticks crash about` answers as it should, the trap of `crash` included |
+
+The round trip is stronger than N1 asked: it asked that programs behave the same, and the objects are the same bytes, so the
+printer loses nothing clang reads. What it does lose is what clang does not read: comments, and the spacing.
+
+### 10.7 Left for later
+
+- **The room.** `room` is an upper bound that holds for any text; it is four times what the compiler's module uses.
+- **`byte_mask64` under the native backend** (section 3.4): still a vector, so `--backend native` refuses a program that
+  searches bytes, at the line. N3 decides between a scalar form in the front end and vectors in the code generator.
+- **Undeclared intrinsics** are accepted, as clang accepts them; the driver could declare them instead.
+- **A layout module** (the sizes and offsets of section 4, from the type table) is N3's first step; the table has what it needs.

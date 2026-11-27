@@ -19,6 +19,7 @@ import selfhost.walk;
 import selfhost.guidelines;
 import selfhost.commandtree;
 import selfhost.diagnose;
+import selfhost.llmod;
 import selfhost.stdorder;
 import selfhost.testscan;
 import selfhost.satisfytext;
@@ -188,13 +189,30 @@ pub fn backend_of[&a](args: &a Args, n: int) -> [args] int {
     if n < arg_count(args) && bytes.equal(arg(args, n), "native") {
         return 1;
     }
+    if n < arg_count(args) && bytes.equal(arg(args, n), "roundtrip") {
+        // The module read by the native backend's reader and written back for clang (`docs/native-backend.md` section 10): how every program is made a test of it.
+        return 2;
+    }
     return 0 - 1;
 }
 
-// `--backend native` for the program whose first file is `path`: refused by `unsupported-by-backend` (`docs/native-backend.md` section 8), as a refusal about the
-// program and not about a place in it, in the form `report_check` gives one. Nothing of the native backend is built yet, so this is every program; when it is,
-// this is where a module outside the subset is refused. Status 1, and the caller writes nothing.
-pub fn refuse_backend[&h, &i, &p](heap: &!h Heap, io: &!i Io, path: &p [byte], json: bool) -> [heap, io_write, err_write] int {
+// The backend the command line asks for: the value of its last `--backend`, as `backend_of`; 0 with none.
+pub fn backend_asked[&a](args: &a Args) -> [args] int {
+    var asked = 0;
+    var n = 2;
+    while n + 1 < arg_count(args) {
+        if bytes.equal(arg(args, n), "--backend") && backend_of(args, n + 1) > 0 {
+            asked = backend_of(args, n + 1);
+        }
+        n = n + 1;
+    }
+    return asked;
+}
+
+// A program refused by the backend that was asked for (`unsupported-by-backend`, `docs/native-backend.md` section 5), as a refusal about the program and not about
+// a place in its source, in the form `report_check` gives one. `why` is the reader's reason (`llmod.why_text`) at line `line` of the module, or 0 when the
+// module was read and what is missing is the code generator. Status 1, and the caller writes nothing.
+pub fn refuse_backend[&h, &i, &p](heap: &!h Heap, io: &!i Io, path: &p [byte], json: bool, line: int, why: int) -> [heap, io_write, err_write] int {
     if json {
         var out = buffer.append(heap, buffer.empty(heap, 512), "{\n  \"refused\": [\n");
         let sentence = rules.sentence(rules.rule_tag(rules.r_unsupported_by_backend()));
@@ -209,7 +227,15 @@ pub fn refuse_backend[&h, &i, &p](heap: &!h Heap, io: &!i Io, path: &p [byte], j
         show(heap, io, out);
     } else {
         var out = diagnose.render_program(heap, buffer.empty(heap, 512), path, rules.r_unsupported_by_backend(), 0);
-        out = buffer.append(heap, out, "\n    the native backend is not built yet: nothing was written, and `--backend llvm` builds this program\n");
+        if why == 0 {
+            out = buffer.append(heap, out, "\n    the native backend reads this program's module and has no code generator yet: nothing was written, and `--backend llvm` builds this program\n");
+        } else {
+            out = buffer.append(heap, out, "\n    line ");
+            out = buffer.push_nat(heap, out, line);
+            out = buffer.append(heap, out, " of the module (`--emit ll` writes it): ");
+            out = buffer.append(heap, out, llmod.why_text(why));
+            out = buffer.append(heap, out, "\n");
+        }
         borrow out as &t in {
             console.error_all(io, buffer.bytes(t));
         }
