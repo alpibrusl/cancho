@@ -133,6 +133,28 @@ else
 fi
 end
 
+# And for what writes (docs/bare-system.md, step 4): `file_write`, `file_sync`, `file_lock`, `dir_rename` and `dir_rename_new`, `dir_remove` and `dir_sync` are
+# the module's `write`, `sync`, `lock`, `rename`, `remove` and `sync` again; `dir_open_new` and `dir_open_append` are its `step`. Both names of a rename, and
+# the name removed, are held to being one component first.
+begin a_lent_system_writes_a_file
+if "$cancho" build tests/probes/bare_system_write.cho tests/probes/bare_system_fs.cho --target aarch64-none-elf --emit ll -o "$work/write.ll" > "$work/write.txt" 2>&1; then
+    same "$(calls_undefined "$work/write.ll")" "" "what the module calls and does not define"
+    same "$(grep -c '^define i64 @cancho_fd_write(\|^define i64 @cancho_fd_sync(\|^define i64 @cancho_fd_lock(\|^define void @cancho_dir_rename(\|^define void @cancho_dir_remove(\|^define void @cancho_dir_sync(' "$work/write.ll")" 6 "the six functions the writing builtins call are the module's own"
+    same "$(awk '/^define void @cancho_dir_rename\(/ { on = 1 } on && /call i1 @cancho_sys_component\(/ { n++ } on && /^}/ { print n; exit }' "$work/write.ll")" 2 "both names of a rename are held to being one component before the module is asked"
+    same "$(awk '/^define void @cancho_dir_remove\(/ { on = 1 } on && /call i1 @cancho_sys_component\(/ { print "held"; exit } on && /^}/ { exit }' "$work/write.ll")" "held" "and so is a name that is removed"
+else
+    fail "a program that replaces a file of a lent system, for no system, said: $(head -c 300 "$work/write.txt")"
+fi
+# without the functions that write, the same program's calls are a trap, not a call of something missing
+sed '/^\/\/ What is written: /,$d' tests/probes/bare_system_fs.cho > "$work/readonly_fs.cho"
+if "$cancho" build tests/probes/bare_system_write.cho "$work/readonly_fs.cho" --target aarch64-none-elf --emit ll -o "$work/readonly.ll" > "$work/readonly.txt" 2>&1; then
+    same "$(calls_undefined "$work/readonly.ll")" "" "what the module calls and does not define, when the system has nothing that writes"
+    same "$(awk '/^define i64 @cancho_fd_write\(/ { on = 1 } on && /call void @cancho_trap\(/ { print "trap"; exit } on && /^}/ { exit }' "$work/readonly.ll")" "trap" "writing to a system that has no function for it is a trap"
+else
+    fail "with a system that has nothing that writes, the build said: $(head -c 300 "$work/readonly.txt")"
+fi
+end
+
 begin an_object_for_no_system_is_an_elf_for_aarch64
 if "$cancho" build tests/probes/freestanding.cho --std --target aarch64-none-elf --emit obj -o "$work/bare.o" > "$work/obj.txt" 2>&1; then
     # The four bytes of the magic, then (at 18) the machine: 183, AArch64, little-endian.
