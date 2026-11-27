@@ -18,3 +18,5 @@ lex_map | 5 | --std tests/lex/map_test.cho
 lex_route | 6 | --std tests/lex/route_test.cho
 # The reader of the native backend (docs/native-backend.md section 10): three modules read and printed, refusals with their line, and no damage reaches a trap.
 native_reader | 11 | --std compiler/native/llmod.cho compiler/native/llread.cho compiler/native/llbody.cho compiler/native/lltop.cho compiler/native/llprint.cho tests/native/reader_test.cho
+# The AArch64 encoder (docs/native-backend.md section 11): every logical immediate both ways, operands out of range refused, and no operands reach a trap.
+native_a64 | 6 | --std compiler/native/a64.cho compiler/native/a64sys.cho tests/native/a64_forms.cho tests/native/a64_test.cho

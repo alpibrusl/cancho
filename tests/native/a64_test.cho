@@ -1,0 +1,243 @@
+// a64_test.cho -- the AArch64 encoder (`docs/native-backend.md` section 11), on what needs no assembler: the logical immediates, every one of them, both ways;
+// operands out of range refused; and no operands at all that reach a trap. That each form is the right word is `tests/native/a64.vectors`, checked by
+// `tests/native/a64_check.cho`.
+//
+//     cancho test --std compiler/native/a64.cho compiler/native/a64sys.cho tests/native/a64_forms.cho tests/native/a64_test.cho
+
+import std.test;
+import selfhost.a64;
+import selfhost.a64sys;
+import a64_forms as forms;
+
+// Every thirteen bits that say a logical immediate say one value, and the encoder's bits for that value say it too. A value has one spelling the assembler
+// writes (the rotation less than the element's size; the other bits of the rotation are ignored by the processor), and the encoder gives that one: there are
+// 5,334 values for a register of 64 bits, and so 5,334 spellings the encoder gives back as they are.
+fn test_every_logical_immediate_of_64_bits_goes_round() -> [] int {
+    var said = 0;
+    var canonical = 0;
+    var e = 0;
+    while e < 8192 {
+        let (value, good) = a64.logical_value(e);
+        if good {
+            said = said + 1;
+            let back = a64.logical_imm(1, value);
+            test.assert(back >= 0);
+            let (again, still) = a64.logical_value(back);
+            test.assert(still);
+            test.assert_eq(again, value);
+            if back == e {
+                canonical = canonical + 1;
+            }
+        }
+        e = e + 1;
+    }
+    test.assert_eq(canonical, 5334);
+    test.assert(said > canonical);
+    return 0;
+}
+
+// For a register of 32 bits: the bits with N clear, whose value is the same in both halves; 1,302 values.
+fn test_every_logical_immediate_of_32_bits_goes_round() -> [] int {
+    var canonical = 0;
+    var e = 0;
+    while e < 4096 {
+        let (value, good) = a64.logical_value(e);
+        if good {
+            let half = value & 0xffffffff;
+            test.assert_eq(value >> 32 & 0xffffffff, half);
+            let back = a64.logical_imm(0, half);
+            test.assert(back >= 0 && back < 4096);
+            let (again, still) = a64.logical_value(back);
+            test.assert(still);
+            test.assert_eq(again, value);
+            if back == e {
+                canonical = canonical + 1;
+            }
+        }
+        e = e + 1;
+    }
+    test.assert_eq(canonical, 1302);
+    // A value of more than 32 bits is not one of them, and neither is one that is no run of ones.
+    test.assert_eq(a64.logical_imm(0, 1 << 32), 0 - 1);
+    test.assert_eq(a64.logical_imm(0, 0 - 1), 0 - 1);
+    test.assert_eq(a64.logical_imm(0, 0xffffffff), 0 - 1);
+    test.assert_eq(a64.logical_imm(0, 5), 0 - 1);
+    return 0;
+}
+
+// A value the encoder takes is the value its bits say; one it refuses is said by no bits. Tried on a million values with a few runs of ones each, which is
+// where the values that are immediates and the ones that nearly are both come from.
+fn test_a_value_is_an_immediate_exactly_when_its_bits_say_it() -> [] int {
+    test.assert_eq(a64.logical_imm(1, 0), 0 - 1);
+    test.assert_eq(a64.logical_imm(1, 0 - 1), 0 - 1);
+    var state = 88172645463325252;
+    var taken = 0;
+    var k = 0;
+    while k < 1000000 {
+        // xorshift, and then a value made of one, two or three runs.
+        state = state ^ state << 13;
+        state = state ^ state >> 7 & 0x1ffffffffffffff;
+        state = state ^ state << 17;
+        let a = state & 63;
+        let b = state >> 6 & 63;
+        let c = state >> 12 & 63;
+        let d = state >> 18 & 63;
+        var value = wrapping_sub(1 << a, 1) ^ wrapping_sub(1 << b, 1);
+        if state >> 24 & 3 == 0 {
+            value = value ^ wrapping_sub(1 << c, 1) ^ wrapping_sub(1 << d, 1);
+        }
+        if state >> 26 & 7 == 0 {
+            value = state;
+        }
+        let e = a64.logical_imm(1, value);
+        if e >= 0 {
+            taken = taken + 1;
+            let (back, good) = a64.logical_value(e);
+            test.assert(good);
+            test.assert_eq(back, value);
+        }
+        k = k + 1;
+    }
+    // Both kinds were met.
+    test.assert(taken > 100000);
+    test.assert(taken < 900000);
+    return 0;
+}
+
+fn test_operands_out_of_range_are_refused() -> [] int {
+    let no = 0 - 1;
+    test.assert_eq(a64.movw(1, 2, 32, 0, 0), no);
+    test.assert_eq(a64.movw(1, 1, 0, 0, 0), no);
+    test.assert_eq(a64.movw(0, 2, 0, 0, 2), no);
+    test.assert_eq(a64.movw(1, 2, 0, 65536, 0), no);
+    test.assert_eq(a64.movw(1, 2, 0, 0 - 1, 0), no);
+    test.assert_eq(a64.adr(0, 0, 1 << 20), no);
+    test.assert_eq(a64.adr(0, 0, 0 - (1 << 20) - 1), no);
+    test.assert_eq(a64.addsub_imm(1, 0, 0, 0, 0, 4096, 0), no);
+    test.assert_eq(a64.addsub_imm(2, 0, 0, 0, 0, 0, 0), no);
+    test.assert_eq(a64.addsub_shift(0, 0, 0, 0, 0, 0, 0, 32), no);
+    test.assert_eq(a64.addsub_shift(1, 0, 0, 0, 0, 0, 3, 0), no);
+    test.assert_eq(a64.addsub_ext(1, 0, 0, 0, 0, 0, 0, 5), no);
+    test.assert_eq(a64.logic_shift(0, 0, 0, 0, 0, 0, 0, 32), no);
+    test.assert_eq(a64.logic_imm(1, 0, 0, 0, 0), no);
+    test.assert_eq(a64.logic_imm(1, 4, 0, 0, 1), no);
+    test.assert_eq(a64.bitfield(0, 0, 0, 0, 32, 0), no);
+    test.assert_eq(a64.bitfield(1, 3, 0, 0, 0, 0), no);
+    test.assert_eq(a64.shift_imm(0, 0, 0, 0, 32), no);
+    test.assert_eq(a64.shift_imm(1, 3, 0, 0, 1), no);
+    test.assert_eq(a64.extend(1, 0, 32, 0, 0), no);
+    test.assert_eq(a64.extend(0, 1, 32, 0, 0), no);
+    test.assert_eq(a64.extend(1, 1, 24, 0, 0), no);
+    test.assert_eq(a64.extr(0, 0, 0, 0, 32), no);
+    test.assert_eq(a64.dp2(1, 4, 0, 0, 0), no);
+    test.assert_eq(a64.dp1(0, 3, 0, 0), no);
+    test.assert_eq(a64.dp1(1, 6, 0, 0), no);
+    test.assert_eq(a64.madd(1, 0, 0, 0, 0, 32), no);
+    test.assert_eq(a64.mulh(2, 0, 0, 0), no);
+    test.assert_eq(a64.csel(1, 0, 0, 0, 0, 0, 16), no);
+    test.assert_eq(a64.branch(0, 1 << 25), no);
+    test.assert_eq(a64.branch(0, 0 - (1 << 25) - 1), no);
+    test.assert_eq(a64.branch_cond(0, 1 << 18), no);
+    test.assert_eq(a64.compare_branch(1, 0, 0, 0 - (1 << 18) - 1), no);
+    test.assert_eq(a64.bit_branch(0, 0, 64, 0), no);
+    test.assert_eq(a64.bit_branch(0, 0, 0, 1 << 13), no);
+    test.assert_eq(a64.branch_reg(3, 0), no);
+    test.assert_eq(a64.udf(65536), no);
+    test.assert_eq(a64.exception(0, 0 - 1), no);
+    test.assert_eq(a64.hint(128), no);
+    test.assert_eq(a64.barrier(3, 0), no);
+    test.assert_eq(a64.barrier(4, 16), no);
+    test.assert_eq(a64.system_register(1, 0, 1 << 15), no);
+    test.assert_eq(a64.sys(8, 0, 0, 0, 0), no);
+    test.assert_eq(a64.load_store(3, 0, 2, 0, 0, 0), no);
+    test.assert_eq(a64.load_store(2, 0, 3, 0, 0, 0), no);
+    test.assert_eq(a64.load_store(1, 1, 0, 0, 0, 0), no);
+    test.assert_eq(a64.load_store(3, 1, 2, 0, 0, 0), no);
+    test.assert_eq(a64.load_store(3, 0, 0, 0, 0, 4096), no);
+    test.assert_eq(a64.load_store_offset(3, 0, 0, 2, 0, 0, 0), no);
+    test.assert_eq(a64.load_store_offset(3, 0, 0, 0, 0, 0, 256), no);
+    test.assert_eq(a64.load_store_offset(3, 0, 0, 0, 0, 0, 0 - 257), no);
+    test.assert_eq(a64.load_store_reg(3, 0, 0, 0, 0, 0, 0, 0), no);
+    test.assert_eq(a64.load_store_pair(1, 0, 0, 0, 0, 1, 2, 0), no);
+    test.assert_eq(a64.load_store_pair(1, 0, 2, 0, 0, 1, 2, 64), no);
+    test.assert_eq(a64.load_literal(1, 0, 0, 1 << 18), no);
+    test.assert_eq(a64.exclusive(3, 1, 0, 0, 1, 2), no);
+    test.assert_eq(a64.ordered(4, 0, 0, 0), no);
+    test.assert_eq(a64.fp2(1, 4, 0, 0, 0), no);
+    test.assert_eq(a64.fp1(1, 5, 0, 0), no);
+    test.assert_eq(a64.fcmp(1, 0, 1, 1), no);
+    test.assert_eq(a64.fcsel(1, 0, 0, 0, 16), no);
+    test.assert_eq(a64.fp_int(1, 0, 4, 0, 0), no);
+    test.assert_eq(a64.fp_int(1, 1, 6, 0, 0), no);
+    return 0;
+}
+
+// Words known by heart, so that the suite says something without the vectors: the trap, `ret`, `nop`, `mov x0, x1`, and the registers a kernel reads first.
+fn test_a_few_words_everyone_knows() -> [] int {
+    test.assert_eq(a64.udf(0xc11f), 0xc11f);
+    test.assert_eq(a64.branch_reg(2, 30), 0xd65f03c0);
+    test.assert_eq(a64.hint(0), 0xd503201f);
+    test.assert_eq(a64.hint(3), 0xd503207f);
+    test.assert_eq(a64.barrier(6, 15), 0xd5033fdf);
+    test.assert_eq(a64.logic_shift(1, 1, 0, 0, 31, 1, 0, 0), 0xaa0103e0);
+    test.assert_eq(a64.addsub_imm(1, 1, 0, 31, 31, 16, 0), 0xd10043ff);
+    test.assert_eq(a64.load_store_pair(1, 0, 3, 0, 29, 30, 31, 0 - 2), 0xa9bf7bfd);
+    test.assert_eq(a64.system_register(1, 0, a64sys.encoding("midr_el1")), 0xd5380000);
+    test.assert_eq(a64.system_register(0, 1, a64sys.encoding("vbar_el1")), 0xd518c001);
+    test.assert_eq(a64.sys(0, 8, 7, 0, 31), 0xd508871f);
+    test.assert_eq(a64sys.count(), 171);
+    test.assert_eq(a64sys.encoding("midr_el2"), 0 - 1);
+    test.assert_eq(a64sys.encoding("midr_el"), 0 - 1);
+    test.assert_eq(a64sys.encoding(""), 0 - 1);
+    test.assert_eq(a64sys.encoding("midr_el1=4000"), 0 - 1);
+    return 0;
+}
+
+// A million tuples of operands for each form, of every size and sign: each answer is a word of 32 bits or a refusal, and getting here is the test that none
+// trapped. About one in sixteen operands is small enough to be taken, so that both answers are met.
+fn test_no_operands_reach_a_trap() -> [] int {
+    var state = 0x2545f4914f6cdd1d;
+    var words = 0;
+    var refusals = 0;
+    region scratch {
+        let o = alloc_slice[scratch](8, 0);
+        var form = 1;
+        while form <= forms.count() {
+            let n = forms.arity(form);
+            var round = 0;
+            while round < 1000000 {
+                var k = 0;
+                while k < 8 {
+                    state = state ^ state << 13;
+                    state = state ^ state >> 7 & 0x1ffffffffffffff;
+                    state = state ^ state << 17;
+                    let shape = state & 15;
+                    if shape < 9 {
+                        o[k] = state >> 8 & 3;
+                    } else if shape < 13 {
+                        o[k] = state >> 8 & 31;
+                    } else if shape == 13 {
+                        o[k] = (state >> 8 & 0xfffff) - 0x80000;
+                    } else if shape == 14 {
+                        o[k] = state;
+                    } else {
+                        o[k] = 0 - 9223372036854775807 - 1 + (state >> 8 & 1) * 9223372036854775807;
+                    }
+                    k = k + 1;
+                }
+                let word = forms.encode(form, o, n);
+                if word == 0 - 1 {
+                    refusals = refusals + 1;
+                } else {
+                    test.assert(word >= 0 && word <= 0xffffffff);
+                    words = words + 1;
+                }
+                round = round + 1;
+            }
+            form = form + 1;
+        }
+    }
+    test.assert(words > 1000000);
+    test.assert(refusals > 1000000);
+    return 0;
+}

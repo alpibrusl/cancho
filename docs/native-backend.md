@@ -4,7 +4,8 @@
 > section 10). What exists: `scripts/ll-census.cho` and `tests/native/subset.txt` (what the compiler may write, by name), the reader
 > and its printer (`compiler/native/`, section 10), `--backend roundtrip` (every program a test of the reader) and `--backend native`,
 > which reads the module with vectors refused and then refuses the program by `unsupported-by-backend`, since nothing can yet write
-> code for it. Encoder, code generator, objects and images are N2 to N15. Every number below was produced by the command next to it
+> code for it. The AArch64 encoder (section 11, N2) is written and held to clang's assembler, and nothing calls it yet. Code generator,
+> objects and images are N3 to N15. Every number below was produced by the command next to it
 > on linux-x86_64 (clang 18.1.3), at the commit that adds the section it is in, unless it says it is the epic's.
 
 The goal, in one sentence: from a cancho program to machine code and to a file that runs, with no clang, no LLVM and no system
@@ -423,3 +424,81 @@ printer loses nothing clang reads. What it does lose is what clang does not read
   searches bytes, at the line. N3 decides between a scalar form in the front end and vectors in the code generator.
 - **Undeclared intrinsics** are accepted, as clang accepts them; the driver could declare them instead.
 - **A layout module** (the sizes and offsets of section 4, from the type table) is N3's first step; the table has what it needs.
+
+---
+
+## 11. The AArch64 encoder (N2)
+
+`compiler/native/a64.cho`: one function a form, the operands checked, answering the 32 bits or -1 for an operand that does not
+fit. `compiler/native/a64sys.cho`: the system registers by name. Both are pure, with no trap on any operand, and neither knows
+anything of a program: choosing instructions is N3's, and relocations N4's.
+
+### 11.1 The forms
+
+The sections are those of the Arm Architecture Reference Manual for A-profile (DDI 0487), chapter C4, "A64 Instruction Set
+Encoding", and C6 for each instruction by name. A register is its number; 31 is the stack pointer or the zero register, as
+the form has it. An offset of a branch is counted in instructions.
+
+| form | instructions | section |
+|---|---|---|
+| `movw` | `movn movz movk` | C4.1.86, move wide |
+| `adr` | `adr adrp` | C4.1.86, PC-relative addressing |
+| `addsub_imm` | `add adds sub subs` with twelve bits, shifted twelve or not (`cmp cmn`, `mov` to and from `sp`) | C4.1.86, add/subtract immediate |
+| `logic_imm`, with `logical_imm` and its inverse `logical_value` | `and orr eor ands` with a logical immediate (`tst`, `mov` of a mask) | C4.1.86, logical immediate |
+| `bitfield`, `shift_imm`, `extend` | `sbfm bfm ubfm`; `lsl lsr asr` by a constant; `sxtb sxth sxtw uxtb uxth` | C4.1.86, bitfield |
+| `extr` | `extr` (`ror` by a constant) | C4.1.86, extract |
+| `addsub_shift` | `add adds sub subs` with a shifted register (`cmp`, `neg`) | C4.1.89, add/subtract shifted register |
+| `addsub_ext` | the same with an extended register, the form that takes `sp` | C4.1.89, add/subtract extended register |
+| `logic_shift` | `and orr eor ands bic orn eon bics` with a shifted register (`mov`, `mvn`, `tst`) | C4.1.89, logical shifted register |
+| `dp2` | `udiv sdiv lslv lsrv asrv rorv` | C4.1.89, data-processing 2 source |
+| `dp1` | `rbit rev16 rev32 rev clz cls` | C4.1.89, data-processing 1 source |
+| `madd`, `mulh` | `madd msub` (`mul`, `mneg`); `smulh umulh` | C4.1.89, data-processing 3 source |
+| `csel` | `csel csinc csinv csneg` (`cset`, `csetm`, `cinc`) | C4.1.89, conditional select |
+| `branch`, `branch_cond`, `compare_branch`, `bit_branch`, `branch_reg` | `b bl`; `b.cond`; `cbz cbnz`; `tbz tbnz`; `br blr ret` | C4.1.87 |
+| `udf`, `exception`, `eret` | `udf`; `svc brk`; `eret` | C4.1.87; `udf` is C6.2 |
+| `hint`, `barrier` | `nop yield wfe wfi`; `dsb dmb isb` | C4.1.87, hints and barriers |
+| `system_register`, `sys` | `mrs msr`; `sys` (`tlbi`, `dc`) | C4.1.87, system register move and system instructions |
+| `load_store` | `ldr str ldrb strb ldrh strh ldrsb ldrsh ldrsw`, and `ldr str` of `s` and `d`, at an index | C4.1.88, load/store register (unsigned immediate) |
+| `load_store_offset` | the same at a byte offset (`ldur stur ...`), post-index and pre-index | C4.1.88, unscaled immediate, immediate post-indexed and pre-indexed |
+| `load_store_reg` | the same at a register, extended and scaled or not | C4.1.88, register offset |
+| `load_store_pair` | `ldp stp` of two registers of 32 or 64 bits, or two of `s` or `d`: offset, post-index, pre-index | C4.1.88, load/store register pair |
+| `load_literal` | `ldr` from a distance | C4.1.88, load register (literal) |
+| `exclusive`, `ordered` | `ldxr stxr ldaxr stlxr`; `ldar stlr`, of 8 to 64 bits | C4.1.88, load/store exclusive and ordered |
+| `fp2`, `fp1`, `fcmp`, `fcsel` | `fmul fdiv fadd fsub`; `fmov fabs fneg fsqrt fcvt`; `fcmp` (with zero too); `fcsel` | C4.1.90, floating-point data-processing, compare, conditional select |
+| `fp_int` | `scvtf ucvtf fcvtzs fcvtzu`, and `fmov` between a register and its floating-point twin | C4.1.90, conversion between floating-point and integer |
+
+That is what N3 needs for the subset of section 3.2: `cmpxchg` and `atomicrmw` are loops of `ldaxr` and `stlxr`, since a
+Raspberry Pi 4's processor (Cortex-A72, ARMv8.0) has no `cas`; the 128-bit multiply is `mul` and `umulh`; `llvm.ctlz` is `clz`,
+`llvm.cttz` is `rbit` and `clz`. Left out, with the task: NEON, SVE, the cryptography extension, `cas`, pointer authentication.
+`llvm.ctpop.i64` has no instruction outside NEON (`cnt`); N3 writes it as arithmetic or takes the one NEON instruction then.
+
+### 11.2 Held to another implementation
+
+`tests/native/a64_vectors.py` writes each form's operands as assembly (150 choices a form, from a generator of its own so that the
+file is the same on every machine), has `clang --target=aarch64-none-elf` assemble them, and writes the words to
+`tests/native/a64.vectors`: **6,144 vectors for 40 forms**, a line each (`addsub_imm 0 1 1 28 2 0 0 7100005c ; subs w28, w2, #0`).
+The script knows how an instruction is written, clang knows what it is, and neither is the encoder. The gate does not run the
+script: `tests/native/a64_check.cho` reads the file and needs no assembler.
+
+**The system registers are clang's answers too.** For each of the 171 names `Cpu` accepts (`compiler/bare.cho`), the script
+assembles `mrs x9, NAME` or `msr NAME, x9` (both, where both are allowed: 284 lines), takes the fifteen bits out of the word, and
+writes them into `a64sys.cho`'s table. So the table is not a second copy of the reference manual typed by hand; and 150 more
+vectors name a register by its numbers (`S3_0_C1_C0_0`), which is where the encoder's own layout of the fifteen bits is tested.
+
+| what | result |
+|---|---|
+| The 6,144 vectors | every one is the word the encoder gives, the first time it was run |
+| Every thirteen bits of a logical immediate, decoded, and the encoder asked for that value | the encoder's bits say the same value; 5,334 values for 64 bits and 1,302 for 32, each with one spelling the encoder gives back as it is |
+| A million values made of one to three runs of ones | taken exactly when some bits say them |
+| 63 calls with an operand out of range | each refused |
+| A million tuples of operands for each of the 40 forms, of every size and sign (40 million calls, 4 s) | each answer is 32 bits or a refusal; none traps |
+| The encoder broken 189 ways: one bit of each of its 38 constants, one more place for each of its 151 shifts | 188 caught by the vectors; the last is in `logical_value`, which only the suite uses, and the suite catches it |
+
+### 11.3 Not done
+
+- **`adrp` has one vector**, for a distance of zero: with any other, the assembler leaves a relocation and a zero in the word.
+  It shares its layout with `adr` (150 vectors); N4, which resolves such a relocation itself, is where it is tested whole.
+- **The vectors regenerated on linux-aarch64 and on darwin-aarch64** give the same file, the task says. They were made on
+  linux-x86_64 with clang 18.1.3 only; `python3 tests/native/a64_vectors.py --check` is the command, and exits 1 on a difference.
+- Nothing calls the encoder yet: it is not in `compiler/cancho.files`, and comes into the compiler with N3.
+

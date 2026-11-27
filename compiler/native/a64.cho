@@ -1,0 +1,529 @@
+edition 7;
+module selfhost.a64;
+
+// a64.cho -- AArch64 instructions as their 32 bits (`docs/native-backend.md` section 11): one function a form, the operands checked, answering the word or -1
+// for an operand that does not fit. Pure: no capability, and no trap on any operand. Every form is held to words clang's assembler made
+// (`tests/native/a64.vectors`), not to itself.
+//
+// A register is its number, 0 to 30; 31 is the stack pointer or the zero register, as the form has it. `sf` is 1 for a 64-bit operation and 0 for a 32-bit one.
+// An offset of a branch is counted in instructions, not bytes. The sections are those of the Arm Architecture Reference Manual for A-profile, chapter C4
+// ("A64 Instruction Set Encoding"), named beside each group.
+
+fn reg(r: int) -> [] bool {
+    return r >= 0 && r <= 31;
+}
+
+fn bit(b: int) -> [] bool {
+    return b == 0 || b == 1;
+}
+
+// Does `v` fit `bits` bits as a number that is not negative? As a signed one?
+fn fits(v: int, bits: int) -> [] bool {
+    return v >= 0 && v < 1 << bits;
+}
+
+fn fits_signed(v: int, bits: int) -> [] bool {
+    return v >= 0 - (1 << bits - 1) && v < 1 << bits - 1;
+}
+
+// The low `bits` bits of a signed `v`.
+fn field(v: int, bits: int) -> [] int {
+    return v & (1 << bits) - 1;
+}
+
+// ---- C4.1.86 data processing, immediate ----
+
+// `movn` (`opc` 0), `movz` (2), `movk` (3): `imm16` at the sixteen bits number `hw`.
+pub fn movw(sf: int, opc: int, rd: int, imm16: int, hw: int) -> [] int {
+    if !bit(sf) || opc != 0 && opc != 2 && opc != 3 || !reg(rd) || !fits(imm16, 16) || hw < 0 || hw > 1 + 2 * sf {
+        return 0 - 1;
+    }
+    return 0x12800000 | sf << 31 | opc << 29 | hw << 21 | imm16 << 5 | rd;
+}
+
+// `adr` (`page` 0: the address `imm` bytes from this instruction) and `adrp` (1: the page `imm` pages from this one's).
+pub fn adr(page: int, rd: int, imm: int) -> [] int {
+    if !bit(page) || !reg(rd) || !fits_signed(imm, 21) {
+        return 0 - 1;
+    }
+    let v = field(imm, 21);
+    return 0x10000000 | page << 31 | (v & 3) << 29 | v >> 2 << 5 | rd;
+}
+
+// `add` (`sub` 0) and `sub` (1), setting the flags or not (`s`), of a register and an immediate of twelve bits, shifted left twelve or not (`sh`). Register 31 is
+// the stack pointer, but for the result of one that sets the flags (`cmp`, `cmn`).
+pub fn addsub_imm(sf: int, sub: int, s: int, rd: int, rn: int, imm12: int, sh: int) -> [] int {
+    if !bit(sf) || !bit(sub) || !bit(s) || !reg(rd) || !reg(rn) || !fits(imm12, 12) || !bit(sh) {
+        return 0 - 1;
+    }
+    return 0x11000000 | sf << 31 | sub << 30 | s << 29 | sh << 22 | imm12 << 10 | rn << 5 | rd;
+}
+
+// The thirteen bits `N:immr:imms` that say `value` as a logical immediate, or -1 if it is not one. A logical immediate is a run of ones, rotated, in an element
+// of 2, 4, 8, 16, 32 or 64 bits that is repeated to fill the register. With `sf` 0 the value is of 32 bits.
+pub fn logical_imm(sf: int, value: int) -> [] int {
+    var v = value;
+    var width = 64;
+    if sf == 0 {
+        if !fits(value, 32) {
+            return 0 - 1;
+        }
+        v = value | value << 32;
+        width = 32;
+    } else if sf != 1 {
+        return 0 - 1;
+    }
+    // The least size the value repeats at.
+    var size = 2;
+    var found = false;
+    while size < 64 && !found {
+        var same = true;
+        var i = 0;
+        while i + size < 64 && same {
+            if v >> i & 1 != v >> i + size & 1 {
+                same = false;
+            }
+            i = i + 1;
+        }
+        if same {
+            found = true;
+        } else {
+            size = size * 2;
+        }
+    }
+    if size > width {
+        return 0 - 1;
+    }
+    // Within the element: how many ones, how many changes going round, and where a run begins.
+    var ones = 0;
+    var changes = 0;
+    var start = 0;
+    var i = 0;
+    while i < size {
+        let here = v >> i & 1;
+        let before = v >> (i + size - 1) % size & 1;
+        ones = ones + here;
+        if here != before {
+            changes = changes + 1;
+            if here == 1 {
+                start = i;
+            }
+        }
+        i = i + 1;
+    }
+    if changes != 2 {
+        return 0 - 1;
+    }
+    let immr = (size - start) % size;
+    var n = 0;
+    var imms = (63 ^ size * 2 - 1) & 63 | ones - 1;
+    if size == 64 {
+        n = 1;
+        imms = ones - 1;
+    }
+    return n << 12 | immr << 6 | imms;
+}
+
+// The value the thirteen bits `N:immr:imms` say, for a register of 64 bits; `valid` is false for bits that say none.
+pub fn logical_value(encoded: int) -> [] (int, bool) {
+    if !fits(encoded, 13) {
+        return (0, false);
+    }
+    let n = encoded >> 12;
+    let immr = encoded >> 6 & 63;
+    let imms = encoded & 63;
+    // The size of the element is the highest set bit of N and the inverse of imms.
+    let key = n << 6 | imms ^ 63;
+    var length = 6;
+    while length > 0 && key >> length & 1 == 0 {
+        length = length - 1;
+    }
+    if length < 1 {
+        return (0, false);
+    }
+    let size = 1 << length;
+    let s = imms & size - 1;
+    let r = immr & size - 1;
+    if s == size - 1 {
+        return (0, false);
+    }
+    var v = 0;
+    var i = 0;
+    while i < 64 {
+        if (i % size + r) % size <= s {
+            v = v | 1 << i;
+        }
+        i = i + 1;
+    }
+    return (v, true);
+}
+
+// `and` (`opc` 0), `orr` (1), `eor` (2), `ands` (3) of a register and a logical immediate. Register 31 is the stack pointer for the result (but of `ands`, where it
+// is the zero register: `tst`) and the zero register for the operand.
+pub fn logic_imm(sf: int, opc: int, rd: int, rn: int, value: int) -> [] int {
+    if !bit(sf) || !fits(opc, 2) || !reg(rd) || !reg(rn) {
+        return 0 - 1;
+    }
+    let encoded = logical_imm(sf, value);
+    if encoded < 0 {
+        return 0 - 1;
+    }
+    return 0x12000000 | sf << 31 | opc << 29 | encoded << 10 | rn << 5 | rd;
+}
+
+// `sbfm` (`opc` 0), `bfm` (1), `ubfm` (2): the bitfield moves, of which the shifts by a constant and the extensions are forms.
+pub fn bitfield(sf: int, opc: int, rd: int, rn: int, immr: int, imms: int) -> [] int {
+    if !bit(sf) || opc < 0 || opc > 2 || !reg(rd) || !reg(rn) || !fits(immr, 5 + sf) || !fits(imms, 5 + sf) {
+        return 0 - 1;
+    }
+    return 0x13000000 | sf << 31 | opc << 29 | sf << 22 | immr << 16 | imms << 10 | rn << 5 | rd;
+}
+
+// `lsl` (`kind` 0), `lsr` (1), `asr` (2) by the constant `amount`.
+pub fn shift_imm(sf: int, kind: int, rd: int, rn: int, amount: int) -> [] int {
+    if !bit(sf) || !fits(amount, 5 + sf) {
+        return 0 - 1;
+    }
+    let top = 31 + 32 * sf;
+    if kind == 0 {
+        return bitfield(sf, 2, rd, rn, (top + 1 - amount) % (top + 1), top - amount);
+    }
+    if kind == 1 {
+        return bitfield(sf, 2, rd, rn, amount, top);
+    }
+    if kind == 2 {
+        return bitfield(sf, 0, rd, rn, amount, top);
+    }
+    return 0 - 1;
+}
+
+// The low `bits` bits (8, 16 or 32) of `rn`, sign-extended (`signed` 1: `sxtb`, `sxth`, `sxtw`) or not (`uxtb`, `uxth`; 32 bits unsigned is a move of the `w`
+// register) into a register of 64 bits (`sf` 1) or 32.
+pub fn extend(sf: int, signed: int, bits: int, rd: int, rn: int) -> [] int {
+    if !bit(signed) || bits != 8 && bits != 16 && bits != 32 || bits == 32 && (signed == 0 || sf == 0) {
+        return 0 - 1;
+    }
+    if signed == 1 {
+        return bitfield(sf, 0, rd, rn, 0, bits - 1);
+    }
+    // The unsigned forms are of the 32-bit register: writing it clears the upper half.
+    return bitfield(0, 2, rd, rn, 0, bits - 1);
+}
+
+// `extr`: 32 or 64 bits from bit `lsb` of the pair `rn:rm` (`ror` by a constant when the two are one register).
+pub fn extr(sf: int, rd: int, rn: int, rm: int, lsb: int) -> [] int {
+    if !bit(sf) || !reg(rd) || !reg(rn) || !reg(rm) || !fits(lsb, 5 + sf) {
+        return 0 - 1;
+    }
+    return 0x13800000 | sf << 31 | sf << 22 | rm << 16 | lsb << 10 | rn << 5 | rd;
+}
+
+// ---- C4.1.89 data processing, register ----
+
+// `add`/`sub` of a register and a register shifted (`shift` 0 `lsl`, 1 `lsr`, 2 `asr`) by `amount`. Register 31 is the zero register (`cmp`, `neg`).
+pub fn addsub_shift(sf: int, sub: int, s: int, rd: int, rn: int, rm: int, shift: int, amount: int) -> [] int {
+    if !bit(sf) || !bit(sub) || !bit(s) || !reg(rd) || !reg(rn) || !reg(rm) || shift < 0 || shift > 2 || !fits(amount, 5 + sf) {
+        return 0 - 1;
+    }
+    return 0x0b000000 | sf << 31 | sub << 30 | s << 29 | shift << 22 | rm << 16 | amount << 10 | rn << 5 | rd;
+}
+
+// `add`/`sub` of a register and a register extended (`option` 0 to 7: `uxtb uxth uxtw uxtx sxtb sxth sxtw sxtx`) and shifted left `amount` (0 to 4). Register 31
+// is the stack pointer for `rn` and, unless the flags are set, for `rd`: the form that adds to the stack pointer.
+pub fn addsub_ext(sf: int, sub: int, s: int, rd: int, rn: int, rm: int, option: int, amount: int) -> [] int {
+    if !bit(sf) || !bit(sub) || !bit(s) || !reg(rd) || !reg(rn) || !reg(rm) || !fits(option, 3) || amount < 0 || amount > 4 {
+        return 0 - 1;
+    }
+    return 0x0b200000 | sf << 31 | sub << 30 | s << 29 | rm << 16 | option << 13 | amount << 10 | rn << 5 | rd;
+}
+
+// `and` (`opc` 0), `orr` (1), `eor` (2), `ands` (3) of a register and a shifted register (`shift` 0 to 3, the last `ror`), the second inverted or not (`invert`:
+// `bic`, `orn`, `eon`, `bics`). `orr` with the zero register is `mov`, and with `invert` `mvn`.
+pub fn logic_shift(sf: int, opc: int, invert: int, rd: int, rn: int, rm: int, shift: int, amount: int) -> [] int {
+    if !bit(sf) || !fits(opc, 2) || !bit(invert) || !reg(rd) || !reg(rn) || !reg(rm) || !fits(shift, 2) || !fits(amount, 5 + sf) {
+        return 0 - 1;
+    }
+    return 0x0a000000 | sf << 31 | opc << 29 | shift << 22 | invert << 21 | rm << 16 | amount << 10 | rn << 5 | rd;
+}
+
+// Two registers to one: `udiv` (`op` 2), `sdiv` (3), `lslv` (8), `lsrv` (9), `asrv` (10), `rorv` (11).
+pub fn dp2(sf: int, op: int, rd: int, rn: int, rm: int) -> [] int {
+    if !bit(sf) || op != 2 && op != 3 && (op < 8 || op > 11) || !reg(rd) || !reg(rn) || !reg(rm) {
+        return 0 - 1;
+    }
+    return 0x1ac00000 | sf << 31 | rm << 16 | op << 10 | rn << 5 | rd;
+}
+
+// One register to one: `rbit` (`op` 0), `rev16` (1), `rev` of 32 bits (2: `rev32` when `sf` is 1), `rev` of 64 (3, `sf` 1 only), `clz` (4), `cls` (5).
+pub fn dp1(sf: int, op: int, rd: int, rn: int) -> [] int {
+    if !bit(sf) || op < 0 || op > 5 || op == 3 && sf == 0 || !reg(rd) || !reg(rn) {
+        return 0 - 1;
+    }
+    return 0x5ac00000 | sf << 31 | op << 10 | rn << 5 | rd;
+}
+
+// `madd` (`sub` 0: `ra + rn * rm`) and `msub` (1: `ra - rn * rm`). `mul` is `madd` with the zero register for `ra`.
+pub fn madd(sf: int, sub: int, rd: int, rn: int, rm: int, ra: int) -> [] int {
+    if !bit(sf) || !bit(sub) || !reg(rd) || !reg(rn) || !reg(rm) || !reg(ra) {
+        return 0 - 1;
+    }
+    return 0x1b000000 | sf << 31 | rm << 16 | sub << 15 | ra << 10 | rn << 5 | rd;
+}
+
+// The upper 64 bits of a product of two of 64: `smulh` (`unsigned` 0) and `umulh` (1).
+pub fn mulh(unsigned: int, rd: int, rn: int, rm: int) -> [] int {
+    if !bit(unsigned) || !reg(rd) || !reg(rn) || !reg(rm) {
+        return 0 - 1;
+    }
+    return 0x9b407c00 | unsigned << 23 | rm << 16 | rn << 5 | rd;
+}
+
+// `csel` (`op` 0, `o2` 0), `csinc` (0, 1), `csinv` (1, 0), `csneg` (1, 1): `rn` if the condition holds, else `rm`, as it is, plus one, inverted or negated.
+// `cset` is `csinc` of the zero register twice, with the condition inverted.
+pub fn csel(sf: int, op: int, o2: int, rd: int, rn: int, rm: int, cond: int) -> [] int {
+    if !bit(sf) || !bit(op) || !bit(o2) || !reg(rd) || !reg(rn) || !reg(rm) || !fits(cond, 4) {
+        return 0 - 1;
+    }
+    return 0x1a800000 | sf << 31 | op << 30 | rm << 16 | cond << 12 | o2 << 10 | rn << 5 | rd;
+}
+
+// ---- C4.1.87 branches, exceptions and system instructions ----
+
+// `b` (`link` 0) and `bl` (1) to `offset` instructions from this one.
+pub fn branch(link: int, offset: int) -> [] int {
+    if !bit(link) || !fits_signed(offset, 26) {
+        return 0 - 1;
+    }
+    return 0x14000000 | link << 31 | field(offset, 26);
+}
+
+// `b.cond`.
+pub fn branch_cond(cond: int, offset: int) -> [] int {
+    if !fits(cond, 4) || !fits_signed(offset, 19) {
+        return 0 - 1;
+    }
+    return 0x54000000 | field(offset, 19) << 5 | cond;
+}
+
+// `cbz` (`nonzero` 0) and `cbnz` (1).
+pub fn compare_branch(sf: int, nonzero: int, rt: int, offset: int) -> [] int {
+    if !bit(sf) || !bit(nonzero) || !reg(rt) || !fits_signed(offset, 19) {
+        return 0 - 1;
+    }
+    return 0x34000000 | sf << 31 | nonzero << 24 | field(offset, 19) << 5 | rt;
+}
+
+// `tbz` (`nonzero` 0) and `tbnz` (1) of bit `b` (0 to 63).
+pub fn bit_branch(nonzero: int, rt: int, b: int, offset: int) -> [] int {
+    if !bit(nonzero) || !reg(rt) || !fits(b, 6) || !fits_signed(offset, 14) {
+        return 0 - 1;
+    }
+    return 0x36000000 | b >> 5 << 31 | nonzero << 24 | (b & 31) << 19 | field(offset, 14) << 5 | rt;
+}
+
+// `br` (`op` 0), `blr` (1), `ret` (2) to the address in a register.
+pub fn branch_reg(op: int, rn: int) -> [] int {
+    if op < 0 || op > 2 || !reg(rn) {
+        return 0 - 1;
+    }
+    return 0xd61f0000 | op << 21 | rn << 5;
+}
+
+// `udf`: the instruction that is never one. The trap of a cancho program is `udf #0xc11f`.
+pub fn udf(imm16: int) -> [] int {
+    if !fits(imm16, 16) {
+        return 0 - 1;
+    }
+    return imm16;
+}
+
+// `svc` (`op` 0) and `brk` (1) with their sixteen bits.
+pub fn exception(op: int, imm16: int) -> [] int {
+    if !bit(op) || !fits(imm16, 16) {
+        return 0 - 1;
+    }
+    if op == 0 {
+        return 0xd4000001 | imm16 << 5;
+    }
+    return 0xd4200000 | imm16 << 5;
+}
+
+pub fn eret() -> [] int {
+    return 0xd69f03e0;
+}
+
+// The hints: `nop` (`n` 0), `yield` (1), `wfe` (2), `wfi` (3).
+pub fn hint(n: int) -> [] int {
+    if !fits(n, 7) {
+        return 0 - 1;
+    }
+    return 0xd503201f | n << 5;
+}
+
+// The barriers: `dsb` (`op` 4), `dmb` (5), `isb` (6), with their four bits (`isb` and a full barrier: 15; `dsb nsh`: 7).
+pub fn barrier(op: int, crm: int) -> [] int {
+    if op < 4 || op > 6 || !fits(crm, 4) {
+        return 0 - 1;
+    }
+    return 0xd503301f | crm << 8 | op << 5;
+}
+
+// `mrs` (`read` 1) and `msr` (0) of the system register whose fifteen bits are `encoding` (`a64sys.cho`: `o0:op1:CRn:CRm:op2`).
+pub fn system_register(read: int, rt: int, encoding: int) -> [] int {
+    if !bit(read) || !reg(rt) || !fits(encoding, 15) {
+        return 0 - 1;
+    }
+    return 0xd5100000 | read << 21 | encoding << 5 | rt;
+}
+
+// `sys`: the system instructions that are written with a name (`tlbi vmalle1` is 0, 8, 7, 0 with register 31; `dc zva` is 3, 7, 4, 1).
+pub fn sys(op1: int, crn: int, crm: int, op2: int, rt: int) -> [] int {
+    if !fits(op1, 3) || !fits(crn, 4) || !fits(crm, 4) || !fits(op2, 3) || !reg(rt) {
+        return 0 - 1;
+    }
+    return 0xd5080000 | op1 << 16 | crn << 12 | crm << 8 | op2 << 5 | rt;
+}
+
+// ---- C4.1.88 loads and stores ----
+//
+// `size` is 0, 1, 2, 3 for 8, 16, 32, 64 bits; `v` is 1 for a floating-point register (`size` 2 a single, 3 a double); `opc` is 0 for a store, 1 for a load,
+// 2 for a load sign-extended to 64 bits, 3 for one sign-extended to 32.
+
+fn access(size: int, v: int, opc: int) -> [] bool {
+    if !fits(size, 2) || !bit(v) || !fits(opc, 2) {
+        return false;
+    }
+    if v == 1 {
+        return size >= 2 && opc <= 1;
+    }
+    // There is no sign extension of 64 bits, and none of 32 to 32.
+    return !(opc >= 2 && size == 3) && !(opc == 3 && size == 2);
+}
+
+// At `rn + index * the size`: the offset is the index of the element, 0 to 4095.
+pub fn load_store(size: int, v: int, opc: int, rt: int, rn: int, index: int) -> [] int {
+    if !access(size, v, opc) || !reg(rt) || !reg(rn) || !fits(index, 12) {
+        return 0 - 1;
+    }
+    return 0x39000000 | size << 30 | v << 26 | opc << 22 | index << 10 | rn << 5 | rt;
+}
+
+// At `rn + offset` bytes, -256 to 255 (`mode` 0: `ldur`, `stur`); or at `rn`, which then moves by `offset` (1: post-index); or at `rn + offset`, which `rn`
+// becomes (3: pre-index).
+pub fn load_store_offset(size: int, v: int, opc: int, mode: int, rt: int, rn: int, offset: int) -> [] int {
+    if !access(size, v, opc) || mode != 0 && mode != 1 && mode != 3 || !reg(rt) || !reg(rn) || !fits_signed(offset, 9) {
+        return 0 - 1;
+    }
+    return 0x38000000 | size << 30 | v << 26 | opc << 22 | field(offset, 9) << 12 | mode << 10 | rn << 5 | rt;
+}
+
+// At `rn + rm`, `rm` extended (`option` 2 `uxtw`, 3 `lsl`, 6 `sxtw`, 7 `sxtx`) and shifted left by the size or not (`scaled`).
+pub fn load_store_reg(size: int, v: int, opc: int, rt: int, rn: int, rm: int, option: int, scaled: int) -> [] int {
+    if !access(size, v, opc) || !reg(rt) || !reg(rn) || !reg(rm) || option != 2 && option != 3 && option != 6 && option != 7 || !bit(scaled) {
+        return 0 - 1;
+    }
+    return 0x38200800 | size << 30 | v << 26 | opc << 22 | rm << 16 | option << 13 | scaled << 12 | rn << 5 | rt;
+}
+
+// Two registers at once, `stp` (`load` 0) and `ldp` (1): `wide` 0 for two of 32 bits, 1 for two of 64; with `v` two singles or two doubles. `mode` 1 is
+// post-index, 2 an offset, 3 pre-index; the offset is counted in registers, -64 to 63.
+pub fn load_store_pair(wide: int, v: int, mode: int, load: int, rt: int, rt2: int, rn: int, index: int) -> [] int {
+    if !bit(wide) || !bit(v) || mode < 1 || mode > 3 || !bit(load) || !reg(rt) || !reg(rt2) || !reg(rn) || !fits_signed(index, 7) {
+        return 0 - 1;
+    }
+    // The size field is 00 or 10 for registers and 00 or 01 for floating-point ones.
+    var opc = wide * 2;
+    if v == 1 {
+        opc = wide;
+    }
+    return 0x28000000 | opc << 30 | v << 26 | mode << 23 | load << 22 | field(index, 7) << 15 | rt2 << 10 | rn << 5 | rt;
+}
+
+// A load from `offset` instructions' distance: 32 bits (`wide` 0) or 64 (1), or with `v` a single or a double.
+pub fn load_literal(wide: int, v: int, rt: int, offset: int) -> [] int {
+    if !bit(wide) || !bit(v) || !reg(rt) || !fits_signed(offset, 19) {
+        return 0 - 1;
+    }
+    return 0x18000000 | wide << 30 | v << 26 | field(offset, 19) << 5 | rt;
+}
+
+// The exclusive pair: `ldxr` (`load` 1; `rs` is not used and must be 31) and `stxr` (0; `rs` gets 0 if the store was made), of `size` 2 or 3 (or 0, 1), with
+// `ordered` 1 for `ldaxr` and `stlxr`, which are what a sequentially consistent access is made of.
+pub fn exclusive(size: int, load: int, ordered: int, rs: int, rt: int, rn: int) -> [] int {
+    if !fits(size, 2) || !bit(load) || !bit(ordered) || !reg(rs) || !reg(rt) || !reg(rn) || load == 1 && rs != 31 {
+        return 0 - 1;
+    }
+    return 0x08007c00 | size << 30 | load << 22 | rs << 16 | ordered << 15 | rn << 5 | rt;
+}
+
+// `ldar` (`load` 1) and `stlr` (0): a load that acquires and a store that releases.
+pub fn ordered(size: int, load: int, rt: int, rn: int) -> [] int {
+    if !fits(size, 2) || !bit(load) || !reg(rt) || !reg(rn) {
+        return 0 - 1;
+    }
+    return 0x089ffc00 | size << 30 | load << 22 | rn << 5 | rt;
+}
+
+// ---- C4.1.90 floating point ----
+//
+// `double` is 1 for a double and 0 for a single.
+
+// `fmul` (`op` 0), `fdiv` (1), `fadd` (2), `fsub` (3).
+pub fn fp2(double: int, op: int, rd: int, rn: int, rm: int) -> [] int {
+    if !bit(double) || !fits(op, 2) || !reg(rd) || !reg(rn) || !reg(rm) {
+        return 0 - 1;
+    }
+    return 0x1e200800 | double << 22 | rm << 16 | op << 12 | rn << 5 | rd;
+}
+
+// `fmov` (`op` 0), `fabs` (1), `fneg` (2), `fsqrt` (3), and the conversion to the other precision (4: `double` says what the operand is).
+pub fn fp1(double: int, op: int, rd: int, rn: int) -> [] int {
+    if !bit(double) || op < 0 || op > 4 || !reg(rd) || !reg(rn) {
+        return 0 - 1;
+    }
+    var opcode = op;
+    if op == 4 {
+        // `fcvt` to a single is opcode 4 and to a double 5.
+        opcode = 5 - double;
+    }
+    return 0x1e204000 | double << 22 | opcode << 15 | rn << 5 | rd;
+}
+
+// `fcmp` of two registers, or of one with zero (`zero` 1, and `rm` must be 0).
+pub fn fcmp(double: int, rn: int, rm: int, zero: int) -> [] int {
+    if !bit(double) || !reg(rn) || !reg(rm) || !bit(zero) || zero == 1 && rm != 0 {
+        return 0 - 1;
+    }
+    return 0x1e202000 | double << 22 | rm << 16 | rn << 5 | zero << 3;
+}
+
+// `fcsel`.
+pub fn fcsel(double: int, rd: int, rn: int, rm: int, cond: int) -> [] int {
+    if !bit(double) || !reg(rd) || !reg(rn) || !reg(rm) || !fits(cond, 4) {
+        return 0 - 1;
+    }
+    return 0x1e200c00 | double << 22 | rm << 16 | cond << 12 | rn << 5 | rd;
+}
+
+// Between a register and a floating-point one: `scvtf` (`op` 0: a signed integer to floating point), `ucvtf` (1), `fcvtzs` (2: floating point to a signed
+// integer, toward zero), `fcvtzu` (3), and the moves of the bits, to the register (4) and from it (5), which are of one width: `sf` and `double` the same.
+pub fn fp_int(sf: int, double: int, op: int, rd: int, rn: int) -> [] int {
+    if !bit(sf) || !bit(double) || op < 0 || op > 5 || !reg(rd) || !reg(rn) || op >= 4 && sf != double {
+        return 0 - 1;
+    }
+    var bits = 0;
+    if op == 0 {
+        bits = 2;
+    } else if op == 1 {
+        bits = 3;
+    } else if op == 2 {
+        bits = 24;
+    } else if op == 3 {
+        bits = 25;
+    } else if op == 4 {
+        bits = 6;
+    } else {
+        bits = 7;
+    }
+    return 0x1e200000 | sf << 31 | double << 22 | bits << 16 | rn << 5 | rd;
+}
