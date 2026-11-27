@@ -1,7 +1,7 @@
 #!/bin/sh
 # Build the `cancho` that is written in cancho and built by cancho (docs/standalone-cancho.md D5).
 #
-#   scripts/build-standalone.sh --out DIR --rev COMMIT [--host TRIPLE] [--cancho0 PATH | --seed]
+#   scripts/build-standalone.sh --out DIR --rev COMMIT [--host TRIPLE] [--cancho0 PATH | --seed] [--backend native]
 #
 #   --out DIR      where the result goes: DIR/cancho (stage 2) and DIR/stages/ (the three stages, for inspection)
 #   --rev COMMIT   the commit the binary reports and a pinned project is compared with (scripts/stamp-version.sh)
@@ -9,6 +9,9 @@
 #   --cancho0      stage 0, a `cancho` written in cancho that already exists (an earlier stage 2, a release). A Rust build cannot be one: it writes no code since docs/removing-rust.md Phase 5
 #   --seed         stage 0 is the seed: `cancho0` built by clang from seed/<target>.ll.gz (scripts/seed-build.sh, docs/seed.md). The default when no --cancho0
 #                  is given, so a checkout with `clang` and nothing else builds the compiler.
+#   --backend native  stages 2 and 3 are built by the compiler's own backend (docs/native-backend.md section 14): stage 1 is built as always, stage 2 by
+#                  stage 1 with `--backend native`, stage 3 by stage 2 the same way, and the two must be the same file. No clang and no LLVM is between
+#                  the compiler's sources and stage 2's object; `clang` is still the name the linker is started by. For the machines that backend has.
 #
 # Stage 0 is the seed (or the `cancho` given by --cancho0). Stage 1 is the command line in cancho (compiler/cancho.files, stamped) built by stage 0 with the compiler in cancho.
 # Stage 2 is the same files built by stage 1, and stage 3 by stage 2, each under the name `cancho` in a directory of its own (the object file's name is in the
@@ -20,7 +23,7 @@
 # comparison must refuse (the gate's own test).
 set -eu
 here=$(cd "$(dirname "$0")/.." && pwd)
-out=; rev=; host=; cancho0=
+out=; rev=; host=; cancho0=; backend=
 while [ $# -gt 0 ]; do
   case $1 in
     --out) out=$2; shift 2 ;;
@@ -28,10 +31,11 @@ while [ $# -gt 0 ]; do
     --host) host=$2; shift 2 ;;
     --cancho0) cancho0=$2; shift 2 ;;
     --seed) cancho0=; shift ;;
-    *) echo "usage: build-standalone.sh --out DIR --rev COMMIT [--host TRIPLE] [--cancho0 PATH | --seed]" >&2; exit 2 ;;
+    --backend) [ "${2:-}" = native ] || { echo "build-standalone: --backend takes native" >&2; exit 2; }; backend="--backend native"; shift 2 ;;
+    *) echo "usage: build-standalone.sh --out DIR --rev COMMIT [--host TRIPLE] [--cancho0 PATH | --seed] [--backend native]" >&2; exit 2 ;;
   esac
 done
-[ -n "$out" ] && [ -n "$rev" ] || { echo "usage: build-standalone.sh --out DIR --rev COMMIT [--host TRIPLE] [--cancho0 PATH | --seed]" >&2; exit 2; }
+[ -n "$out" ] && [ -n "$rev" ] || { echo "usage: build-standalone.sh --out DIR --rev COMMIT [--host TRIPLE] [--cancho0 PATH | --seed] [--backend native]" >&2; exit 2; }
 mkdir -p "$out/stages/1" "$out/stages/2" "$out/stages/3" "$out/stamped"
 out=$(cd "$out" && pwd)
 
@@ -55,11 +59,13 @@ echo "stage 1: built by $cancho0 with the compiler in cancho" >&2
 CANCHO_COMPILER=auto "$cancho0" build $files --std $stage1clang -o "$out/stages/1/cancho"
 # The command line in cancho has no environment to read (a cancho program has no `getenv`), so `$CLANG` reaches it as `--clang PATH`, as an absolute path
 # (it runs `/usr/bin/clang` otherwise). The first release run found this: on ubuntu-22.04 stage 2 used clang 14, which cannot read the IR.
-echo "stage 2: built by stage 1" >&2
-"$out/stages/1/cancho" build $files --std --clang "$clang" -o "$out/stages/2/cancho"
-echo "stage 3: built by stage 2" >&2
+echo "stage 2: built by stage 1${backend:+, with the native backend}" >&2
+# shellcheck disable=SC2086
+"$out/stages/1/cancho" build $files --std --clang "$clang" $backend -o "$out/stages/2/cancho"
+echo "stage 3: built by stage 2${backend:+, with the native backend}" >&2
 name3=${STANDALONE_STAGE3_NAME:-cancho}
-"$out/stages/2/cancho" build $files --std --clang "$clang" -o "$out/stages/3/$name3"
+# shellcheck disable=SC2086
+"$out/stages/2/cancho" build $files --std --clang "$clang" $backend -o "$out/stages/3/$name3"
 [ -z "${STANDALONE_STAGE3_CORRUPT:-}" ] || printf 'x' >> "$out/stages/3/$name3"
 # On macOS the linker gives an executable a UUID, a size and an ad-hoc signature that depend on the name of the file it writes (the first run of the name
 # check there found 26,000 differing bytes, and none in the strings or the symbols). A stage 3 under another name is therefore compared by what the file
