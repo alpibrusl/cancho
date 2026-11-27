@@ -1,0 +1,48 @@
+edition 5;
+
+// bare_discharge.cho -- what a `system` block discharges (`docs/bare-system.md` 12): `tell` is written for a system and its row says so; `lend` contains the block, and
+// for no system its row is empty, since the module `probe_io` has every function `io_write` and `args` can reach. For a machine with a system under the program the same
+// function performs both, and its row must say so. tests/commands/freestanding.sh checks it both ways, and changes the row to see each refusal.
+import probe_io;
+
+// The arguments, each on a line, and how many there were.
+fn tell[&i, &g](io: &!i Io, args: &g Args) -> [io_write, args] int {
+    var n = 0;
+    while n < arg_count(args) {
+        write_bytes(io, arg(args, n));
+        putchar(io, 10);
+        n = n + 1;
+    }
+    flush_out(io);
+    return n;
+}
+
+fn lend[&i, &g, &m, &u](io: &!i Io, args: &g Args, mem: &!m [byte], used: &!u [int]) -> [] int {
+    var n = 0;
+    system probe_io(mem, used) in {
+        n = tell(io, args);
+    }
+    return n;
+}
+
+fn main(world: World) -> [] int {
+    let Split { io, ffi, fs, heap, args, net, clock } = split(world);
+    release(ffi);
+    release(fs);
+    release(heap);
+    release(net);
+    release(clock);
+    var status = 0;
+    region r {
+        let mem = alloc_slice[r](64, byte_of(0));
+        let used = alloc_slice[r](2, 0);
+        borrow mut io as &!i in {
+            borrow args as &g in {
+                status = lend(i, g, mem, used);
+            }
+        }
+    }
+    release(io);
+    release(args);
+    return status;
+}

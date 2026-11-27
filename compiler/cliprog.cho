@@ -620,9 +620,15 @@ pub fn program_command[&h, &i, &a, &f, &x, &c](heap: &!h Heap, io: &!i Io, args:
             if n >= arg_count(args) {
                 return clibase.usage_error(heap, io, "`--target` needs a triple");
             }
-            wasi = authwasi.variant_of(arg(args, n));
-            if wasi == 0 {
-                return clibase.usage_error(heap, io, "`--target` of `authority` takes wasm32-wasip1, wasm32-wasip2, wasm32-wasi or wasm32-wasip1-threads in this command line");
+            if bytes.equal(arg(args, n), "aarch64-none-elf") {
+                // No system under the program (`docs/freestanding.md`): what a `system` block discharges there is not in the report (`docs/bare-system.md` 12.5).
+                host = 3;
+                host_given = true;
+            } else {
+                wasi = authwasi.variant_of(arg(args, n));
+                if wasi == 0 {
+                    return clibase.usage_error(heap, io, "`--target` of `authority` takes aarch64-none-elf, wasm32-wasip1, wasm32-wasip2, wasm32-wasi or wasm32-wasip1-threads in this command line");
+                }
             }
         } else if bytes.equal(word, "--std") {
             // The library in this binary (`stdsource.cho`): the argument at `std_dir` is the word `--std` and not a directory.
