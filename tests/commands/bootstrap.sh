@@ -16,7 +16,7 @@ case $(uname -s) in
 esac
 
 # The program the compiler compiles: the `std` modules it imports, then its own, then its root, as `FILE <length>` lines and the files (the stream `driver.cho` reads).
-modules="lexcore tables runtime kinds rules ast mmio pass1 foreign builtins signatures types prims scope effects emit bare consteval instances floats floatcode fold threadcode codes externcode netcode platform wordcode cryptocode ex lookup atoms filecode narrowing allocs binops exprs body listing checker floatprint sink filewrite formatting jsonprint jsonread ingest blake3 identity printing prune testscan layoutrep authwasi version authority satisfytext driver"
+modules="lexcore tables runtime kinds rules ast mmio pass1 foreign builtins signatures types prims scope effects emit bare consteval instances floats floatcode fold threadcode codes externcode netcode platform wordcode cryptocode ex lookup atoms syscode filecode narrowing allocs binops exprs body listing checker floatprint sink filewrite formatting jsonprint jsonread ingest blake3 identity printing prune testscan layoutrep authwasi version authority satisfytext driver"
 own=$root/compiler
 # own_source ROOT-MODULE OUT
 own_source() {

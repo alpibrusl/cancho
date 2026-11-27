@@ -62,6 +62,99 @@ else
 fi
 end
 
+# A system lent for a block (docs/bare-system.md): a program that writes to its `Io` and reads its `Args` builds for no system when a module of its own answers
+# them, and the functions the builtins call are then the module's own. Without the block the same builtins are refused, as before.
+begin a_program_for_no_system_lends_one
+if "$cancho" build tests/probes/bare_system.cho tests/probes/bare_system_io.cho --target aarch64-none-elf --emit ll -o "$work/system.ll" > "$work/system.txt" 2>&1; then
+    same "$(calls_undefined "$work/system.ll")" "" "what the module calls and does not define"
+    same "$(grep -c '^define i64 @cancho_write_bytes(ptr %p, i64 %n)\|^define i32 @putchar(i32 %c)\|^define i64 @write(i32 %fd, ptr %p, i64 %n)\|^define i32 @getchar()\|^define void @cancho_flush_out(ptr %out)\|^define ptr @cancho_arg(i64 %n)\|^define i64 @strlen(ptr %s)' "$work/system.ll")" 7 "the seven functions the builtins call are the module's own"
+    same "$(grep -c '^@cancho_sys_on = global i64 0' "$work/system.ll")" 1 "whether something is lent"
+    same "$(grep -c 'store i64 1, ptr @cancho_sys_on' "$work/system.ll")" 1 "it is lent at the block"
+    same "$(grep -c 'store i64 0, ptr @cancho_sys_on' "$work/system.ll")" 1 "and not after it"
+    same "$(grep -c '^declare i32 @putchar\|^declare i32 @getchar\|^declare i64 @write' "$work/system.ll")" 0 "none is declared as somebody else's"
+else
+    fail "a program that lends a system, for no system, said: $(head -c 300 "$work/system.txt")"
+fi
+# the same program for the machine this runs on: the block is only its body, and the arguments are the command line's
+if "$cancho" build tests/probes/bare_system.cho tests/probes/bare_system_io.cho -o "$work/system-host" > "$work/system-host.txt" 2>&1; then
+    "$work/system-host" one two > "$work/system-out.txt"
+    same "$?" 3 "what it answers on this machine"
+    same "$(tail -n 2 "$work/system-out.txt" | tr '\n' ' ')" "one two " "what it writes on this machine"
+else
+    fail "the same program for this machine said: $(head -c 300 "$work/system-host.txt")"
+fi
+# without the block, the builtin is refused where it is written
+sed 's/^                system probe_io(mem, used) in {$/                region q {/' tests/probes/bare_system.cho > "$work/nosystem.cho"
+same "$(grep -c 'system probe_io' "$work/nosystem.cho")" 0 "the block was taken out"
+"$cancho" build "$work/nosystem.cho" tests/probes/bare_system_io.cho --target aarch64-none-elf --emit ll -o "$work/nosystem.ll" > "$work/nosystem.txt" 2>&1
+same "$?" 1 "the status without the block"
+case "$(cat "$work/nosystem.txt")" in
+    *"this target cannot do"*) ;;
+    *) fail "without the block the build said: $(head -c 300 "$work/nosystem.txt")" ;;
+esac
+end
+
+# The same for files that are read (docs/bare-system.md, step 3): a program that opens a directory, opens a file under it and reads it builds for no system when
+# the module answers `folder`, `step`, `open`, `read`, `read_at`, `size` and `close`; a path is held to its capability, and a name to being one component, by
+# functions of the runtime before the module is asked.
+begin a_lent_system_reads_files
+if "$cancho" build tests/probes/bare_system_files.cho tests/probes/bare_system_fs.cho --target aarch64-none-elf --emit ll -o "$work/files.ll" > "$work/files.txt" 2>&1; then
+    same "$(calls_undefined "$work/files.ll")" "" "what the module calls and does not define"
+    same "$(grep -c '^define void @cancho_dir_open(\|^define void @cancho_dir_step(\|^define i64 @cancho_open(\|^define i64 @cancho_fd_read(\|^define i64 @cancho_fd_pread(\|^define i64 @cancho_fd_size(\|^define i64 @cancho_fd_close(' "$work/files.ll")" 7 "the seven functions the file builtins call are the module's own"
+    same "$(grep -c 'call i1 @cancho_path_covers(' "$work/files.ll")" 2 "a path is held to its capability before the module is asked, for a directory and for a file"
+    same "$(awk '/^define void @cancho_dir_step\(/ { on = 1 } on && /call i1 @cancho_sys_component\(/ { print "held"; exit } on && /^}/ { exit }' "$work/files.ll")" "held" "and a name to being one component"
+else
+    fail "a program that reads files from a lent system, for no system, said: $(head -c 300 "$work/files.txt")"
+fi
+# a module with no `step`: the function is there and traps, so the program still builds
+grep -v '^$' tests/probes/bare_system_fs.cho | sed 's/^pub fn step\[/pub fn stepped[/' > "$work/nostep.cho"
+if "$cancho" build tests/probes/bare_system_files.cho "$work/nostep.cho" --target aarch64-none-elf --emit ll -o "$work/nostep.ll" > "$work/nostep.txt" 2>&1; then
+    same "$(awk '/^define void @cancho_dir_step\(/ { on = 1 } on && /cancho_trap/ { print "traps"; exit } on && /^}/ { exit }' "$work/nostep.ll")" "traps" "an operation the module does not answer"
+else
+    fail "with no \`step\` the build said: $(head -c 300 "$work/nostep.txt")"
+fi
+# a function that does not fit its place is refused where the block is written
+sed 's/^pub fn size\[&u\](at: &!u \[int\], file: int)/pub fn size[\&u, \&p](at: \&!u [int], file: \&p [byte])/' tests/probes/bare_system_fs.cho > "$work/badsize.cho"
+same "$(grep -c 'file: &p \[byte\]' "$work/badsize.cho")" 1 "the function was changed"
+"$cancho" build tests/probes/bare_system_files.cho "$work/badsize.cho" --target aarch64-none-elf --emit ll -o "$work/badsize.ll" > "$work/badsize.txt" 2>&1
+same "$?" 1 "the status with a function that does not fit"
+end
+
+# And for what a directory holds (docs/bare-system.md, step 4): `dir_list`, `dir_next`, `dir_list_close` and `dir_stat` are the module's `list`, `next`,
+# `close` and `stat`; a name given to `dir_stat` is held to being one component first.
+begin a_lent_system_lists_a_directory
+if "$cancho" build tests/probes/bare_system_list.cho tests/probes/bare_system_fs.cho --target aarch64-none-elf --emit ll -o "$work/list.ll" > "$work/list.txt" 2>&1; then
+    same "$(calls_undefined "$work/list.ll")" "" "what the module calls and does not define"
+    same "$(grep -c '^define void @cancho_dir_list(\|^define void @cancho_dir_next(\|^define i64 @cancho_dir_list_close(\|^define void @cancho_dir_stat(' "$work/list.ll")" 4 "the four functions the listing builtins call are the module's own"
+    same "$(awk '/^define void @cancho_dir_stat\(/ { on = 1 } on && /call i1 @cancho_sys_component\(/ { print "held"; exit } on && /^}/ { exit }' "$work/list.ll")" "held" "a name is held to being one component before the module is asked about it"
+    same "$(awk '/^define void @cancho_dir_stat\(/ { on = 1 } on && /call i64 @lexs_/ { n++ } on && /^}/ { print n; exit }' "$work/list.ll")" 3 "the kind, the size and the time are asked one after the other"
+else
+    fail "a program that lists a directory of a lent system, for no system, said: $(head -c 300 "$work/list.txt")"
+fi
+end
+
+# And for what writes (docs/bare-system.md, step 4): `file_write`, `file_sync`, `file_lock`, `dir_rename` and `dir_rename_new`, `dir_remove` and `dir_sync` are
+# the module's `write`, `sync`, `lock`, `rename`, `remove` and `sync` again; `dir_open_new` and `dir_open_append` are its `step`. Both names of a rename, and
+# the name removed, are held to being one component first.
+begin a_lent_system_writes_a_file
+if "$cancho" build tests/probes/bare_system_write.cho tests/probes/bare_system_fs.cho --target aarch64-none-elf --emit ll -o "$work/write.ll" > "$work/write.txt" 2>&1; then
+    same "$(calls_undefined "$work/write.ll")" "" "what the module calls and does not define"
+    same "$(grep -c '^define i64 @cancho_fd_write(\|^define i64 @cancho_fd_sync(\|^define i64 @cancho_fd_lock(\|^define void @cancho_dir_rename(\|^define void @cancho_dir_remove(\|^define void @cancho_dir_sync(' "$work/write.ll")" 6 "the six functions the writing builtins call are the module's own"
+    same "$(awk '/^define void @cancho_dir_rename\(/ { on = 1 } on && /call i1 @cancho_sys_component\(/ { n++ } on && /^}/ { print n; exit }' "$work/write.ll")" 2 "both names of a rename are held to being one component before the module is asked"
+    same "$(awk '/^define void @cancho_dir_remove\(/ { on = 1 } on && /call i1 @cancho_sys_component\(/ { print "held"; exit } on && /^}/ { exit }' "$work/write.ll")" "held" "and so is a name that is removed"
+else
+    fail "a program that replaces a file of a lent system, for no system, said: $(head -c 300 "$work/write.txt")"
+fi
+# without the functions that write, the same program's calls are a trap, not a call of something missing
+sed '/^\/\/ What is written: /,$d' tests/probes/bare_system_fs.cho > "$work/readonly_fs.cho"
+if "$cancho" build tests/probes/bare_system_write.cho "$work/readonly_fs.cho" --target aarch64-none-elf --emit ll -o "$work/readonly.ll" > "$work/readonly.txt" 2>&1; then
+    same "$(calls_undefined "$work/readonly.ll")" "" "what the module calls and does not define, when the system has nothing that writes"
+    same "$(awk '/^define i64 @cancho_fd_write\(/ { on = 1 } on && /call void @cancho_trap\(/ { print "trap"; exit } on && /^}/ { exit }' "$work/readonly.ll")" "trap" "writing to a system that has no function for it is a trap"
+else
+    fail "with a system that has nothing that writes, the build said: $(head -c 300 "$work/readonly.txt")"
+fi
+end
+
 begin an_object_for_no_system_is_an_elf_for_aarch64
 if "$cancho" build tests/probes/freestanding.cho --std --target aarch64-none-elf --emit obj -o "$work/bare.o" > "$work/obj.txt" 2>&1; then
     # The four bytes of the magic, then (at 18) the machine: 183, AArch64, little-endian.

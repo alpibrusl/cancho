@@ -1263,6 +1263,11 @@ pub fn stmt[&s, &x](st: &!s [int], text: &x [byte]) -> [] int {
     if look(st, 0, lc.Tok::Borrow) {
         return borrow_stmt(st, text);
     }
+    // `system m(a, b) in { .. }` (`docs/bare-system.md`): two names in a row and a `(` begin nothing else, so `system` is
+    // no reserved word, and a variable of that name is what it was.
+    if word(st, text, 0, "system") && look(st, 1, lc.Tok::Ident) && look(st, 2, lc.Tok::LParen) {
+        return system_stmt(st, text);
+    }
     if look(st, 0, lc.Tok::Region) {
         let kw = bump(st);
         let reg = ident(st);
@@ -1455,6 +1460,24 @@ pub fn match_stmt[&s, &x](st: &!s [int], text: &x [byte]) -> [] int {
     put(st, id, 4, scrutinee);
     put(st, id, 5, arms.head);
     put(st, id, 6, arms.n);
+    return id;
+}
+
+// SSystem: 4 the module's token, 5 the first of what is lent, 6 how many, 7 the body, 8 its length.
+pub fn system_stmt[&s, &x](st: &!s [int], text: &x [byte]) -> [] int {
+    let kw = bump(st);
+    let unit = ident(st);
+    expect(st, lc.Tok::LParen);
+    let lent = args(st, text);
+    expect(st, lc.Tok::RParen);
+    expect(st, lc.Tok::In);
+    let body = block(st, text);
+    let id = mk(st, kinds.NK::SSystem, tstart(st, kw), body.end);
+    put(st, id, 4, unit);
+    put(st, id, 5, lent.head);
+    put(st, id, 6, lent.n);
+    put(st, id, 7, body.list.head);
+    put(st, id, 8, body.list.n);
     return id;
 }
 

@@ -595,6 +595,17 @@ pub fn dump_stmt[&i, &s, &x](io: &!i Io, st: &!s [int], text: &x [byte], id: int
         wn(io, ast.get(st, id, 8));
         return wspan(io, st, id);
     }
+    if ast.is_kind(st, id, kinds.NK::SSystem) {
+        dump_exprs(io, st, text, ast.get(st, id, 5), ast.get(st, id, 6));
+        dump_stmts(io, st, text, ast.get(st, id, 7), ast.get(st, id, 8));
+        w(io, "S.System ");
+        wname(io, st, text, ast.get(st, id, 4));
+        w(io, " ");
+        wn(io, ast.get(st, id, 6));
+        w(io, " ");
+        wn(io, ast.get(st, id, 8));
+        return wspan(io, st, id);
+    }
     if ast.is_kind(st, id, kinds.NK::SRegion) {
         dump_stmts(io, st, text, ast.get(st, id, 5), ast.get(st, id, 6));
         w(io, "S.Region ");

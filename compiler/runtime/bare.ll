@@ -222,6 +222,23 @@ done:
   ret ptr %d
 }
 
+; What `arg` measures an argument with (`docs/bare-system.md`): the bytes before the first zero.
+define i64 @strlen(ptr %s) noinline "no-builtins" {
+entry:
+  br label %head
+head:
+  %i = phi i64 [ 0, %entry ], [ %next, %step ]
+  %at = getelementptr i8, ptr %s, i64 %i
+  %b = load i8, ptr %at
+  %end = icmp eq i8 %b, 0
+  br i1 %end, label %done, label %step
+step:
+  %next = add i64 %i, 1
+  br label %head
+done:
+  ret i64 %i
+}
+
 define ptr @memchr(ptr %s, i32 %c, i64 %n) noinline "no-builtins" {
 entry:
   %v = trunc i32 %c to i8
@@ -242,4 +259,108 @@ found:
   ret ptr %at
 none:
   ret ptr null
+}
+
+; Does the path lie under the prefix of the capability? The same text as runtime.ll's, for a lent system's files.
+define i1 @cancho_path_covers(ptr %src, i64 %len, ptr %prefix, i64 %plen) {
+entry:
+  %toolong = icmp uge i64 %len, 4096
+  br i1 %toolong, label %no, label %c1
+c1:
+  %short = icmp ult i64 %len, %plen
+  br i1 %short, label %no, label %loop
+loop:
+  %i = phi i64 [ 0, %c1 ], [ %next, %cont ]
+  %more = icmp ult i64 %i, %len
+  br i1 %more, label %body, label %done
+body:
+  %a = getelementptr i8, ptr %src, i64 %i
+  %byte = load i8, ptr %a
+  %isdot = icmp eq i8 %byte, 46
+  %hasprev = icmp ugt i64 %i, 0
+  %pi = sub i64 %i, 1
+  %pidx = select i1 %hasprev, i64 %pi, i64 0
+  %pa = getelementptr i8, ptr %src, i64 %pidx
+  %pbyte = load i8, ptr %pa
+  %pdot = icmp eq i8 %pbyte, 46
+  %both0 = and i1 %isdot, %pdot
+  %both = and i1 %both0, %hasprev
+  br i1 %both, label %no, label %inpre
+inpre:
+  %insidep = icmp ult i64 %i, %plen
+  br i1 %insidep, label %cmp, label %cont
+cmp:
+  %ea = getelementptr i8, ptr %prefix, i64 %i
+  %ebyte = load i8, ptr %ea
+  %diff = icmp ne i8 %ebyte, %byte
+  br i1 %diff, label %no, label %cont
+cont:
+  %next = add i64 %i, 1
+  br label %loop
+done:
+  %nonempty = icmp ugt i64 %plen, 0
+  br i1 %nonempty, label %b1, label %yes
+b1:
+  %li = sub i64 %plen, 1
+  %la = getelementptr i8, ptr %prefix, i64 %li
+  %last = load i8, ptr %la
+  %slash = icmp eq i8 %last, 47
+  br i1 %slash, label %yes, label %b2
+b2:
+  %longer = icmp ugt i64 %len, %plen
+  br i1 %longer, label %b3, label %yes
+b3:
+  %ba = getelementptr i8, ptr %src, i64 %plen
+  %bbyte = load i8, ptr %ba
+  %bslash = icmp eq i8 %bbyte, 47
+  %bnul = icmp eq i8 %bbyte, 0
+  %bok = or i1 %bslash, %bnul
+  ret i1 %bok
+yes:
+  ret i1 true
+no:
+  ret i1 false
+}
+
+; Is `name[0..len]` one path component? Not empty, not longer than 255, not `.` or `..`, with no `/` and no zero in it
+; (what `dirrt_component` of dirs.c holds a name to, for a system that is lent: docs/bare-system.md).
+define i1 @cancho_sys_component(ptr %name, i64 %len) {
+entry:
+  %empty = icmp eq i64 %len, 0
+  %long = icmp ugt i64 %len, 255
+  %out = or i1 %empty, %long
+  br i1 %out, label %no, label %first
+first:
+  %b0 = load i8, ptr %name
+  %dot0 = icmp eq i8 %b0, 46
+  %is1 = icmp eq i64 %len, 1
+  %single = and i1 %dot0, %is1
+  br i1 %single, label %no, label %second
+second:
+  %is2 = icmp eq i64 %len, 2
+  %both = and i1 %dot0, %is2
+  br i1 %both, label %two, label %loop
+two:
+  %a1 = getelementptr i8, ptr %name, i64 1
+  %b1 = load i8, ptr %a1
+  %dot1 = icmp eq i8 %b1, 46
+  br i1 %dot1, label %no, label %loop
+loop:
+  %i = phi i64 [ 0, %second ], [ 0, %two ], [ %next, %cont ]
+  %more = icmp ult i64 %i, %len
+  br i1 %more, label %body, label %yes
+body:
+  %a = getelementptr i8, ptr %name, i64 %i
+  %c = load i8, ptr %a
+  %slash = icmp eq i8 %c, 47
+  %zero = icmp eq i8 %c, 0
+  %badc = or i1 %slash, %zero
+  br i1 %badc, label %no, label %cont
+cont:
+  %next = add i64 %i, 1
+  br label %loop
+yes:
+  ret i1 true
+no:
+  ret i1 false
 }

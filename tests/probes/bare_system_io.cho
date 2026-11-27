@@ -1,0 +1,49 @@
+edition 5;
+module probe_io;
+
+// bare_system_io.cho -- the system of tests/probes/bare_system.cho (`docs/bare-system.md`): what the program writes
+// goes into a slice it was lent, and its arguments are two words kept here. `used[0]` is how much of `mem` is written,
+// `used[1]` how many times a stream was flushed.
+
+pub fn out[&m, &u, &p](mem: &!m [byte], used: &!u [int], p: &p [byte]) -> [] int {
+    var i = 0;
+    while i < len(p) && used[0] < len(mem) {
+        mem[used[0]] = p[i];
+        used[0] = used[0] + 1;
+        i = i + 1;
+    }
+    return i;
+}
+
+pub fn err[&m, &u, &p](mem: &!m [byte], used: &!u [int], p: &p [byte]) -> [] int {
+    return out(mem, used, p);
+}
+
+// No more input: the end of it.
+pub fn key[&m, &u](mem: &!m [byte], used: &!u [int]) -> [] int {
+    return 0 - 1;
+}
+
+pub fn flush[&m, &u](mem: &!m [byte], used: &!u [int]) -> [] int {
+    used[1] = used[1] + 1;
+    return 0;
+}
+
+pub fn arguments[&m, &u](mem: &!m [byte], used: &!u [int]) -> [] int {
+    return 2;
+}
+
+// Argument `n` into `into`: how many bytes it is.
+pub fn argument[&m, &u, &t](mem: &!m [byte], used: &!u [int], n: int, into: &!t [byte]) -> [] int {
+    let words = "probe\0first\0";
+    var at = 0;
+    if n == 1 {
+        at = 6;
+    }
+    var i = 0;
+    while int_of(words[at + i]) != 0 && i < len(into) {
+        into[i] = words[at + i];
+        i = i + 1;
+    }
+    return i;
+}
