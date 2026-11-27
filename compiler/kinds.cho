@@ -52,6 +52,7 @@ pub enum NK {
     IStruct,
     IEnum,
     IStatic,
+    SSystem,
 }
 
 // The kind's position in `NK`, which is how a record stores it.
@@ -191,6 +192,9 @@ pub fn kcode(k: NK) -> [] int {
         }
         NK::IStatic => {
             return 44;
+        }
+        NK::SSystem => {
+            return 45;
         }
     }
 }

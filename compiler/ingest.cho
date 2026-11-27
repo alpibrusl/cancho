@@ -1189,6 +1189,18 @@ fn stmt[&s, &t, &x, &j](st: &!s [int], tx: &!t [byte], src: &x [byte], jm: &!j [
         ast.put(st, id, 8, body.n);
         return id;
     }
+    if jsonread.is_string(jm, src, kv, "system") {
+        let unit = name_token(st, tx, src, jm, required(st, src, jm, v, "module"));
+        let lent = expr_list(st, tx, src, jm, required(st, src, jm, v, "lent"));
+        let body = block(st, tx, src, jm, required(st, src, jm, v, "body"));
+        let id = node(st, kinds.NK::SSystem);
+        ast.put(st, id, 4, unit);
+        ast.put(st, id, 5, lent.head);
+        ast.put(st, id, 6, lent.n);
+        ast.put(st, id, 7, body.head);
+        ast.put(st, id, 8, body.n);
+        return id;
+    }
     if jsonread.is_string(jm, src, kv, "region") {
         let rg = name_token(st, tx, src, jm, required(st, src, jm, v, "region"));
         let body = block(st, tx, src, jm, required(st, src, jm, v, "body"));

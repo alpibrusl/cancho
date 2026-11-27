@@ -62,6 +62,38 @@ else
 fi
 end
 
+# A system lent for a block (docs/bare-system.md): a program that writes to its `Io` and reads its `Args` builds for no system when a module of its own answers
+# them, and the functions the builtins call are then the module's own. Without the block the same builtins are refused, as before.
+begin a_program_for_no_system_lends_one
+if "$cancho" build tests/probes/bare_system.cho tests/probes/bare_system_io.cho --target aarch64-none-elf --emit ll -o "$work/system.ll" > "$work/system.txt" 2>&1; then
+    same "$(calls_undefined "$work/system.ll")" "" "what the module calls and does not define"
+    same "$(grep -c '^define i64 @cancho_write_bytes(ptr %p, i64 %n)\|^define i32 @putchar(i32 %c)\|^define i64 @write(i32 %fd, ptr %p, i64 %n)\|^define i32 @getchar()\|^define void @cancho_flush_out(ptr %out)\|^define ptr @cancho_arg(i64 %n)\|^define i64 @strlen(ptr %s)' "$work/system.ll")" 7 "the seven functions the builtins call are the module's own"
+    same "$(grep -c '^@cancho_sys_on = global i64 0' "$work/system.ll")" 1 "whether something is lent"
+    same "$(grep -c 'store i64 1, ptr @cancho_sys_on' "$work/system.ll")" 1 "it is lent at the block"
+    same "$(grep -c 'store i64 0, ptr @cancho_sys_on' "$work/system.ll")" 1 "and not after it"
+    same "$(grep -c '^declare i32 @putchar\|^declare i32 @getchar\|^declare i64 @write' "$work/system.ll")" 0 "none is declared as somebody else's"
+else
+    fail "a program that lends a system, for no system, said: $(head -c 300 "$work/system.txt")"
+fi
+# the same program for the machine this runs on: the block is only its body, and the arguments are the command line's
+if "$cancho" build tests/probes/bare_system.cho tests/probes/bare_system_io.cho -o "$work/system-host" > "$work/system-host.txt" 2>&1; then
+    "$work/system-host" one two > "$work/system-out.txt"
+    same "$?" 3 "what it answers on this machine"
+    same "$(tail -n 2 "$work/system-out.txt" | tr '\n' ' ')" "one two " "what it writes on this machine"
+else
+    fail "the same program for this machine said: $(head -c 300 "$work/system-host.txt")"
+fi
+# without the block, the builtin is refused where it is written
+sed 's/^                system probe_io(mem, used) in {$/                region q {/' tests/probes/bare_system.cho > "$work/nosystem.cho"
+same "$(grep -c 'system probe_io' "$work/nosystem.cho")" 0 "the block was taken out"
+"$cancho" build "$work/nosystem.cho" tests/probes/bare_system_io.cho --target aarch64-none-elf --emit ll -o "$work/nosystem.ll" > "$work/nosystem.txt" 2>&1
+same "$?" 1 "the status without the block"
+case "$(cat "$work/nosystem.txt")" in
+    *"this target cannot do"*) ;;
+    *) fail "without the block the build said: $(head -c 300 "$work/nosystem.txt")" ;;
+esac
+end
+
 begin an_object_for_no_system_is_an_elf_for_aarch64
 if "$cancho" build tests/probes/freestanding.cho --std --target aarch64-none-elf --emit obj -o "$work/bare.o" > "$work/obj.txt" 2>&1; then
     # The four bytes of the magic, then (at 18) the machine: 183, AArch64, little-endian.

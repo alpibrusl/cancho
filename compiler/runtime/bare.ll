@@ -222,6 +222,23 @@ done:
   ret ptr %d
 }
 
+; What `arg` measures an argument with (`docs/bare-system.md`): the bytes before the first zero.
+define i64 @strlen(ptr %s) noinline "no-builtins" {
+entry:
+  br label %head
+head:
+  %i = phi i64 [ 0, %entry ], [ %next, %step ]
+  %at = getelementptr i8, ptr %s, i64 %i
+  %b = load i8, ptr %at
+  %end = icmp eq i8 %b, 0
+  br i1 %end, label %done, label %step
+step:
+  %next = add i64 %i, 1
+  br label %head
+done:
+  ret i64 %i
+}
+
 define ptr @memchr(ptr %s, i32 %c, i64 %n) noinline "no-builtins" {
 entry:
   %v = trunc i32 %c to i8
