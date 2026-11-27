@@ -3,8 +3,8 @@
 > **Status: the contract, the flag and the reader are built; no code generator is** (epic #840; N0 in #858, N1 in #860, N2 in #863. What exists: `scripts/ll-census.cho` and `tests/native/subset.txt` (what the compiler may write, by name), the reader
 > and its printer (`compiler/native/`, section 10), `--backend roundtrip` (every program a test of the reader) and `--backend native`,
 > which reads the module with vectors refused and then refuses the program by `unsupported-by-backend`, since nothing can yet write
-> code for it. The AArch64 encoder (section 11, N2) is written and held to clang's assembler, and nothing calls it yet. Code generator,
-> objects and images are N3 to N15. Every number below was produced by the command next to it
+> code for it. The AArch64 encoder (section 11, N2) is held to clang's assembler, and the first code generator (section 12, N3) makes code that was
+> run under qemu, the compiler's own included; there is no object writer yet. Objects and images are N4 to N15. Every number below was produced by the command next to it
 > on linux-x86_64 (clang 18.1.3), at the commit that adds the section it is in, unless it says it is the epic's.
 
 The goal, in one sentence: from a cancho program to machine code and to a file that runs, with no clang, no LLVM and no system
@@ -499,5 +499,157 @@ vectors name a register by its numbers (`S3_0_C1_C0_0`), which is where the enco
   It shares its layout with `adr` (150 vectors); N4, which resolves such a relocation itself, is where it is tested whole.
 - **The vectors regenerated on linux-aarch64 and on darwin-aarch64** give the same file, the task says. They were made on
   linux-x86_64 with clang 18.1.3 only; `python3 tests/native/a64_vectors.py --check` is the command, and exits 1 on a difference.
-- Nothing calls the encoder yet: it is not in `compiler/cancho.files`, and comes into the compiler with N3.
+- Nothing called the encoder when this was written; N3 (section 12) does, and brought it into `compiler/cancho.files`.
+
+---
+
+## 12. The first code generator (N3)
+
+`compiler/native/`: `lllayout.cho` (the sizes and offsets of section 4, from the reader's types), `llout.cho` (what is written: the
+words, the relocations, where each function is), `a64frame.cho` (constants, slots, copies, a value of the module into a register
+or into memory), `a64call.cho` (what crosses a call, and where), `a64gen.cho` (one instruction of the module), `a64fn.cho` (a
+function: frame, entry, blocks, branches, end; and `generate`). Pure, with no trap on any module the reader read.
+
+**Every value is in memory** (D5). An instruction of the module is lowered alone: its operands are loaded from their slots into
+scratch registers, worked on, and the result stored. Nothing is in a register between two instructions, so no instruction's
+lowering knows another's. That is slow on purpose; N9 changes where a value lives, and the lowering goes through the two
+functions that fetch an operand and store a result so that "where" can then be a register.
+
+### 12.1 The frame
+
+```
+            the caller's arguments that did not fit registers
+x29 + 16 ─▶
+x29      ─▶ the caller's x29, the return address          stp x29, x30, [sp, #-16]! ; mov x29, sp
+            the bytes of each alloca
+            a slot for each value; a second for each phi
+            the scratch bytes (as large as the largest value any instruction works on)
+sp       ─▶ the arguments of this function's calls that do not fit registers
+```
+
+The stack pointer does not move between the entry and the end, so a slot is at one offset from it throughout, and that offset
+is not negative. An `alloca` is bytes of the frame and its value is their address; one whose count is not a number is refused
+(the compiler writes none). A slot is the type's size, rounded up to eight bytes, at the type's alignment (at least eight).
+
+**Offsets the instructions do not reach.** A load or a store reaches 4,095 times its size; past that the address is worked out
+in `x17` first, in one `add` (to 4 KiB), two (to 16 MiB) or a constant and an `add` (beyond). The frame itself is taken off the
+stack pointer the same three ways. `tests/native/gen/tricky.ll` has a function with 5,000 bytes and 2.4 MiB of `alloca`, which
+writes at both ends of each and was run.
+
+**The registers.** `x9` to `x15` hold what one instruction works on; `x16` is the address of a name and of what is called
+through a pointer; `x17` is an address the immediates do not reach, and a constant on its way to a floating-point register;
+`d16` and `d17` are the floating-point operands. All are registers a callee may overwrite, so a function saves nothing but
+`x29` and `x30`.
+
+### 12.2 Values
+
+| type | in its slot | in a register |
+|---|---|---|
+| `i1` | a byte, 0 or 1 | bit 0; a parameter and a result are masked on arrival, since the other bits of their register are not defined |
+| `i8 i16 i32 i64 ptr` | its bytes | zero-extended to 64 bits when loaded, or sign-extended for the instruction that reads the sign |
+| `float double` | its bytes | `s` or `d` |
+| `i128` | sixteen bytes, the low word first | never whole: see `mul` and `lshr` below |
+| a struct, an array | its bytes, laid out as section 4 | never: copied, in pieces of the alignment its place is known to have |
+| a vector | refused, with its line | |
+
+A constant with parts (a struct of constants, a string) is written into memory part by part where it is used. A constant
+expression is worked out when the program is built: a name and a number added to it, which is one relocation.
+
+### 12.3 The lowering
+
+`tests/native/lowering.txt` has a line for each instruction and each function of LLVM's own that `tests/native/subset.txt` lets
+the compiler write: `lowered`, or `refused` with the reason. A test fails when a form is in one file and not the other.
+
+| instruction | what it becomes |
+|---|---|
+| `add sub mul and or xor shl lshr udiv` | both operands zero-extended, one instruction of 64 bits, the result stored at its width |
+| `sdiv ashr` · `srem` | the same, sign-extended · `sdiv` and `msub` |
+| `mul i128`, `lshr i128` by 64 or more, `zext` to and `trunc` from `i128` | `mul`, `umulh` and the two cross products; the high word; a word and a zero; the low word. Any other use of 128 bits is refused |
+| `fadd fsub fmul fdiv fneg` | the instruction of that name on `d16`, `d17` |
+| `icmp` | `cmp` and `cset`, sign-extended for `slt sle sgt sge` |
+| `fcmp` | `fcmp` and `cset`; `one` and `ueq` are two conditions joined |
+| `select` | `tst` of bit 0 and `csel` or `fcsel`; for a value in parts, one of two copies |
+| `trunc zext sext inttoptr ptrtoint` | the load that extends, the store that cuts; `sext i1` is a negation |
+| `bitcast` | the same bytes |
+| `fptosi sitofp fptrunc fpext` | `fcvtzs`, `scvtf`, `fcvt` |
+| `alloca` | the address of its bytes in the frame |
+| `load store` | through the pointer, at the type's width; a value in parts is a copy; `atomic` with `acquire`, `release` or `seq_cst` is `ldar`, `stlr` |
+| `getelementptr` | the pointer, plus each index times the size of what it counts; the indices that are numbers are added up when the program is built |
+| `extractvalue insertvalue` | a copy of the part's bytes; a copy of the whole and then the part |
+| `phi` | nothing where it is written: see the blocks below |
+| `br` | `tbz` of the condition's bit 0 over a jump; each jump is an unconditional `b`, which reaches 128 MiB |
+| `switch` | a compare a case, in the order written, then the default |
+| `ret` | the value into `x0`... or to where `x8` said; the frame given back |
+| `unreachable` | `udf #0` |
+| `atomicrmw` · `cmpxchg` | a loop of `ldaxr` and `stlxr` (a Raspberry Pi 4's processor has no `cas`) |
+| `call` | section 12.4 |
+| `llvm.sadd/ssub.with.overflow` · `uadd/usub` | `adds`/`subs` and `cset vs` · `cset cs`/`cc` |
+| `llvm.smul.with.overflow` · `umul` | `mul`, `smulh`, and whether the high half is the sign of the low · `umulh` and whether it is zero |
+| `llvm.memset` | a loop of byte stores (no call: the module may have no `memset`) |
+| `llvm.sqrt` · `ctlz` · `cttz` · `ctpop` | `fsqrt` · `clz` · `rbit` and `clz` · arithmetic on pairs, fours and bytes, and a multiply (NEON has the one instruction) |
+| inline assembly | the strings the compiler writes and no other: the trap `udf #0xc11f`; the value barrier (a copy: there is no optimiser to hide from); `mrs`, `msr` and `isb` of a register `Cpu` accepts; `wfi`; `isb`; `tlbi vmalle1` with `dsb nsh` and `isb` |
+| `insertelement shufflevector extractelement`, and any vector | refused |
+
+**Blocks and `phi`.** A `phi` has two slots. A jump to its block writes the value it has "when come to from here" into the
+second; the block, when it begins, moves every `phi`'s second slot into its first. So two `phi`s that read each other (a swap
+in a loop) each see the other's old value, with no temporary to choose: the test module has that loop, run for five turns and
+for six. Because a jump carries those copies, a conditional branch is a test over one jump to another, never a conditional
+jump to a block.
+
+### 12.4 Calls
+
+The rule is the one LLVM applies to the types of the text, since the code this meets (the C library, and for now any function
+clang still compiles) was compiled by it:
+
+- a value in parts is its scalars, one after another, each as if it were an argument of its own;
+- integers and pointers take `x0` to `x7`, floating-point values `d0` to `d7`; then eight bytes of the stack each;
+- an array goes whole in registers or whole on the stack; an `i128` takes two registers from an even one;
+- a result is in `x0`..., `d0`... the same way; one that needs more than eight registers of a kind is written where `x8` says,
+  and the caller passes the address of the result's own slot;
+- a function with more arguments than its type names (`printf`) is called the same way on Linux. On macOS it is not, which is
+  one reason `--backend native` refuses to make code for that machine (N15).
+
+One walk over the parts of a type (`a64call.walk`) does all five things that need this: counting the stack a call takes, an
+argument out, a parameter in, a result out, a result in.
+
+### 12.5 What is written
+
+`llout`: the words of every function, one after another; for each function its record, its first word and the word after its
+last; and the relocations, each a kind, a word, a name and a number: `bl name`; `adrp` and `add` of a name this module defines;
+`adrp` and `ldr` through the linker's table of addresses for a name it does not. N4 puts them in an object.
+
+### 12.6 How it was run, and what was found
+
+There is no object writer yet, so the code was run by another road: `tests/native/gen_dump.cho` writes the words as assembly
+(`.inst 0x...`, and the instruction itself where a name is), clang assembles that and compiles the module's data, and the two are
+linked and run under `qemu-aarch64` (`tests/native/gen_run.sh`). The gate has no AArch64 machine and runs none of it; what the
+gate holds is that the generator writes again, word for word, the text that was run.
+
+| what | result |
+|---|---|
+| `tests/native/gen/tricky.ll` (15 functions, every lowered form) | prints what clang's build prints, line for line; the gate keeps its 1,581 words |
+| `tests/accept` and `examples`, each built for linux-aarch64 both ways and run under qemu on the same input (150 programs that build alone) | **148 the same.** `word_scan` traps, as it must: it searches bytes with the vector builtin (section 3.4). `process_group_kill` prints what its fixture expects and exits 0 natively, where clang's build did not finish in 20 s under qemu, twice; not looked into further |
+| **The compiler itself** (3,245 functions; 19 that use a vector made traps for the run) | 1.78 million instructions, 7.1 MB. It runs: it says its version, checks a program, and **writes the compiler's own module, 29 MB, byte for byte as the clang-built compiler does** (5 min 31 s under qemu) |
+| The time from text to code for the compiler's module | 1.1 s, reader included |
+| cancho-os's kernel (834 functions) | code for all of it: 422,119 instructions, 1.69 MB. **It does not link**: the kernel's link script refuses an image past 2 MB, and clang's whole object is 0.4 MB. Booting it is N8, and the size is N8's first number |
+| The probes for no system, with all 171 registers | code for each (the gate's test) |
+| A vector, an `alloca` of unknown size, assembly and a register that are not in the table, `add i128`, an unknown function of LLVM's, a `phi` with no value for a block | each refused with its line and its reason |
+| Every byte of a module of most forms made each of fourteen bytes, and every truncation, read and then generated (26,000 modules) | none traps |
+| Tables for the code of every size below what is needed | each a refusal |
+
+Two mistakes were found by running and by no review: `cttz` was written as `clz` alone (the test of the name looked at the
+wrong letter), which only clang's output for the same module showed; and the pattern for `msr NAME, $0` was one byte too long,
+which the kernel's module showed.
+
+### 12.7 Not done
+
+- **Objects, and so `--backend native` building anything**: N4. Today it reads the module, makes its code for
+  `linux-aarch64` and `aarch64-none-elf`, drops it, and says there is no object to put it in; for another machine it says so
+  after reading.
+- **Vectors.** `byte_mask64` is still one; the proposal of section 3.4 stands, and N6 cannot do without an answer.
+- **The hardware ciphers**: their functions were made traps for the runs above, and the two functions that say whether the
+  processor has the instructions were made to say no. N5 has the driver write that.
+- **Speed.** Nothing is measured against clang's code but the 5 min 31 s above, which is mostly qemu's.
+- **The stack is not probed.** A frame of megabytes is taken in one step past any guard page.
+- macOS and x86-64 (N15, N14).
 

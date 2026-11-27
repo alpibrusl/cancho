@@ -1,0 +1,462 @@
+edition 7;
+module selfhost.llout;
+
+// llout.cho -- what the native backend's code generator writes (`docs/native-backend.md` section 12): the instructions of the module's functions, one cell a
+// word, the places in them that need an address the object writer fills in, and where each function is. It is one `[int]` the caller allocates with
+// `room(m)` cells for the module `m` the reader read. Pure, and no trap: a write past a region is a refusal.
+
+import selfhost.llmod as lm;
+
+// ---- the header ----
+
+// The code: where it begins, the next word, and where its room ends.
+pub fn h_code() -> [] int {
+    return 0;
+}
+
+pub fn h_top() -> [] int {
+    return 1;
+}
+
+pub fn h_code_end() -> [] int {
+    return 2;
+}
+
+// The refusal: 0 or 1, the line of the module, and why (a code of `why_text`).
+pub fn h_fail() -> [] int {
+    return 3;
+}
+
+pub fn h_fail_line() -> [] int {
+    return 4;
+}
+
+pub fn h_fail_why() -> [] int {
+    return 5;
+}
+
+// The relocations, four cells each: the kind, the word it is in (counted from the start of the code), the slot of the name (`llmod`), and what is added.
+pub fn h_rel() -> [] int {
+    return 6;
+}
+
+pub fn h_rel_top() -> [] int {
+    return 7;
+}
+
+pub fn h_rel_end() -> [] int {
+    return 8;
+}
+
+// The functions, three cells each: the function's record in the module, its first word, and the word after its last.
+pub fn h_fn() -> [] int {
+    return 9;
+}
+
+pub fn h_fn_top() -> [] int {
+    return 10;
+}
+
+pub fn h_fn_end() -> [] int {
+    return 11;
+}
+
+// What is known of each local of the function being written, by its number, three cells: where its slot is in the frame (-1: it has none), where the slot a
+// `phi` is given its next value in is (-1: it is no `phi`), and for a label the word its block begins at (-1 until it is written).
+pub fn h_loc() -> [] int {
+    return 12;
+}
+
+pub fn h_loc_cap() -> [] int {
+    return 13;
+}
+
+// The branches of the function being written whose block was not yet written, two cells each: the word, and the label's number.
+pub fn h_fix() -> [] int {
+    return 14;
+}
+
+pub fn h_fix_top() -> [] int {
+    return 15;
+}
+
+pub fn h_fix_end() -> [] int {
+    return 16;
+}
+
+// The frame of the function being written: the bytes of its outgoing arguments (at the stack pointer), the next free byte above them, where the address of a
+// result too large for registers is kept (-1: there is none), and the line of the instruction being written.
+pub fn h_out_area() -> [] int {
+    return 17;
+}
+
+pub fn h_frame() -> [] int {
+    return 18;
+}
+
+pub fn h_sret() -> [] int {
+    return 19;
+}
+
+pub fn h_line() -> [] int {
+    return 20;
+}
+
+// The word the function being written begins at, and its record.
+pub fn h_start() -> [] int {
+    return 21;
+}
+
+pub fn h_func() -> [] int {
+    return 22;
+}
+
+pub fn header() -> [] int {
+    return 32;
+}
+
+// ---- why a module is refused by the code generator (after `llmod`'s reasons) ----
+
+pub fn why_room() -> [] int {
+    return 21;
+}
+
+pub fn why_vector() -> [] int {
+    return 22;
+}
+
+pub fn why_wide() -> [] int {
+    return 23;
+}
+
+pub fn why_alloca() -> [] int {
+    return 24;
+}
+
+pub fn why_asm() -> [] int {
+    return 25;
+}
+
+pub fn why_intrinsic() -> [] int {
+    return 26;
+}
+
+pub fn why_constant() -> [] int {
+    return 27;
+}
+
+pub fn why_operand() -> [] int {
+    return 28;
+}
+
+pub fn why_frame() -> [] int {
+    return 29;
+}
+
+pub fn why_machine() -> [] int {
+    return 30;
+}
+
+pub fn why_text(why: int) -> [] &static [byte] {
+    if why == 30 {
+        return "a machine the native backend writes no code for yet: it has AArch64 on Linux and with no system (x86-64 and macOS are later)";
+    }
+    if why == 21 {
+        return "more code than the room the code generator was given";
+    }
+    if why == 22 {
+        return "a vector, which the native backend has no code for";
+    }
+    if why == 23 {
+        return "an integer wider than 64 bits used in a way the native backend has no code for";
+    }
+    if why == 24 {
+        return "an `alloca` whose size is not known when the program is built";
+    }
+    if why == 25 {
+        return "inline assembly the native backend has no instruction for";
+    }
+    if why == 26 {
+        return "a function of LLVM's own the native backend has no code for";
+    }
+    if why == 27 {
+        return "a constant the native backend cannot work out";
+    }
+    if why == 28 {
+        return "an instruction whose operands are not of a type the native backend has code for";
+    }
+    if why == 29 {
+        return "a frame or an offset larger than the native backend reaches";
+    }
+    return lm.why_text(why);
+}
+
+pub fn fail[&o](o: &!o [int], why: int) -> [] int {
+    if o[h_fail()] == 0 {
+        o[h_fail()] = 1;
+        o[h_fail_line()] = o[h_line()];
+        o[h_fail_why()] = why;
+    }
+    return 0;
+}
+
+pub fn failed[&o](o: &o [int]) -> [] bool {
+    return o[h_fail()] != 0;
+}
+
+// ---- kinds of relocation ----
+
+// `bl` and `b` to a name.
+pub fn r_call() -> [] int {
+    return 1;
+}
+
+// `adrp` of a name's page, and the `add` of its place in the page.
+pub fn r_page() -> [] int {
+    return 2;
+}
+
+pub fn r_lo12() -> [] int {
+    return 3;
+}
+
+// The same through the table of addresses the linker makes (for a name another object defines): `adrp` and `ldr`.
+pub fn r_got_page() -> [] int {
+    return 4;
+}
+
+pub fn r_got_lo12() -> [] int {
+    return 5;
+}
+
+// ---- writing ----
+
+// One instruction, or a refusal if the encoder refused it (`word` -1) or there is no room. Answers the number of the word (from the start of the code).
+pub fn emit[&o](o: &!o [int], word: int) -> [] int {
+    let top = o[h_top()];
+    if word < 0 {
+        fail(o, why_frame());
+        return top - o[h_code()];
+    }
+    if top >= o[h_code_end()] {
+        fail(o, why_room());
+        return top - o[h_code()];
+    }
+    o[top] = word;
+    o[h_top()] = top + 1;
+    return top - o[h_code()];
+}
+
+// The number of the next word.
+pub fn here[&o](o: &o [int]) -> [] int {
+    return o[h_top()] - o[h_code()];
+}
+
+// Word `index` of the code, and the same written.
+pub fn word[&o](o: &o [int], index: int) -> [] int {
+    let at = o[h_code()] + index;
+    if index < 0 || at >= o[h_top()] {
+        return 0;
+    }
+    return o[at];
+}
+
+pub fn patch[&o](o: &!o [int], index: int, value: int) -> [] int {
+    let at = o[h_code()] + index;
+    if index >= 0 && at < o[h_top()] && value >= 0 {
+        o[at] = value;
+    } else {
+        fail(o, why_frame());
+    }
+    return 0;
+}
+
+// A relocation of the word `index`.
+pub fn relocate[&o](o: &!o [int], kind: int, index: int, slot: int, addend: int) -> [] int {
+    let top = o[h_rel_top()];
+    if top + 4 > o[h_rel_end()] {
+        return fail(o, why_room());
+    }
+    o[top] = kind;
+    o[top + 1] = index;
+    o[top + 2] = slot;
+    o[top + 3] = addend;
+    o[h_rel_top()] = top + 4;
+    return 0;
+}
+
+pub fn relocations[&o](o: &o [int]) -> [] int {
+    return (o[h_rel_top()] - o[h_rel()]) / 4;
+}
+
+// Cell `c` of relocation `k`.
+pub fn relocation[&o](o: &o [int], k: int, c: int) -> [] int {
+    if k < 0 || k >= relocations(o) || c < 0 || c > 3 {
+        return 0;
+    }
+    return o[o[h_rel()] + 4 * k + c];
+}
+
+pub fn functions[&o](o: &o [int]) -> [] int {
+    return (o[h_fn_top()] - o[h_fn()]) / 3;
+}
+
+// Cell `c` of function `k`: its record, its first word, the word after its last.
+pub fn function[&o](o: &o [int], k: int, c: int) -> [] int {
+    if k < 0 || k >= functions(o) || c < 0 || c > 2 {
+        return 0;
+    }
+    return o[o[h_fn()] + 3 * k + c];
+}
+
+// ---- the locals of the function being written ----
+
+fn loc[&o](o: &o [int], id: int, c: int) -> [] int {
+    if id < 0 || id >= o[h_loc_cap()] {
+        return 0 - 1;
+    }
+    return o[o[h_loc()] + 3 * id + c];
+}
+
+fn set_loc[&o](o: &!o [int], id: int, c: int, value: int) -> [] int {
+    if id < 0 || id >= o[h_loc_cap()] {
+        return fail(o, why_room());
+    }
+    o[o[h_loc()] + 3 * id + c] = value;
+    return 0;
+}
+
+pub fn slot[&o](o: &o [int], id: int) -> [] int {
+    return loc(o, id, 0);
+}
+
+pub fn set_slot[&o](o: &!o [int], id: int, offset: int) -> [] int {
+    return set_loc(o, id, 0, offset);
+}
+
+pub fn phi_slot[&o](o: &o [int], id: int) -> [] int {
+    return loc(o, id, 1);
+}
+
+pub fn set_phi_slot[&o](o: &!o [int], id: int, offset: int) -> [] int {
+    return set_loc(o, id, 1, offset);
+}
+
+pub fn label[&o](o: &o [int], id: int) -> [] int {
+    return loc(o, id, 2);
+}
+
+pub fn set_label[&o](o: &!o [int], id: int, index: int) -> [] int {
+    return set_loc(o, id, 2, index);
+}
+
+// `bytes` of the frame, aligned to `align`: where they are from the stack pointer.
+pub fn reserve[&o](o: &!o [int], bytes: int, align: int) -> [] int {
+    var a = align;
+    if a < 8 {
+        a = 8;
+    }
+    if bytes < 0 || bytes > 1 << 40 {
+        fail(o, why_frame());
+        return 0;
+    }
+    let at = (o[h_frame()] + a - 1) / a * a;
+    o[h_frame()] = at + (bytes + 7) / 8 * 8;
+    return at;
+}
+
+// A branch at word `index` to the block of label `id`, to be given its distance when the function is whole.
+pub fn fixup[&o](o: &!o [int], index: int, id: int) -> [] int {
+    let top = o[h_fix_top()];
+    if top + 2 > o[h_fix_end()] {
+        return fail(o, why_room());
+    }
+    o[top] = index;
+    o[top + 1] = id;
+    o[h_fix_top()] = top + 2;
+    return 0;
+}
+
+// A new function whose record is `func`, with `locals` names: nothing is known of them yet.
+pub fn begin_function[&o](o: &!o [int], func: int, locals: int) -> [] int {
+    if locals > o[h_loc_cap()] {
+        return fail(o, why_room());
+    }
+    var k = 0;
+    while k < 3 * locals {
+        o[o[h_loc()] + k] = 0 - 1;
+        k = k + 1;
+    }
+    o[h_fix_top()] = o[h_fix()];
+    o[h_out_area()] = 0;
+    o[h_frame()] = 0;
+    o[h_sret()] = 0 - 1;
+    o[h_start()] = here(o);
+    o[h_func()] = func;
+    return 0;
+}
+
+// The function being written is whole: recorded.
+pub fn end_function[&o](o: &!o [int]) -> [] int {
+    let top = o[h_fn_top()];
+    if top + 3 > o[h_fn_end()] {
+        return fail(o, why_room());
+    }
+    o[top] = o[h_func()];
+    o[top + 1] = o[h_start()];
+    o[top + 2] = here(o);
+    o[h_fn_top()] = top + 3;
+    return 0;
+}
+
+// ---- the room ----
+
+// How many cells the output of the module in `m` needs.
+pub fn room[&m](m: &m [int]) -> [] int {
+    if len(m) < lm.header() {
+        return header();
+    }
+    let records = lm.cell(m, lm.h_top()) - lm.cell(m, lm.h_rec());
+    let instructions = lm.cell(m, lm.h_ninstr());
+    let functions_n = lm.cell(m, lm.h_nfuncs());
+    return header() + 96 * instructions + 2 * records + 64 * functions_n + 4096 + 3 * (lm.cell(m, lm.h_li_cap()) + 8) + 3 * functions_n + 3;
+}
+
+// The table `o` laid out for the module in `m`, empty. A table smaller than `room(m)` is a refusal, as is every write after it.
+pub fn layout[&m, &o](m: &m [int], o: &!o [int]) -> [] int {
+    var i = 0;
+    while i < len(o) && i < header() {
+        o[i] = 0;
+        i = i + 1;
+    }
+    if len(o) < header() {
+        return 0;
+    }
+    if len(o) < room(m) || len(m) < lm.header() {
+        return fail(o, why_room());
+    }
+    let records = lm.cell(m, lm.h_top()) - lm.cell(m, lm.h_rec());
+    let instructions = lm.cell(m, lm.h_ninstr());
+    let functions_n = lm.cell(m, lm.h_nfuncs());
+    var next = header();
+    o[h_loc()] = next;
+    o[h_loc_cap()] = lm.cell(m, lm.h_li_cap()) + 8;
+    next = next + 3 * o[h_loc_cap()];
+    o[h_fn()] = next;
+    o[h_fn_top()] = next;
+    next = next + 3 * functions_n + 3;
+    o[h_fn_end()] = next;
+    o[h_fix()] = next;
+    o[h_fix_top()] = next;
+    next = next + 2 * instructions + records / 2;
+    o[h_fix_end()] = next;
+    o[h_rel()] = next;
+    o[h_rel_top()] = next;
+    next = next + 16 * instructions + records / 2 + 1024;
+    o[h_rel_end()] = next;
+    o[h_code()] = next;
+    o[h_top()] = next;
+    o[h_code_end()] = len(o);
+    o[h_sret()] = 0 - 1;
+    return 0;
+}

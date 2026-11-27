@@ -1,0 +1,209 @@
+edition 7;
+module gen_dump;
+
+// gen_dump.cho -- a module of LLVM text through the native backend's reader and code generator, written out as assembly (`docs/native-backend.md` section 12.6):
+// a word a line (`.inst 0x...`), and where a word needs an address the object writer will fill in, the instruction itself with the name (`bl name`,
+// `adrp x16, name`, `add x16, x16, :lo12:name`, and the two that go through the linker's table of addresses). It is how the code generator is read by a
+// person, how its tests compare what it writes with what it wrote, and how its code was run before there was an object writer: the output assembles.
+//
+//     cancho build tests/native/gen_dump.cho compiler/native/{llmod,llread,llbody,lltop,lllayout,llout,a64,a64sys,a64frame,a64call,a64gen,a64fn}.cho --std -o EXE
+//     EXE MODULE.ll > MODULE.s
+//
+// On the standard error: `ok: words W functions F relocations R`, or `read:` or `generate:`, the line of the module and the reason, with status 1.
+
+import std.buffer;
+import std.io as console;
+import selfhost.llmod as lm;
+import selfhost.llread as lr;
+import selfhost.lltop as lt;
+import selfhost.llout as out;
+import selfhost.a64fn as fnc;
+
+fn read_all[&h, &f, &p](heap: &!h Heap, fs: &f Fs(""), path: &p [byte]) -> [heap, fs_read(""), file_read] buffer.Buffer {
+    var b = buffer.empty(heap, 4096);
+    match open_read(fs, path) {
+        Opened::Failed(reason) => {
+            return b;
+        }
+        Opened::Ok(opened) => {
+            var file = opened;
+            var chunk = buffer.empty(heap, 1048576);
+            borrow mut file as &!handle in {
+                var going = true;
+                while going {
+                    borrow mut chunk as &!c in {
+                        match file_read(handle, buffer.room(c)) {
+                            Read::Got(n) => {
+                                buffer.filled(c, n);
+                                b = buffer.append(heap, b, buffer.bytes(c));
+                                buffer.clear(c);
+                            }
+                            Read::End => {
+                                going = false;
+                            }
+                            Read::Failed(reason) => {
+                                going = false;
+                            }
+                        }
+                    }
+                }
+            }
+            buffer.drop(heap, chunk);
+            file_close(file);
+        }
+    }
+    return b;
+}
+
+fn hex[&h](heap: &!h Heap, b: buffer.Buffer, v: int) -> [heap] buffer.Buffer {
+    var o = b;
+    var k = 7;
+    while k >= 0 {
+        o = buffer.push(heap, o, "0123456789abcdef"[v >> 4 * k & 15]);
+        k = k - 1;
+    }
+    return o;
+}
+
+fn name[&h, &t, &m](heap: &!h Heap, b: buffer.Buffer, text: &t [byte], m: &m [int], slot: int) -> [heap] buffer.Buffer {
+    let from = m[slot] + 1;
+    return buffer.append(heap, b, text[from..m[slot] + m[slot + 1]]);
+}
+
+fn addend[&h](heap: &!h Heap, b: buffer.Buffer, a: int) -> [heap] buffer.Buffer {
+    if a > 0 {
+        return buffer.push_nat(heap, buffer.append(heap, b, "+"), a);
+    }
+    if a < 0 {
+        return buffer.push_nat(heap, buffer.append(heap, b, "-"), 0 - a);
+    }
+    return b;
+}
+
+fn dump[&h, &i, &t, &m, &o](heap: &!h Heap, io: &!i Io, text: &t [byte], m: &m [int], o: &o [int]) -> [heap, io_write] int {
+    var b = buffer.append(heap, buffer.empty(heap, 1 << 20), "\t.text\n");
+    var rel = 0;
+    var f = 0;
+    while f < out.functions(o) {
+        let func = out.function(o, f, 0);
+        b = buffer.append(heap, b, "\t.globl ");
+        b = name(heap, b, text, m, m[func + 3]);
+        b = buffer.append(heap, b, "\n\t.p2align 2\n");
+        b = name(heap, b, text, m, m[func + 3]);
+        b = buffer.append(heap, b, ":\n");
+        var w = out.function(o, f, 1);
+        while w < out.function(o, f, 2) {
+            let word = out.word(o, w);
+            if rel < out.relocations(o) && out.relocation(o, rel, 1) == w {
+                let kind = out.relocation(o, rel, 0);
+                let slot = out.relocation(o, rel, 2);
+                let rd = word & 31;
+                if kind == out.r_call() {
+                    b = buffer.append(heap, b, "\tbl ");
+                    b = name(heap, b, text, m, slot);
+                } else if kind == out.r_page() {
+                    b = buffer.push_nat(heap, buffer.append(heap, b, "\tadrp x"), rd);
+                    b = buffer.append(heap, b, ", ");
+                    b = name(heap, b, text, m, slot);
+                    b = addend(heap, b, out.relocation(o, rel, 3));
+                } else if kind == out.r_lo12() {
+                    b = buffer.push_nat(heap, buffer.append(heap, b, "\tadd x"), rd);
+                    b = buffer.push_nat(heap, buffer.append(heap, b, ", x"), rd);
+                    b = buffer.append(heap, b, ", :lo12:");
+                    b = name(heap, b, text, m, slot);
+                    b = addend(heap, b, out.relocation(o, rel, 3));
+                } else if kind == out.r_got_page() {
+                    b = buffer.push_nat(heap, buffer.append(heap, b, "\tadrp x"), rd);
+                    b = buffer.append(heap, b, ", :got:");
+                    b = name(heap, b, text, m, slot);
+                } else {
+                    b = buffer.push_nat(heap, buffer.append(heap, b, "\tldr x"), rd);
+                    b = buffer.push_nat(heap, buffer.append(heap, b, ", [x"), rd);
+                    b = buffer.append(heap, b, ", :got_lo12:");
+                    b = name(heap, b, text, m, slot);
+                    b = buffer.append(heap, b, "]");
+                }
+                b = buffer.append(heap, b, "\n");
+                rel = rel + 1;
+            } else {
+                b = buffer.append(heap, b, "\t.inst 0x");
+                b = hex(heap, b, word);
+                b = buffer.append(heap, b, "\n");
+            }
+            w = w + 1;
+        }
+        f = f + 1;
+    }
+    borrow b as &bb in {
+        buffer.write(io, bb);
+    }
+    buffer.drop(heap, b);
+    return 0;
+}
+
+fn main(world: World) -> [] int {
+    let Split { io, ffi, fs, heap, args, net, clock, signals, exec } = split(world);
+    release(ffi);
+    release(net);
+    release(clock);
+    release(signals);
+    release(exec);
+    var status = 0;
+    borrow mut heap as &!h in {
+        borrow mut io as &!i in {
+            borrow args as &a in {
+                borrow fs as &f in {
+                    let text = read_all(h, f, arg(a, 1));
+                    borrow text as &tb in {
+                        let t = buffer.bytes(tb);
+                        let table = box_slice(h, lm.room(t), 0);
+                        borrow mut table as &!tw in {
+                            let m = contents(tw);
+                            status = lt.read(t, m, 0);
+                            var said = buffer.empty(h, 256);
+                            if status != 0 {
+                                said = buffer.append(h, said, "read: line ");
+                                said = buffer.push_nat(h, said, m[lm.h_fail_line()]);
+                                said = buffer.append(h, said, ": ");
+                                said = buffer.append(h, said, lm.why_text(m[lm.h_fail_why()]));
+                            } else {
+                                let code = box_slice(h, out.room(m), 0);
+                                borrow mut code as &!cw in {
+                                    let o = contents(cw);
+                                    status = fnc.generate(t, m, o);
+                                    if status != 0 {
+                                        said = buffer.append(h, said, "generate: line ");
+                                        said = buffer.push_nat(h, said, o[out.h_fail_line()]);
+                                        said = buffer.append(h, said, ": ");
+                                        said = buffer.append(h, said, out.why_text(o[out.h_fail_why()]));
+                                    } else {
+                                        dump(h, i, t, m, o);
+                                        said = buffer.append(h, said, "ok: words ");
+                                        said = buffer.push_nat(h, said, out.here(o));
+                                        said = buffer.append(h, said, " functions ");
+                                        said = buffer.push_nat(h, said, out.functions(o));
+                                        said = buffer.append(h, said, " relocations ");
+                                        said = buffer.push_nat(h, said, out.relocations(o));
+                                    }
+                                }
+                                unbox_slice(h, code);
+                            }
+                            said = buffer.append(h, said, "\n");
+                            borrow said as &sb in {
+                                console.error_all(i, buffer.bytes(sb));
+                            }
+                            buffer.drop(h, said);
+                        }
+                        unbox_slice(h, table);
+                    }
+                    buffer.drop(h, text);
+                }
+            }
+        }
+    }
+    release(fs);
+    release(args);
+    release(heap);
+    release(io);
+    return status;
+}
