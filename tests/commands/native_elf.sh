@@ -51,6 +51,21 @@ same "$(ls "$work" | grep -c 'native.o$\|link.log$')" 0 "nothing is left beside 
 same "$?" 3 "the LLVM backend with no clang"
 end
 
+# The hashes and the ciphers (docs/native-backend.md sections 13.2 and 14): for the native backend the module has no vector and none of the processor's
+# instructions, and the question "has this processor SHA-256?" is a function that answers no, so the library's own code is what runs. That the answers are
+# then the published ones is tests/accept/sha256.cho and its kin, which stage `native` of the gate builds and runs.
+begin a_program_that_hashes_asks_no_processor_for_the_native_backend
+"$cancho" build tests/accept/sha256.cho --std --emit ll --host linux-aarch64 -o "$work/sha.ll" > /dev/null 2>&1
+case "$(grep -c 'sha256h\|<4 x i32>' "$work/sha.ll")" in 0) fail "the module for the LLVM backend has none of the instructions: the next check shows nothing" ;; esac
+"$cancho" build tests/accept/sha256.cho --std --emit ll --host linux-aarch64 --backend native -o "$work/sha.native.ll" > "$work/sha.txt" 2>&1
+same "$?" 0 "the status for the native backend's module"
+same "$(grep -c 'sha256h\|<[0-9]* x ' "$work/sha.native.ll")" 0 "vectors and hash instructions in it"
+same "$(awk '/^define internal i8 @cancho_hw_sha256\(\) \{$/ { on = 1; next } on && /^}/ { exit } on { printf "%s;", $0 }' "$work/sha.native.ll")" "entry:;  ret i8 0;" "what the question answers"
+"$cancho" build tests/accept/sha256.cho --std --emit obj --host linux-aarch64 --backend native -o "$work/sha.o" > /dev/null 2>&1
+same "$?" 0 "the status for its object"
+same "$(od -An -tx1 -j16 -N4 "$work/sha.o" 2> /dev/null | tr -d ' \n')" "0100b700" "what the object is for"
+end
+
 # A program the front end refuses is refused the same way whichever backend is asked for: the backend is not reached. So tests/reject needs no native run.
 begin a_refused_program_is_refused_the_same_with_either_backend
 n=0
