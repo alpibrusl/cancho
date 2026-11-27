@@ -33,6 +33,20 @@ system probe_io(mem, used) in {
 - **Where there is a system under the program** the block is only its body. The module's functions are
   still held to their places, and what their rows say the block performs, so the same source is checked
   the same way on either kind of target.
+- **Files that are read** (§9, step 3). Seven more functions of the module, each answering a whole
+  number, a handle or a count, or minus the reason it failed (the numbers an `errno` has: 2, no such name):
+  `folder(.., path: &[byte])` for `open_dir`; `step(.., dir: int, name: &[byte], which: int)` for a name
+  under an open directory (`which` 0 a directory, `dir_enter`; 1 a file to read, `dir_open_read`; 2 and 3
+  are the two that would write); `open(.., path: &[byte], mode: int)` for `open_read` (mode 0);
+  `read(.., file: int, into: &![byte])`; `read_at(.., file: int, from: int, into: &![byte])` for
+  `file_pread`; `size(.., file: int)`; `close(.., handle: int)` for a file or a directory. What they are
+  written into is `@cancho_dir_open`, `@cancho_dir_step`, `@cancho_open`, `@cancho_fd_read`,
+  `@cancho_fd_pread`, `@cancho_fd_size` and `@cancho_fd_close`.
+- **What stays the language's and is not the system's to get wrong.** Before the module is asked, a path
+  is held to the prefix of the `Fs` it was opened through (`cancho_path_covers`, the same text as on a
+  hosted target, now in `bare.ll`): one that is outside it, or has `..` in it, is a trap, as it is on a
+  system. A name under a directory is held to being one component (`cancho_sys_component` in `bare.ll`,
+  what `dirrt_component` of `dirs.c` checks) and is refused with 22 without the module being asked.
 - **Effects are not discharged** (§10, step 1): the function that contains the block declares what its
   body performs, `io_write` and `args` among it, and so do its callers.
 
@@ -44,6 +58,11 @@ Not yet, and refused or stated rather than wrong:
   through the body) lends again, and the inner block's end switches the system off for the outer one: what
   the outer one then asks traps. Not checked.
 - **`read_bytes`** is not answered: only `getchar`.
+- **Nothing that writes a file or changes a directory, no listing of a directory, no `dir_stat`**: those
+  builtins are still refused on the bare target (§9, step 4, and the listing for `list`).
+- **A trap in a hosted function is a trap of the whole program.** On a system a program that traps ends
+  and the system goes on; here the program *is* the kernel. A path with `..` in it is the case a person
+  can type: a function that takes a path from outside must look before it opens, as cancho-tools do.
 
 Measured:
 
@@ -54,6 +73,17 @@ Measured:
   block and not after it. The same two files for the machine the gate runs on print the command line's
   arguments and answer how many. With the block taken out, the bare build is refused where the builtin
   is written.
+- The same test, for files: `tests/probes/bare_system_files.cho` opens a directory, a file under it by
+  name and reads it to its end, with a system of one directory and one file kept in the module. It builds
+  for `aarch64-none-elf` into a module that calls nothing it does not define and defines the seven
+  functions; the two checks are called (twice and once); with no `step` in the module the function is
+  there and traps; with a `size` whose parameter is a run of bytes the build is refused.
+- **Files, on a machine.** cancho-os with a command `count <path>` whose function takes an `Fs`, opens
+  the file (`open_dir` and `dir_open_read` for a name, `open_read` for a path) and adds its bytes up, and
+  a module that reads the kernel's FAT volume. In `qemu-system-aarch64` as `virt`, on a FAT32 image another
+  system made: a file of 300,000 bytes is counted as 300,000 bytes adding up to 38,241,496, which is what
+  Python counts in the same file; the same through two directories and a long name; a file of no bytes, one
+  of exactly a cluster's; a name that is not there. Not yet tried on a real board.
 - **On a machine.** cancho-os, built with this compiler, with a command whose function takes an `Io` and
   an `Args` and nothing of the kernel, and a module that answers with the shell's output and the words of
   the line. In `qemu-system-aarch64` as a Raspberry Pi 3 and as `virt`: `tell one two three` prints the
