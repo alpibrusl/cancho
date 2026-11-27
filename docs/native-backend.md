@@ -1,7 +1,6 @@
 # A backend of cancho's own
 
-> **Status: the contract, the flag and the reader are built; no code generator is** (epic #840; N0 in #858, N1 in #860, which adds
-> section 10). What exists: `scripts/ll-census.cho` and `tests/native/subset.txt` (what the compiler may write, by name), the reader
+> **Status: the contract, the flag and the reader are built; no code generator is** (epic #840; N0 in #858, N1 in #860, N2 in #863. What exists: `scripts/ll-census.cho` and `tests/native/subset.txt` (what the compiler may write, by name), the reader
 > and its printer (`compiler/native/`, section 10), `--backend roundtrip` (every program a test of the reader) and `--backend native`,
 > which reads the module with vectors refused and then refuses the program by `unsupported-by-backend`, since nothing can yet write
 > code for it. The AArch64 encoder (section 11, N2) is written and held to clang's assembler, and nothing calls it yet. Code generator,
