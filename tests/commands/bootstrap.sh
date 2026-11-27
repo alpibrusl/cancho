@@ -71,6 +71,7 @@ end
 rm -f "$work/b1" "$work/b2" "$work/b3" "$work/b2.ll" "$work/b3.ll" "$work/made"
 
 # 3. The files of the command line in cancho, `compiler/cancho.files`: `cli.cho` and everything it imports, by the `module` line of each file (a file without one is named by its stem).
+# The files of the native backend are in `compiler/native/` and are named in the list with that directory (docs/native-backend.md section 10).
 # `scripts/build-standalone.sh` reads the list, so it must be the closure: a module added to the command line and not to the list would be built by nobody.
 begin the_file_list_of_the_standalone_build_is_the_import_closure_of_cli
 (cd "$own" && awk '
@@ -90,7 +91,7 @@ begin the_file_list_of_the_standalone_build_is_the_import_closure_of_cli
             for (i = 1; i <= k; i++) { count++; todo[count] = parts[i] }
         }
         for (f in seen) print f
-    }' *.cho | LC_ALL=C sort) > "$work/closure.txt"
+    }' *.cho native/*.cho | LC_ALL=C sort) > "$work/closure.txt"
 if [ -n "${BOOTSTRAP_REGENERATE:-}" ]; then cp "$work/closure.txt" "$own/cancho.files"; fi
 cmp -s "$work/closure.txt" "$own/cancho.files" || fail "compiler/cancho.files is not the import closure of cli.cho: run this script with BOOTSTRAP_REGENERATE=1 and commit the result ($(diff "$work/closure.txt" "$own/cancho.files" | head -4 | tr '\n' '|'))"
 [ "$(wc -l < "$work/closure.txt" | tr -d ' ')" -gt 70 ] || fail "only $(wc -l < "$work/closure.txt" | tr -d ' ') files in the closure"
