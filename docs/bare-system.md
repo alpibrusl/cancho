@@ -1,7 +1,8 @@
 # A system lent for a block: programs written for a system, built into one that has none
 
-> **Status: the first step is built, for the streams and the arguments** ("What is built", below). Files and
-> directories, the discharge of effects (§6) and the block's own capabilities (§4 `as`, §7 (b)) are not.
+> **Status: the mechanism is built, for the streams, the arguments, files and directories** ("What is built",
+> below). The discharge of effects (§6) is designed in §12 and not built; the block's own capabilities (§4 `as`,
+> §7 (b)) are not.
 > Decided in #857 (option A, 2026-11-26). Sections 1 to 9 are the design as it was written before any code;
 > where what was built differs, "What is built" says so.
 
@@ -388,3 +389,177 @@ Step 1 is enough for cancho-os to run the tools. Step 2 is what makes the report
 - Whether the names of the module's functions are fixed by this document or by a module of the library
   (`std.system`) that a program's module must mirror, which would let the checker's message point at one
   place.
+
+## 12. The discharge of §6, designed against the checker
+
+Written before the code, after reading `effects.cho`, `authority.cho`, `narrowing.cho` and the block in
+`body.cho` at `f1fa983b`. It is step 2 of §10 as far as effects go. The capabilities of the block's own
+(§4 `as (...)`, §7 (b)) are a separate change and are not part of it: the discharge needs to know what the
+body performed and which functions the module has, and neither depends on where the body's `Io` came from.
+
+### 12.1 Where, and on which target
+
+The discharge is made at the block, in the function that contains it, and **only where there is no system
+under the program** (`--target aarch64-none-elf`). On a hosted target the block is only its body (§"What is
+built"): what the body writes goes to the real console, the module is checked and not used, and so nothing
+is discharged. The row of the function that contains the block therefore depends on the target:
+
+```
+fn lend[&i, &g, &m, &u](io: &!i Io, args: &g Args, mem: &!m [byte], used: &!u [int]) -> [] int {
+    var n = 0;
+    system probe_io(mem, used) in {
+        n = tell(io, args);        // tell: [io_write, args]
+    }
+    return n;
+}
+```
+
+is exact for no system, and for a hosted target it is `effect-not-declared` (there the row is
+`[io_write, args]`, and with that row it is `effect-declared-not-performed` for no system). A function that
+owns the capabilities, as a `main` that owns the `World` does, declares neither and is the same source on
+both, which is how `tests/probes/bare_system.cho` stays one file for two targets. A kernel is for one
+target, and is checked for it: `cancho check --target aarch64-none-elf`, and `cancho authority --target
+aarch64-none-elf`, which this change makes `authority` accept.
+
+A command that checks a program without building it for a target (the ones that list identities) holds it
+as a hosted one. That is stated here and not changed.
+
+### 12.2 Which labels
+
+A hosted label is discharged when the module has **every** function that answers a builtin performing it
+and served by a lent system (`bare.served`). A label one of whose functions is missing is not discharged:
+the body still performs it as far as the row goes, and reaching the builtin traps, as today.
+
+| label | builtins served | the module's functions, all of them |
+|---|---|---|
+| `io_write` | `putchar`, `write_bytes`, `flush_out` | `out`, `flush` |
+| `err_write` | `write_err` | `err` |
+| `io_read` | `getchar` | `key` |
+| `args` | `arg_count`, `arg` | `arguments`, `argument` |
+| `fs_read("...")`, whatever its argument | `open_read`, `open_dir` | `open`, `folder` |
+| `file_read` | `file_read`, `file_pread`, `file_size` | `read`, `read_at`, `size` |
+| `dir_read` | `dir_enter`, `dir_open_read`, `dir_list`, `dir_next`, `dir_stat` | `step`, `list`, `next`, `stat` |
+| `file_write` | `file_write`, `file_sync`, `file_lock` | `write`, `sync`, `lock` |
+| `dir_write` | `dir_open_new`, `dir_open_append`, `dir_rename`, `dir_rename_new`, `dir_remove`, `dir_sync` | `step`, `rename`, `remove`, `sync` |
+
+Nothing else is ever discharged: not `heap`, not `fs_write("...")` (no builtin that performs it is served),
+not the network, the clock, a process, `ffi`, `mmio`, `cpu`. A builtin that performs a discharged label and
+is not served (`read_bytes` for `io_read`, `file_pwrite` for `file_write`, `dir_mkdir` for `dir_write`) is
+refused by the build if the program reaches it (`unsupported-on-target`), as today, so no image has one.
+
+`fs_read` is discharged whatever its argument is. The argument is the prefix the path is held to, and that
+is checked before the module is asked (`cancho_path_covers`, §"What is built"); the module's `open` and
+`folder` answer for every path that passes.
+
+### 12.3 How: the body is counted apart
+
+What a function performs is one set (`st[54]`): a bit for each plain label, and flags that say "a label
+with an argument was performed" (bits 61 and 62), "one was not followed" (57, 58), "a function value was
+called" (56). The labels with an argument themselves are rows kept beside it (`instances.note_label`: the
+function, the label, the literal). §10 said why clearing is wrong: the flag `fs_read("")` raised is the
+flag a `mmio("...")` raised.
+
+So nothing is cleared. At the block:
+
+1. The module's functions are held to their places as today, and each one's row is performed by the
+   containing function (`effects.perform_call`). This is before the body and outside the discharge: an
+   `mmio("...")` of the module's `out`, or an `io_write` the module's own row declares, is in the
+   containing function's row.
+2. The set so far is put aside, and the body starts from the empty set. How many rows of labels with an
+   argument there are is noted.
+3. The body is walked as any block is. While it is, every label with an argument that is noted says
+   whether it is one the block answers (`fs_read`, when the module has `open` and `folder`) or not; one
+   that is not raises a bit of the body's set kept for this (55), and so does anything noted that has no
+   row (a foreign function's symbol, a set of signals that was not narrowed).
+4. After the body, the containing function's set becomes the set put aside and, of the body's:
+   - every plain label that is not discharged;
+   - the flags for a function value (56) and for a label that was not followed (57, 58), as they are;
+   - the flags for a label with an argument (61, 62) if and only if the body performed one the block does
+     not answer (bit 55), or one that was not followed, or called a function value. If none of those, every
+     label with an argument the body performed was an `fs_read` the module answers, and the flags are not
+     carried over.
+   - The rows the body added for `fs_read` are taken out, when it is discharged. A row that was there
+     before the block (the function reads a file outside the block too) stays. Every other row the body
+     added stays: an `mmio("...")` or a `cpu("...")` the body performs itself, or a callee's row carries,
+     is a row of the containing function as before, and is held to its row exactly (`mmio_inexact`).
+
+One more place knows about paths: a call of a function whose row has `fs_read("p")`, from a function that
+owns no `Fs` and declares no label with an argument, is refused (`effects.outside_owned`). Inside a block
+that discharges `fs_read` that refusal is not made for `fs_read`; it still is for `fs_write` and `exec`.
+
+The block's discharged labels are kept in one slot of the state, with a bit that says the body is being
+walked. On a hosted target, and while nothing is built, the slot is never set and none of this runs.
+
+### 12.4 Why the row is still true
+
+A row says: running this function performs no more than these labels. For a hosted label, to perform it
+is to reach the runtime's function for a builtin that carries it. In a module for no system that has a
+`system` block, each of those functions is defined once, by §5, as: trap if nothing is lent, else call the
+module's function. So while the body runs, everything that happens because of a label in the table of
+12.2 is either a trap, which performs nothing, or a call of one of the module's functions named in that
+row of the table; and the rows of those functions were performed by the containing function in step 1,
+outside the discharge. A label is discharged only if all of its functions are in the module, so there is
+no builtin under a discharged label whose answer is something the containing function's row does not
+already hold. Everything the body does that is not in the table reaches the containing function's set
+unchanged, because the body's set is added to it whole except for exactly those labels; and the flags that
+make the checker careful are dropped only when the body's set shows that nothing but discharged `fs_read`
+raised them. Where the checker cannot tell (a function value, a label it did not follow), the flags stay
+and the function is judged as it is today.
+
+It is the one place a row is not the union of what is called, and it is the place §6 named: within the
+block those effects are implemented by functions whose own effects were just added.
+
+What is not argued, because it is not true: that the row is right on a hosted target. There the runtime's
+functions are the C library's, and the block discharges nothing.
+
+### 12.5 What `cancho authority` prints
+
+`cancho authority` is the union of what every function the program reaches performed. A tool's function is
+reached, and it performed `io_write`: without more, the report of a kernel would list it although the
+kernel's own rows no longer do.
+
+For `--target aarch64-none-elf`, in a program that has a `system` block, the labels that block discharges
+are left out of the report, for every function. The reason is the one of 12.4, and it is about the image
+and not about the block: in that image there is one definition of each runtime function, and it is the
+module's function or a trap, wherever the builtin is written. A function outside the block that calls
+`putchar` declares `io_write` in its row (rows are checked one function at a time, without knowing who
+calls); in the image it traps or is answered by `out`. What the module's functions perform is in the
+report, since they are reached.
+
+So for cancho-os the report is addresses, registers and `heap`, and "never touches the console, the
+filesystem, the command line" again. `cancho authority` of a tool on its own, for its own target, is
+unchanged: `fs_read("")` and the rest. `cancho authority` of the kernel without `--target` is that of a
+hosted program, and lists the hosted labels (and the kernel's rows, written for no system, are refused
+there first).
+
+`authority-reached` (each function with its own labels) is unchanged on every target: `tell` performs
+`io_write`, and says so.
+
+### 12.6 Not in this change, and stated
+
+- **A row that still lists a discharged label is refused only as far as rows are held exact today.** A
+  function that performs no label with an argument is held both ways: `effect-declared-not-performed`. A
+  function that does (a kernel's, with its `mmio`) is, while code is written, not held to "the row says
+  more" for plain labels (`effects.check`, `both`); that is how it was, and a stale `io_write` there is
+  accepted. It then travels to the callers' sets and to the report only if the report is not the one of
+  12.5, so the report is still sharp; the rows are the writer's to clean.
+- **§7 (a) stays**: a hosted builtin reached outside the block is a trap, found when it runs.
+- **One block in a program**, and none inside another, as before.
+
+### 12.7 Tests that can fail
+
+In `tests/commands/freestanding.sh`, each a build or a check and the rule it answers:
+
+- a body that writes to an `Mmio` of its own inside the block: the containing function's row has that
+  `mmio("...")`; without it, `effect-not-declared`; with one more, `effect-declared-not-performed`;
+- a module with no `key`: the body's `io_read` is not discharged, and a row without it is
+  `effect-not-declared`;
+- a module with no `open`: `fs_read("")` is not discharged;
+- the same source for the machine the gate runs on: `effect-not-declared` with the row for no system, and
+  built and run with the hosted row;
+- a containing function that declares a discharged label: `effect-declared-not-performed`;
+- `cancho authority --target aarch64-none-elf` of the probes: no discharged label, the module's `mmio` and
+  the body's own, and the label that was not discharged.
+
+And by hand, each shown to fail a case above: the discharge made to drop the body's whole set; made to
+ignore which functions the module has; made on a hosted target too.
