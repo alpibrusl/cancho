@@ -810,7 +810,7 @@ linked by `aarch64-linux-gnu-gcc`. The figures of a real machine are the CI job'
 | The text each compiler writes for its own sources (29 MB), clang-built on x86-64, clang-built for AArch64, natively built for AArch64 | the same file, three times |
 | The time to write that text | clang-built (`-O2`): 41 s. Natively built: 7 min 19 s. **10.6 times slower**, both emulated, on a machine doing other work |
 | The size of the compiler | clang-built 4,262,248 bytes; natively built 10,066,960: 2.4 times |
-| TEXTS |
+| The text for each program of `tests/accept` and `examples`, written by the clang-built compiler on x86-64 and by the natively built one under qemu (`--emit ll --host linux-aarch64`) | **150 the same file, none different**; two more are refused by both alike (they are not programs alone) |
 
 The slowdown is the price of section 12's "every value in memory", with no instruction chosen for speed and none removed;
 N9 to N11 are where it is paid back, and this number is what they are measured against.
