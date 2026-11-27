@@ -50,6 +50,17 @@ system probe_io(mem, used) in {
   in seconds since 1970): the first that answers below zero is the failure. `dir_list_close` is `close`
   again. They are written into `@cancho_dir_list`, `@cancho_dir_next`, `@cancho_dir_list_close` and
   `@cancho_dir_stat`. A name given to `dir_stat` is held to being one component first, as `step`'s is.
+- **Files that are written** (§9, step 4). Five more functions, and two more answers of `step`:
+  `step(.., dir, name, which)` with `which` 2 for `dir_open_new` (a file that must not be there yet) and 3 for
+  `dir_open_append` (a file to add to, made if it is not there); `write(.., file: int, bytes: &[byte])` for
+  `file_write`, answering how many bytes it took, which may be fewer than it was given; `sync(.., handle: int)`
+  for `file_sync` and, with a directory's handle, `dir_sync`; `lock(.., file: int)` for `file_lock`;
+  `rename(.., dir: int, from: &[byte], to: &[byte], fresh: int)` for `dir_rename` (`fresh` 0) and
+  `dir_rename_new` (`fresh` 1: a name that is taken is refused, 17); `remove(.., dir: int, name: &[byte])` for
+  `dir_remove`. They are written into `@cancho_fd_write`, `@cancho_fd_sync`, `@cancho_fd_lock`,
+  `@cancho_dir_rename`, `@cancho_dir_remove` and `@cancho_dir_sync`. Both names of a rename, and a name that is
+  removed, are held to being one component first. A system with none of these is one that only reads: a
+  program that reaches a writing builtin through it traps.
 - **What stays the language's and is not the system's to get wrong.** Before the module is asked, a path
   is held to the prefix of the `Fs` it was opened through (`cancho_path_covers`, the same text as on a
   hosted target, now in `bare.ll`): one that is outside it, or has `..` in it, is a trap, as it is on a
@@ -66,8 +77,10 @@ Not yet, and refused or stated rather than wrong:
   through the body) lends again, and the inner block's end switches the system off for the outer one: what
   the outer one then asks traps. Not checked.
 - **`read_bytes`** is not answered: only `getchar`.
-- **Nothing that writes a file or changes a directory, no `dir_mode`**: those builtins are still refused
-  on the bare target (§9, step 4).
+- **No `file_pwrite`, `file_truncate`, `dir_mkdir`, `dir_rmdir`, `dir_open_new_mode`, `dir_mode`, no links,
+  and none of the path-taking `open_write`, `open_append`, `open_new`, `open_rw`, `fs_rename`, `fs_remove`**:
+  those builtins are still refused on the bare target. What is served is what `write`, `replace` and `move`
+  of cancho-tools reach (§2).
 - **A length or a time of 2^63 or more** cannot be told from a failure: `stat` answers one whole number.
 - **A trap in a hosted function is a trap of the whole program.** On a system a program that traps ends
   and the system goes on; here the program *is* the kernel. A path with `..` in it is the case a person
@@ -91,6 +104,16 @@ Measured:
   name, of one that is not there and of one that is not a component. It builds for `aarch64-none-elf` into
   a module that calls nothing it does not define and defines the four functions; `stat` is called three
   times, after the check of the name.
+- The same test, for what writes: `tests/probes/bare_system_write.cho` holds a lock, makes a file that must not be
+  there, writes eleven bytes to a system that takes four at a time, has it kept, and renames it over a name, first
+  refusing a name that is taken. It builds for `aarch64-none-elf` into a module that calls nothing it does not
+  define and defines the six functions; both names of a rename are checked; with a system that has nothing that
+  writes, `@cancho_fd_write` is there and traps.
+- **A file written, on a machine.** cancho-os with cancho-tools' `replace` built in as it is written, and a module
+  whose `rename` is the kernel's one write of the disk. In `qemu-system-aarch64` as `virt` and as a Raspberry Pi 3
+  with an SD card, on FAT16 and FAT32 volumes macOS made: nine commands answer the same bytes as the same tool
+  built for the Mac, the four files it changed are the same bytes as the Mac's, and macOS's `fsck_msdos` finds
+  nothing wrong with the volumes. Not yet tried on a real board.
 - **A directory, on a machine.** cancho-os with a command `names [path]` written against `dir_list`,
   `dir_next` and `dir_stat`. In `qemu-system-aarch64` as `virt` and as a Raspberry Pi 3 with an SD card, on
   FAT16 and FAT32 volumes macOS made with four files of known lengths and times and a directory: each line
@@ -312,6 +335,7 @@ Proposed: (a) first, (b) before the feature is called done. The owner may prefer
    cancho-os and run over SSH against its FAT card, their answers compared with the same tools run on
    another machine over the same files.
 4. **Files and directories, written.** `write`, `pwrite`, `sync`, `truncate`, `lock`, rename, remove.
+   (Built: `write`, `sync`, `lock`, rename, remove and the two of `step`; `replace` runs in cancho-os.)
    *Shows:* `write`, `replace`, `move` in cancho-os, each change a version and a line in its record;
    cancho-tools' own conformance suite, as far as it can be pointed at a remote board.
 5. **§7 (b)**, if (a) was built first.

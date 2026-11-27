@@ -40,9 +40,14 @@ pub fn needs_system(b: int) -> [] bool {
 
 // Is builtin `b` one a lent system answers? `putchar`, `write_bytes`, `write_err`, `flush_out`, `getchar`; `arg_count`, `arg`;
 // and what reads files: `open_read`, `file_read`, `file_close`, `file_pread`, `file_size`, `open_dir`, `dir_enter`,
-// `dir_open_read`, `dir_close`; and what a directory holds: `dir_list`, `dir_next`, `dir_list_close`, `dir_stat`.
+// `dir_open_read`, `dir_close`; and what a directory holds: `dir_list`, `dir_next`, `dir_list_close`, `dir_stat`; and what
+// writes: `file_write`, `file_sync`, `file_lock`, `dir_open_new`, `dir_open_append`, `dir_rename`, `dir_rename_new`,
+// `dir_remove`, `dir_sync`.
 pub fn served(b: int) -> [] bool {
     if b >= 54 && b <= 56 || b == 63 || b == 66 || b >= 141 && b <= 144 || b >= 156 && b <= 159 {
+        return true;
+    }
+    if b == 61 || b == 64 || b == 69 || b >= 145 && b <= 149 || b == 155 {
         return true;
     }
     return b >= 0 && b <= 4 || b == 73 || b == 74;
