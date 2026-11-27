@@ -20,7 +20,7 @@ edited — `ROADMAP.md` says which.
   line of the first page.
 - **To run cancho with no Linux under it:** [`freestanding.md`](freestanding.md) is the target, [`mmio.md`](mmio.md) and
   [`cpu.md`](cpu.md) are how a program reaches hardware. [cancho-os](https://github.com/alpibrusl/cancho-os) is the kernel that asked
-  for them, and its README has the steps for a Pi 4's SD card. It boots in QEMU; no real board has run it yet.
+  for them, and its README has the steps for a Pi 4's SD card. It boots in QEMU on every change, and one real Pi 4 has run it.
 
 ---
 
