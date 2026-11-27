@@ -38,6 +38,21 @@ pub fn needs_system(b: int) -> [] bool {
     return true;
 }
 
+// Is builtin `b` one a lent system answers? `putchar`, `write_bytes`, `write_err`, `flush_out`, `getchar`; `arg_count`, `arg`;
+// and what reads files: `open_read`, `file_read`, `file_close`, `file_pread`, `file_size`, `open_dir`, `dir_enter`,
+// `dir_open_read`, `dir_close`; and what a directory holds: `dir_list`, `dir_next`, `dir_list_close`, `dir_stat`; and what
+// writes: `file_write`, `file_sync`, `file_lock`, `dir_open_new`, `dir_open_append`, `dir_rename`, `dir_rename_new`,
+// `dir_remove`, `dir_sync`.
+pub fn served(b: int) -> [] bool {
+    if b >= 54 && b <= 56 || b == 63 || b == 66 || b >= 141 && b <= 144 || b >= 156 && b <= 159 {
+        return true;
+    }
+    if b == 61 || b == 64 || b == 69 || b >= 145 && b <= 149 || b == 155 {
+        return true;
+    }
+    return b >= 0 && b <= 4 || b == 73 || b == 74;
+}
+
 // The call at `from..to` is of builtin `b`: on the bare target (3), and if it needs a system, the line that says so is written.
 pub fn note[&s](st: &!s [int], b: int, from: int, to: int) -> [] int {
     if st[61] != 3 || !needs_system(b) {
@@ -47,6 +62,8 @@ pub fn note[&s](st: &!s [int], b: int, from: int, to: int) -> [] int {
     emit.int(st, from);
     emit.str(st, " ");
     emit.int(st, to);
+    emit.str(st, " ");
+    emit.int(st, b);
     emit.str(st, "\n");
     return 0;
 }
@@ -64,6 +81,13 @@ fn number[&r](ir: &r [byte], at: int) -> [] int {
 // The module `ir`, after the functions nothing calls were left out: the first such line still in it is refused, and 1; 0 if
 // there is none.
 pub fn refuse[&s, &r](st: &!s [int], ir: &r [byte]) -> [] int {
+    // A module with a `system` block (`docs/bare-system.md`) has functions of its own for the streams and the arguments.
+    var lent = false;
+    var s = 0;
+    while s + 17 < len(ir) && !lent {
+        lent = lc.at(ir, s) == '@' && lc.spells(ir, s, s + 17, "@cancho_sys_on = ");
+        s = s + 1;
+    }
     var at = 0;
     while at + 15 < len(ir) {
         if lc.at(ir, at) == ';' && lc.spells(ir, at, at + 15, "; needs-system ") {
@@ -72,8 +96,15 @@ pub fn refuse[&s, &r](st: &!s [int], ir: &r [byte]) -> [] int {
             while lc.is_digit(lc.at(ir, p)) {
                 p = p + 1;
             }
-            ast.fail(st, rules.r_unsupported_on_target(), from, number(ir, p + 1));
-            return 1;
+            var q = p + 1;
+            while lc.is_digit(lc.at(ir, q)) {
+                q = q + 1;
+            }
+            let b = number(ir, q + 1);
+            if !(lent && served(b)) {
+                ast.fail(st, rules.r_unsupported_on_target(), from, number(ir, p + 1));
+                return 1;
+            }
         }
         while at < len(ir) && lc.at(ir, at) != 10 {
             at = at + 1;

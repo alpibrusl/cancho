@@ -345,7 +345,10 @@ fn build_module[&s, &x](st: &!s [int], text: &x [byte]) -> [] int {
         emit.str(st, "udf #0xc11f");
     }
     emit.str(st, "\", \"\"()\n  unreachable\n}\n");
-    emit.str(st, "declare i32 @putchar(i32)\n");
+    if st[61] != 3 {
+        // (Where there is no system these are the module's own, if it has a `system` block: `docs/bare-system.md`.)
+        emit.str(st, "declare i32 @putchar(i32)\n");
+    }
     if st[61] != 3 {
         // (Where there is no system the three are defined, by `runtime.bare_text`: the heap of that target is its own.)
         emit.str(st, "declare ptr @malloc(i64)\ndeclare void @free(ptr)\n");
@@ -357,7 +360,9 @@ fn build_module[&s, &x](st: &!s [int], text: &x [byte]) -> [] int {
     }
     emit.str(st, "declare i32 @pthread_create(ptr, ptr, ptr, ptr)\ndeclare i32 @pthread_join(ptr, ptr)\n");
     emit.str(st, "declare double @llvm.sqrt.f64(double)\ndeclare float @llvm.sqrt.f32(float)\n");
-    emit.str(st, "declare i32 @getchar()\ndeclare i64 @write(i32, ptr, i64)\n\n");
+    if st[61] != 3 {
+        emit.str(st, "declare i32 @getchar()\ndeclare i64 @write(i32, ptr, i64)\n\n");
+    }
     if st[61] == 3 {
         // No system under the program: none of the support that calls one (files, processes, `errno`) is written, so the object names no function of a
         // libc (`docs/freestanding.md` section 4). What is left of it is where the C `main` puts its two arguments.

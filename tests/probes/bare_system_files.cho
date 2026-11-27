@@ -1,0 +1,92 @@
+edition 6;
+
+// bare_system_files.cho -- a program for no system that reads a file (`docs/bare-system.md`, step 3): `sum` is written
+// as a tool is, with an `Fs`: it opens a directory, opens a file under it by name, reads it to its end and closes
+// both. What answers is the module `probe_fs`. tests/commands/freestanding.sh builds it for `aarch64-none-elf`.
+import probe_fs;
+
+// The bytes of `note` under `/`, added up; -1 if it is not there. `hello\n` is 542.
+fn sum[&f](fs: &f Fs("")) -> [fs_read(""), dir_read, file_read] int {
+    var total = 0 - 1;
+    match open_dir(fs, "/") {
+        DirOpened::Ok(d) => {
+            var root = d;
+            borrow root as &r in {
+                // a name that is not one component is refused before the system is asked
+                match dir_open_read(r, "../note") {
+                    Opened::Ok(f) => {
+                        file_close(f);
+                        total = 0 - 3;
+                    }
+                    Opened::Failed(e) => {
+                    }
+                }
+                if total == 0 - 1 {
+                    match dir_open_read(r, "note") {
+                        Opened::Ok(f) => {
+                            var file = f;
+                            total = 0;
+                            region q {
+                                let room = alloc_slice[q](4, byte_of(0));
+                                var more = true;
+                                while more {
+                                    borrow mut file as &!h in {
+                                        match file_read(h, room) {
+                                            Read::Got(n) => {
+                                                var i = 0;
+                                                while i < n {
+                                                    total = total + int_of(room[i]);
+                                                    i = i + 1;
+                                                }
+                                            }
+                                            Read::End => {
+                                                more = false;
+                                            }
+                                            Read::Failed(e) => {
+                                                more = false;
+                                                total = 0 - 2;
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                            file_close(file);
+                        }
+                        Opened::Failed(e) => {
+                        }
+                    }
+                }
+            }
+            dir_close(root);
+        }
+        DirOpened::Failed(e) => {
+        }
+    }
+    return total;
+}
+
+fn main(world: World) -> [] int {
+    let Split { io, ffi, fs, heap, args, net, clock, signals } = split(world);
+    release(signals);
+    release(ffi);
+    release(io);
+    release(heap);
+    release(net);
+    release(clock);
+    release(args);
+    var status = 0;
+    region r {
+        let at = alloc_slice[r](2, 0);
+        borrow fs as &f in {
+            system probe_fs(at) in {
+                status = sum(f);
+            }
+        }
+        // every handle that was opened was closed
+        if at[1] != 0 {
+            status = 0 - 4;
+        }
+    }
+    release(fs);
+    return status;
+}

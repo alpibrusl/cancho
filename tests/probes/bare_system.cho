@@ -1,0 +1,47 @@
+edition 5;
+
+// bare_system.cho -- a program for no system that lends one (`docs/bare-system.md`): `tell` is written as any program
+// for a system is, with an `Io` and an `Args`, and what it writes and reads is answered by the module `probe_io`, which
+// is lent a slice to write into. tests/commands/freestanding.sh builds it for `aarch64-none-elf` and reads what the module
+// calls and defines. For the machine this runs on the block is only its body, and `tell` writes to the standard output.
+import probe_io;
+
+// The arguments, each on a line, and how many there were.
+fn tell[&i, &g](io: &!i Io, args: &g Args) -> [io_write, args] int {
+    var n = 0;
+    while n < arg_count(args) {
+        write_bytes(io, arg(args, n));
+        putchar(io, 10);
+        n = n + 1;
+    }
+    flush_out(io);
+    return n;
+}
+
+fn main(world: World) -> [] int {
+    let Split { io, ffi, fs, heap, args, net, clock } = split(world);
+    release(ffi);
+    release(fs);
+    release(heap);
+    release(net);
+    release(clock);
+    var status = 0;
+    region r {
+        let mem = alloc_slice[r](64, byte_of(0));
+        let used = alloc_slice[r](2, 0);
+        borrow mut io as &!i in {
+            borrow args as &g in {
+                system probe_io(mem, used) in {
+                    status = tell(i, g);
+                }
+            }
+        }
+        // on the bare target: two arguments, twelve bytes written ("probe\nfirst\n"), one flush
+        if used[0] == 12 && used[1] == 1 && int_of(mem[6]) == 'f' {
+            status = status + 100;
+        }
+    }
+    release(io);
+    release(args);
+    return status;
+}

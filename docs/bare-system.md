@@ -1,8 +1,136 @@
 # A system lent for a block: programs written for a system, built into one that has none
 
-> **Status: design, not built.** Decided in #857 (option A, 2026-11-26). Nothing here is implemented; the
-> measurements are of what exists today, and every "would" is a claim to check when it is built. This
-> document is the first step the repository asks for: design before code.
+> **Status: the first step is built, for the streams and the arguments** ("What is built", below). Files and
+> directories, the discharge of effects (§6) and the block's own capabilities (§4 `as`, §7 (b)) are not.
+> Decided in #857 (option A, 2026-11-26). Sections 1 to 9 are the design as it was written before any code;
+> where what was built differs, "What is built" says so.
+
+## What is built
+
+```
+system probe_io(mem, used) in {
+    status = tell(io, args);
+}
+```
+
+- **The statement.** `system`, the name of a module, what is lent in brackets, `in`, a block. `system` is no
+  reserved word: it is taken only where two names and a `(` begin a statement. There is no `as (...)` yet: the
+  `Io` and the `Args` are the ones `split(world)` gave the program.
+- **What is lent** is names, each locked for the block as a unique borrow locks it, eight at most.
+- **The module's functions**, by these names, each with what is lent as its first parameters:
+  `out(.., p: &[byte]) -> int` and `err` the same (bytes written); `key(..) -> int` (a byte, or -1 at the
+  end of the input); `flush(..) -> int` (0, or why not); `arguments(..) -> int`; `argument(.., n: int,
+  into: &![byte]) -> int` (its length; 255 bytes at most, and the first sixty-four arguments). They cannot
+  be called `arg` and `arg_count`: those are the prelude's. One that the module does not have is a trap
+  if it is reached.
+- **What they answer**: `write_bytes` and `putchar` (`out`), `write_err` (`err`), `getchar` (`key`),
+  `flush_out` (`flush`), `arg_count` and `arg`. On the bare target those builtins are no longer refused in
+  a program that has a `system` block; in one that has none they are refused as before.
+- **What it compiles to** is §5: the functions the builtins call (`@cancho_write_bytes`, `@putchar`,
+  `@write`, `@getchar`, `@cancho_flush_out`, `@cancho_arg`) are written into the module, each loading
+  what was lent from a global and calling the module's function; a call with nothing lent traps. How many
+  arguments there are is asked once, at the block. `bare.ll` gains `strlen`, which `arg` measures with.
+- **Where there is a system under the program** the block is only its body. The module's functions are
+  still held to their places, and what their rows say the block performs, so the same source is checked
+  the same way on either kind of target.
+- **Files that are read** (§9, step 3). Seven more functions of the module, each answering a whole
+  number, a handle or a count, or minus the reason it failed (the numbers an `errno` has: 2, no such name):
+  `folder(.., path: &[byte])` for `open_dir`; `step(.., dir: int, name: &[byte], which: int)` for a name
+  under an open directory (`which` 0 a directory, `dir_enter`; 1 a file to read, `dir_open_read`; 2 and 3
+  are the two that would write); `open(.., path: &[byte], mode: int)` for `open_read` (mode 0);
+  `read(.., file: int, into: &![byte])`; `read_at(.., file: int, from: int, into: &![byte])` for
+  `file_pread`; `size(.., file: int)`; `close(.., handle: int)` for a file or a directory. What they are
+  written into is `@cancho_dir_open`, `@cancho_dir_step`, `@cancho_open`, `@cancho_fd_read`,
+  `@cancho_fd_pread`, `@cancho_fd_size` and `@cancho_fd_close`.
+- **What a directory holds** (the listing `list` needs). Three more functions: `list(.., dir: int)` for
+  `dir_list`, a handle of a listing; `next(.., listing: int, into: &![byte])` for `dir_next`, which writes
+  the next name into the bytes and answers its length plus 65536 times its kind (1 a file, 2 a directory,
+  3 a link, 0 not known), 0 at the end, or minus why not; `stat(.., dir: int, name: &[byte], which: int)`
+  for `dir_stat`, asked three times for a name (`which` 0 its kind, 1 its length, 2 when it was changed,
+  in seconds since 1970): the first that answers below zero is the failure. `dir_list_close` is `close`
+  again. They are written into `@cancho_dir_list`, `@cancho_dir_next`, `@cancho_dir_list_close` and
+  `@cancho_dir_stat`. A name given to `dir_stat` is held to being one component first, as `step`'s is.
+- **Files that are written** (§9, step 4). Five more functions, and two more answers of `step`:
+  `step(.., dir, name, which)` with `which` 2 for `dir_open_new` (a file that must not be there yet) and 3 for
+  `dir_open_append` (a file to add to, made if it is not there); `write(.., file: int, bytes: &[byte])` for
+  `file_write`, answering how many bytes it took, which may be fewer than it was given; `sync(.., handle: int)`
+  for `file_sync` and, with a directory's handle, `dir_sync`; `lock(.., file: int)` for `file_lock`;
+  `rename(.., dir: int, from: &[byte], to: &[byte], fresh: int)` for `dir_rename` (`fresh` 0) and
+  `dir_rename_new` (`fresh` 1: a name that is taken is refused, 17); `remove(.., dir: int, name: &[byte])` for
+  `dir_remove`. They are written into `@cancho_fd_write`, `@cancho_fd_sync`, `@cancho_fd_lock`,
+  `@cancho_dir_rename`, `@cancho_dir_remove` and `@cancho_dir_sync`. Both names of a rename, and a name that is
+  removed, are held to being one component first. A system with none of these is one that only reads: a
+  program that reaches a writing builtin through it traps.
+- **What stays the language's and is not the system's to get wrong.** Before the module is asked, a path
+  is held to the prefix of the `Fs` it was opened through (`cancho_path_covers`, the same text as on a
+  hosted target, now in `bare.ll`): one that is outside it, or has `..` in it, is a trap, as it is on a
+  system. A name under a directory is held to being one component (`cancho_sys_component` in `bare.ll`,
+  what `dirrt_component` of `dirs.c` checks) and is refused with 22 without the module being asked.
+- **Effects are not discharged** (§10, step 1): the function that contains the block declares what its
+  body performs, `io_write` and `args` among it, and so do its callers.
+
+Not yet, and refused or stated rather than wrong:
+
+- **One `system` block in a program.** A second is refused ("no code for what is here").
+- **No `return` inside the block**, however deep: what was lent would stay lent. Refused the same way.
+- **A function that contains the block and is entered again while the block runs** (it calls itself
+  through the body) lends again, and the inner block's end switches the system off for the outer one: what
+  the outer one then asks traps. Not checked.
+- **`read_bytes`** is not answered: only `getchar`.
+- **No `file_pwrite`, `file_truncate`, `dir_mkdir`, `dir_rmdir`, `dir_open_new_mode`, `dir_mode`, no links,
+  and none of the path-taking `open_write`, `open_append`, `open_new`, `open_rw`, `fs_rename`, `fs_remove`**:
+  those builtins are still refused on the bare target. What is served is what `write`, `replace` and `move`
+  of cancho-tools reach (§2).
+- **A length or a time of 2^63 or more** cannot be told from a failure: `stat` answers one whole number.
+- **A trap in a hosted function is a trap of the whole program.** On a system a program that traps ends
+  and the system goes on; here the program *is* the kernel. A path with `..` in it is the case a person
+  can type: a function that takes a path from outside must look before it opens, as cancho-tools do.
+
+Measured:
+
+- The compiler builds itself with the change (three stages, the second and third equal).
+- `tests/commands/freestanding.sh`: `tests/probes/bare_system.cho`, a function that writes its arguments
+  to its `Io`, with a system that writes into a slice, builds for `aarch64-none-elf` into a module that
+  calls nothing it does not define, defines the seven functions and declares none of them; lends at the
+  block and not after it. The same two files for the machine the gate runs on print the command line's
+  arguments and answer how many. With the block taken out, the bare build is refused where the builtin
+  is written.
+- The same test, for files: `tests/probes/bare_system_files.cho` opens a directory, a file under it by
+  name and reads it to its end, with a system of one directory and one file kept in the module. It builds
+  for `aarch64-none-elf` into a module that calls nothing it does not define and defines the seven
+  functions; the two checks are called (twice and once); with no `step` in the module the function is
+  there and traps; with a `size` whose parameter is a run of bytes the build is refused.
+- The same test, for a directory: `tests/probes/bare_system_list.cho` lists one, asks `dir_stat` of each
+  name, of one that is not there and of one that is not a component. It builds for `aarch64-none-elf` into
+  a module that calls nothing it does not define and defines the four functions; `stat` is called three
+  times, after the check of the name.
+- The same test, for what writes: `tests/probes/bare_system_write.cho` holds a lock, makes a file that must not be
+  there, writes eleven bytes to a system that takes four at a time, has it kept, and renames it over a name, first
+  refusing a name that is taken. It builds for `aarch64-none-elf` into a module that calls nothing it does not
+  define and defines the six functions; both names of a rename are checked; with a system that has nothing that
+  writes, `@cancho_fd_write` is there and traps.
+- **A file written, on a machine.** cancho-os with cancho-tools' `replace` built in as it is written, and a module
+  whose `rename` is the kernel's one write of the disk. In `qemu-system-aarch64` as `virt` and as a Raspberry Pi 3
+  with an SD card, on FAT16 and FAT32 volumes macOS made: nine commands answer the same bytes as the same tool
+  built for the Mac, the four files it changed are the same bytes as the Mac's, and macOS's `fsck_msdos` finds
+  nothing wrong with the volumes. Not yet tried on a real board.
+- **A directory, on a machine.** cancho-os with a command `names [path]` written against `dir_list`,
+  `dir_next` and `dir_stat`. In `qemu-system-aarch64` as `virt` and as a Raspberry Pi 3 with an SD card, on
+  FAT16 and FAT32 volumes macOS made with four files of known lengths and times and a directory: each line
+  is the length and the time that was put there (FAT's time read as UTC), with a long name whole, at the
+  console and over SSH. Not yet tried on a real board.
+- **Files, on a machine.** cancho-os with a command `count <path>` whose function takes an `Fs`, opens
+  the file (`open_dir` and `dir_open_read` for a name, `open_read` for a path) and adds its bytes up, and
+  a module that reads the kernel's FAT volume. In `qemu-system-aarch64` as `virt`, on a FAT32 image another
+  system made: a file of 300,000 bytes is counted as 300,000 bytes adding up to 38,241,496, which is what
+  Python counts in the same file; the same through two directories and a long name; a file of no bytes, one
+  of exactly a cluster's; a name that is not there. Not yet tried on a real board.
+- **On a machine.** cancho-os, built with this compiler, with a command whose function takes an `Io` and
+  an `Args` and nothing of the kernel, and a module that answers with the shell's output and the words of
+  the line. In `qemu-system-aarch64` as a Raspberry Pi 3 and as `virt`: `tell one two three` prints the
+  three arguments and its last line, at the console and over SSH with OpenSSH's client; the shell answers
+  afterwards. `cancho authority` of that kernel gains `io_write` and no longer says it never touches the
+  console or the command line, which is what §10 said step 1 would cost.
 
 ## 1. The asker
 
@@ -207,6 +335,7 @@ Proposed: (a) first, (b) before the feature is called done. The owner may prefer
    cancho-os and run over SSH against its FAT card, their answers compared with the same tools run on
    another machine over the same files.
 4. **Files and directories, written.** `write`, `pwrite`, `sync`, `truncate`, `lock`, rename, remove.
+   (Built: `write`, `sync`, `lock`, rename, remove and the two of `step`; `replace` runs in cancho-os.)
    *Shows:* `write`, `replace`, `move` in cancho-os, each change a version and a line in its record;
    cancho-tools' own conformance suite, as far as it can be pointed at a remote board.
 5. **§7 (b)**, if (a) was built first.

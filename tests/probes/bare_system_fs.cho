@@ -1,0 +1,211 @@
+edition 6;
+module probe_fs;
+
+// bare_system_fs.cho -- the system of tests/probes/bare_system_files.cho (`docs/bare-system.md`): one directory, `/`,
+// with one file in it, `note`, whose bytes are `hello\n`. Handle 1 is the directory, handle 2 the file; `at[0]` is how
+// far the file has been read, `at[1]` how many handles are open. A failure is minus its reason: 2, no such name.
+
+fn same[&a](name: &a [byte], word: &static [byte]) -> [] bool {
+    if len(name) != len(word) {
+        return false;
+    }
+    var i = 0;
+    while i < len(name) {
+        if int_of(name[i]) != int_of(word[i]) {
+            return false;
+        }
+        i = i + 1;
+    }
+    return true;
+}
+
+pub fn folder[&u, &p](at: &!u [int], path: &p [byte]) -> [] int {
+    if !same(path, "/") {
+        return 0 - 2;
+    }
+    at[1] = at[1] + 1;
+    return 1;
+}
+
+// `which`: 0 a directory under this one, 1 a file to read; and, where `at` has room for what is written (six places),
+// 2 a file that must not be there yet (`draft`, handle 4) and 3 a file to add to (`hold`, handle 5).
+pub fn step[&u, &p](at: &!u [int], dir: int, name: &p [byte], which: int) -> [] int {
+    if dir == 1 && which == 2 && len(at) >= 6 {
+        if same(name, "note") {
+            return 0 - 17;
+        }
+        if !same(name, "draft") {
+            return 0 - 13;
+        }
+        at[3] = 0;
+        at[1] = at[1] + 1;
+        return 4;
+    }
+    if dir == 1 && which == 3 && len(at) >= 6 && same(name, "hold") {
+        at[1] = at[1] + 1;
+        return 5;
+    }
+    if dir != 1 || which != 1 || !same(name, "note") {
+        return 0 - 2;
+    }
+    at[0] = 0;
+    at[1] = at[1] + 1;
+    return 2;
+}
+
+pub fn open[&u, &p](at: &!u [int], path: &p [byte], mode: int) -> [] int {
+    if mode != 0 || !same(path, "/note") {
+        return 0 - 2;
+    }
+    at[0] = 0;
+    at[1] = at[1] + 1;
+    return 2;
+}
+
+pub fn read_at[&u, &t](at: &!u [int], file: int, from: int, into: &!t [byte]) -> [] int {
+    let text = "hello\n";
+    if file != 2 || from < 0 {
+        return 0 - 9;
+    }
+    var i = 0;
+    while from + i < len(text) && i < len(into) {
+        into[i] = text[from + i];
+        i = i + 1;
+    }
+    return i;
+}
+
+pub fn read[&u, &t](at: &!u [int], file: int, into: &!t [byte]) -> [] int {
+    let got = read_at(at, file, at[0], into);
+    if got > 0 {
+        at[0] = at[0] + got;
+    }
+    return got;
+}
+
+pub fn size[&u](at: &!u [int], file: int) -> [] int {
+    if file != 2 {
+        return 0 - 9;
+    }
+    return 6;
+}
+
+pub fn close[&u](at: &!u [int], handle: int) -> [] int {
+    at[1] = at[1] - 1;
+    return 0;
+}
+
+// What `/` holds, in order: `note`, a file (kind 1), and `sub`, a directory (kind 2). Handle 3 is the listing and
+// `at[2]`, where there is one, how far it has been read. `next` answers a name's length and 65536 times its kind.
+pub fn list[&u](at: &!u [int], dir: int) -> [] int {
+    if dir != 1 || len(at) < 3 {
+        return 0 - 9;
+    }
+    at[2] = 0;
+    at[1] = at[1] + 1;
+    return 3;
+}
+
+fn put[&t](into: &!t [byte], word: &static [byte]) -> [] int {
+    if len(word) > len(into) {
+        return 0 - 36;
+    }
+    var i = 0;
+    while i < len(word) {
+        into[i] = word[i];
+        i = i + 1;
+    }
+    return len(word);
+}
+
+pub fn next[&u, &t](at: &!u [int], listing: int, into: &!t [byte]) -> [] int {
+    if listing != 3 {
+        return 0 - 9;
+    }
+    at[2] = at[2] + 1;
+    if at[2] == 1 {
+        return 65536 + put(into, "note");
+    }
+    if at[2] == 2 {
+        return 2 * 65536 + put(into, "sub");
+    }
+    return 0;
+}
+
+// `which`: 0 the kind, 1 the size, 2 when it was changed.
+pub fn stat[&u, &p](at: &!u [int], dir: int, name: &p [byte], which: int) -> [] int {
+    if dir != 1 {
+        return 0 - 9;
+    }
+    if same(name, "note") {
+        if which == 0 {
+            return 1;
+        }
+        if which == 1 {
+            return 6;
+        }
+        return 1700000000;
+    }
+    if same(name, "sub") {
+        if which == 0 {
+            return 2;
+        }
+        if which == 1 {
+            return 0;
+        }
+        return 1700000001;
+    }
+    return 0 - 2;
+}
+
+// What is written: `at[3]` is how many bytes `draft` has been given, `at[4]` how many times something was kept
+// (`sync`), `at[5]` how long `note` is once `draft` has been renamed over it (0 until then).
+pub fn write[&u, &p](at: &!u [int], file: int, bytes: &p [byte]) -> [] int {
+    if file != 4 || len(at) < 6 {
+        return 0 - 9;
+    }
+    // no more than four bytes are taken at a time: who writes must ask again for the rest
+    var took = len(bytes);
+    if took > 4 {
+        took = 4;
+    }
+    at[3] = at[3] + took;
+    return took;
+}
+
+pub fn sync[&u](at: &!u [int], handle: int) -> [] int {
+    if len(at) < 6 || handle != 4 && handle != 1 {
+        return 0 - 9;
+    }
+    at[4] = at[4] + 1;
+    return 0;
+}
+
+pub fn lock[&u](at: &!u [int], file: int) -> [] int {
+    if file != 5 {
+        return 0 - 9;
+    }
+    return 0;
+}
+
+// `fresh` 1: a name that is taken is refused (17).
+pub fn rename[&u, &p, &q](at: &!u [int], dir: int, from: &p [byte], to: &q [byte], fresh: int) -> [] int {
+    if dir != 1 || len(at) < 6 || !same(from, "draft") {
+        return 0 - 2;
+    }
+    if !same(to, "note") {
+        return 0 - 13;
+    }
+    if fresh != 0 {
+        return 0 - 17;
+    }
+    at[5] = at[3];
+    return 0;
+}
+
+pub fn remove[&u, &p](at: &!u [int], dir: int, name: &p [byte]) -> [] int {
+    if dir != 1 || !same(name, "draft") {
+        return 0 - 2;
+    }
+    return 0;
+}

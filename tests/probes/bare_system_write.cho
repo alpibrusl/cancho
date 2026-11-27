@@ -1,0 +1,132 @@
+edition 7;
+
+// bare_system_write.cho -- a program for no system that replaces a file (`docs/bare-system.md`, step 4): `replace` is
+// written as a tool is, with an `Fs`: it holds a lock, makes a file that must not be there yet, writes to it until all
+// of it is taken, has it kept, renames it over the name, and has the directory kept. What answers is the module
+// `probe_fs`. tests/commands/freestanding.sh builds it for `aarch64-none-elf`.
+import probe_fs;
+
+fn failed(d: Done) -> [] int {
+    match d {
+        Done::Ok(n) => {
+            return 0;
+        }
+        Done::Failed(e) => {
+            return e;
+        }
+    }
+}
+
+// 0, or the place that went wrong.
+fn replace[&f](fs: &f Fs("")) -> [fs_read(""), dir_read, dir_write, file_write] int {
+    var status = 1;
+    let text = "eleven long";
+    match open_dir(fs, "/") {
+        DirOpened::Ok(d) => {
+            var root = d;
+            borrow root as &r in {
+                status = 0;
+                match dir_open_append(r, "hold") {
+                    Opened::Ok(h) => {
+                        var held = h;
+                        borrow mut held as &!l in {
+                            if failed(file_lock(l)) != 0 {
+                                status = 3;
+                            }
+                        }
+                        // a name that is taken cannot be made new
+                        match dir_open_new(r, "note") {
+                            Opened::Ok(n) => {
+                                file_close(n);
+                                status = 4;
+                            }
+                            Opened::Failed(e) => {
+                                if e != 17 {
+                                    status = 5;
+                                }
+                            }
+                        }
+                        // a name that is not one component is refused before the system is asked
+                        if failed(dir_remove(r, "a/b")) != 22 || failed(dir_rename(r, "draft", "a/b")) != 22 {
+                            status = 6;
+                        }
+                        match dir_open_new(r, "draft") {
+                            Opened::Ok(n) => {
+                                var file = n;
+                                borrow mut file as &!w in {
+                                    var at = 0;
+                                    while at < len(text) && status == 0 {
+                                        match file_write(w, text[at..len(text)]) {
+                                            Done::Ok(took) => {
+                                                if took <= 0 {
+                                                    status = 7;
+                                                }
+                                                at = at + took;
+                                            }
+                                            Done::Failed(e) => {
+                                                status = 8;
+                                            }
+                                        }
+                                    }
+                                    if failed(file_sync(w)) != 0 {
+                                        status = 9;
+                                    }
+                                }
+                                file_close(file);
+                            }
+                            Opened::Failed(e) => {
+                                status = 10;
+                            }
+                        }
+                        if status == 0 {
+                            if failed(dir_rename_new(r, "draft", "note")) != 17 {
+                                status = 11;
+                            } else if failed(dir_rename(r, "draft", "note")) != 0 {
+                                status = 12;
+                            } else if failed(dir_sync(r)) != 0 {
+                                status = 13;
+                            } else if failed(dir_remove(r, "gone")) != 2 {
+                                status = 14;
+                            }
+                        }
+                        file_close(held);
+                    }
+                    Opened::Failed(e) => {
+                        status = 2;
+                    }
+                }
+            }
+            dir_close(root);
+        }
+        DirOpened::Failed(e) => {
+        }
+    }
+    return status;
+}
+
+fn main(world: World) -> [] int {
+    let Split { io, ffi, fs, heap, args, net, clock, signals, exec } = split(world);
+    release(signals);
+    release(exec);
+    release(ffi);
+    release(io);
+    release(heap);
+    release(net);
+    release(clock);
+    release(args);
+    var status = 0;
+    region r {
+        let at = alloc_slice[r](6, 0);
+        borrow fs as &f in {
+            system probe_fs(at) in {
+                status = replace(f);
+            }
+        }
+        // every handle that was opened was closed; all eleven bytes are what `note` now is; two things were kept
+        if status == 0 && (at[1] != 0 || at[5] != 11 || at[4] != 2) {
+            status = 20;
+        }
+    }
+    release(fs);
+    return status;
+}

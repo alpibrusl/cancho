@@ -96,6 +96,7 @@ signatures.cho
 sink.cho
 stdorder.cho
 stdsource.cho
+syscode.cho
 tables.cho
 testscan.cho
 threadcode.cho

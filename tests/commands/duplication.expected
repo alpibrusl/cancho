@@ -1,2 +1,2 @@
-files walked: 333, parsed: 333, duplicated entries: 19 (allowed: 19)
+files walked: 334, parsed: 334, duplicated entries: 19 (allowed: 19)
 ok no_function_body_is_duplicated_across_files
