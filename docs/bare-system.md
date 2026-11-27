@@ -42,6 +42,14 @@ system probe_io(mem, used) in {
   `file_pread`; `size(.., file: int)`; `close(.., handle: int)` for a file or a directory. What they are
   written into is `@cancho_dir_open`, `@cancho_dir_step`, `@cancho_open`, `@cancho_fd_read`,
   `@cancho_fd_pread`, `@cancho_fd_size` and `@cancho_fd_close`.
+- **What a directory holds** (the listing `list` needs). Three more functions: `list(.., dir: int)` for
+  `dir_list`, a handle of a listing; `next(.., listing: int, into: &![byte])` for `dir_next`, which writes
+  the next name into the bytes and answers its length plus 65536 times its kind (1 a file, 2 a directory,
+  3 a link, 0 not known), 0 at the end, or minus why not; `stat(.., dir: int, name: &[byte], which: int)`
+  for `dir_stat`, asked three times for a name (`which` 0 its kind, 1 its length, 2 when it was changed,
+  in seconds since 1970): the first that answers below zero is the failure. `dir_list_close` is `close`
+  again. They are written into `@cancho_dir_list`, `@cancho_dir_next`, `@cancho_dir_list_close` and
+  `@cancho_dir_stat`. A name given to `dir_stat` is held to being one component first, as `step`'s is.
 - **What stays the language's and is not the system's to get wrong.** Before the module is asked, a path
   is held to the prefix of the `Fs` it was opened through (`cancho_path_covers`, the same text as on a
   hosted target, now in `bare.ll`): one that is outside it, or has `..` in it, is a trap, as it is on a
@@ -58,8 +66,9 @@ Not yet, and refused or stated rather than wrong:
   through the body) lends again, and the inner block's end switches the system off for the outer one: what
   the outer one then asks traps. Not checked.
 - **`read_bytes`** is not answered: only `getchar`.
-- **Nothing that writes a file or changes a directory, no listing of a directory, no `dir_stat`**: those
-  builtins are still refused on the bare target (§9, step 4, and the listing for `list`).
+- **Nothing that writes a file or changes a directory, no `dir_mode`**: those builtins are still refused
+  on the bare target (§9, step 4).
+- **A length or a time of 2^63 or more** cannot be told from a failure: `stat` answers one whole number.
 - **A trap in a hosted function is a trap of the whole program.** On a system a program that traps ends
   and the system goes on; here the program *is* the kernel. A path with `..` in it is the case a person
   can type: a function that takes a path from outside must look before it opens, as cancho-tools do.
@@ -78,6 +87,15 @@ Measured:
   for `aarch64-none-elf` into a module that calls nothing it does not define and defines the seven
   functions; the two checks are called (twice and once); with no `step` in the module the function is
   there and traps; with a `size` whose parameter is a run of bytes the build is refused.
+- The same test, for a directory: `tests/probes/bare_system_list.cho` lists one, asks `dir_stat` of each
+  name, of one that is not there and of one that is not a component. It builds for `aarch64-none-elf` into
+  a module that calls nothing it does not define and defines the four functions; `stat` is called three
+  times, after the check of the name.
+- **A directory, on a machine.** cancho-os with a command `names [path]` written against `dir_list`,
+  `dir_next` and `dir_stat`. In `qemu-system-aarch64` as `virt` and as a Raspberry Pi 3 with an SD card, on
+  FAT16 and FAT32 volumes macOS made with four files of known lengths and times and a directory: each line
+  is the length and the time that was put there (FAT's time read as UTC), with a long name whole, at the
+  console and over SSH. Not yet tried on a real board.
 - **Files, on a machine.** cancho-os with a command `count <path>` whose function takes an `Fs`, opens
   the file (`open_dir` and `dir_open_read` for a name, `open_read` for a path) and adds its bytes up, and
   a module that reads the kernel's FAT volume. In `qemu-system-aarch64` as `virt`, on a FAT32 image another

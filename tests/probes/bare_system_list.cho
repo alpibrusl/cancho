@@ -1,0 +1,113 @@
+edition 6;
+
+// bare_system_list.cho -- a program for no system that lists a directory (`docs/bare-system.md`, step 4): `walk` is
+// written as a tool is, with an `Fs`: it opens a directory, reads its names with their kinds, and asks the size and
+// the time of each. What answers is the module `probe_fs`. tests/commands/freestanding.sh builds it for
+// `aarch64-none-elf`.
+import probe_fs;
+
+// What `/` holds, as one number: for each name its length, its kind, its size and the last digit of its time, each
+// a decimal place; `note` then `sub` is 41603211. A failure is below zero.
+fn walk[&f](fs: &f Fs("")) -> [fs_read(""), dir_read] int {
+    var total = 0 - 1;
+    match open_dir(fs, "/") {
+        DirOpened::Ok(d) => {
+            var root = d;
+            borrow root as &r in {
+                // a name that is not one component is refused before the system is asked
+                match dir_stat(r, "sub/x") {
+                    DirStat::Ok(kind, size, seconds) => {
+                        total = 0 - 3;
+                    }
+                    DirStat::Failed(e) => {
+                    }
+                }
+                match dir_stat(r, "none") {
+                    DirStat::Ok(kind, size, seconds) => {
+                        total = 0 - 5;
+                    }
+                    DirStat::Failed(e) => {
+                        if e != 2 {
+                            total = 0 - 6;
+                        }
+                    }
+                }
+                if total == 0 - 1 {
+                    match dir_list(r) {
+                        Listing::Ok(opened) => {
+                            var stream = opened;
+                            total = 0;
+                            region q {
+                                let name = alloc_slice[q](255, byte_of(0));
+                                var going = true;
+                                while going {
+                                    borrow mut stream as &!s in {
+                                        match dir_next(s, name) {
+                                            Listed::Name(n, k) => {
+                                                total = total * 100 + n * 10 + k;
+                                                match dir_stat(r, name[0..n]) {
+                                                    DirStat::Ok(kind, size, seconds) => {
+                                                        if kind != k {
+                                                            total = 0 - 7;
+                                                            going = false;
+                                                        } else {
+                                                            total = total * 100 + size * 10 + seconds % 10;
+                                                        }
+                                                    }
+                                                    DirStat::Failed(e) => {
+                                                        total = 0 - 8;
+                                                        going = false;
+                                                    }
+                                                }
+                                            }
+                                            Listed::End => {
+                                                going = false;
+                                            }
+                                            Listed::Failed(e) => {
+                                                total = 0 - 2;
+                                                going = false;
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                            dir_list_close(stream);
+                        }
+                        Listing::Failed(e) => {
+                        }
+                    }
+                }
+            }
+            dir_close(root);
+        }
+        DirOpened::Failed(e) => {
+        }
+    }
+    return total;
+}
+
+fn main(world: World) -> [] int {
+    let Split { io, ffi, fs, heap, args, net, clock, signals } = split(world);
+    release(signals);
+    release(ffi);
+    release(io);
+    release(heap);
+    release(net);
+    release(clock);
+    release(args);
+    var status = 0;
+    region r {
+        let at = alloc_slice[r](3, 0);
+        borrow fs as &f in {
+            system probe_fs(at) in {
+                status = walk(f);
+            }
+        }
+        // every handle that was opened was closed
+        if at[1] != 0 {
+            status = 0 - 4;
+        }
+    }
+    release(fs);
+    return status;
+}
