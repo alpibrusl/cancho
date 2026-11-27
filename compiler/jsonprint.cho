@@ -706,6 +706,16 @@ fn stmt[&i, &s, &x](io: &!i Io, st: &!s [int], text: &x [byte], id: int, d: int)
         block(io, st, text, ast.get(st, id, 7), ast.get(st, id, 8), d + 1);
         return end_object(io, d);
     }
+    if ast.is_kind(st, id, kinds.NK::SSystem) {
+        w(io, "\"system\"");
+        e = entry(io, d, e, "module");
+        name(io, st, text, ast.get(st, id, 4));
+        e = entry(io, d, e, "lent");
+        exprs(io, st, text, ast.get(st, id, 5), ast.get(st, id, 6), d + 1);
+        e = entry(io, d, e, "body");
+        block(io, st, text, ast.get(st, id, 7), ast.get(st, id, 8), d + 1);
+        return end_object(io, d);
+    }
     if ast.is_kind(st, id, kinds.NK::SRegion) {
         w(io, "\"region\"");
         e = entry(io, d, e, "region");

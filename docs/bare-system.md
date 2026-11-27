@@ -1,8 +1,65 @@
 # A system lent for a block: programs written for a system, built into one that has none
 
-> **Status: design, not built.** Decided in #857 (option A, 2026-11-26). Nothing here is implemented; the
-> measurements are of what exists today, and every "would" is a claim to check when it is built. This
-> document is the first step the repository asks for: design before code.
+> **Status: the first step is built, for the streams and the arguments** ("What is built", below). Files and
+> directories, the discharge of effects (§6) and the block's own capabilities (§4 `as`, §7 (b)) are not.
+> Decided in #857 (option A, 2026-11-26). Sections 1 to 9 are the design as it was written before any code;
+> where what was built differs, "What is built" says so.
+
+## What is built
+
+```
+system probe_io(mem, used) in {
+    status = tell(io, args);
+}
+```
+
+- **The statement.** `system`, the name of a module, what is lent in brackets, `in`, a block. `system` is no
+  reserved word: it is taken only where two names and a `(` begin a statement. There is no `as (...)` yet: the
+  `Io` and the `Args` are the ones `split(world)` gave the program.
+- **What is lent** is names, each locked for the block as a unique borrow locks it, eight at most.
+- **The module's functions**, by these names, each with what is lent as its first parameters:
+  `out(.., p: &[byte]) -> int` and `err` the same (bytes written); `key(..) -> int` (a byte, or -1 at the
+  end of the input); `flush(..) -> int` (0, or why not); `arguments(..) -> int`; `argument(.., n: int,
+  into: &![byte]) -> int` (its length; 255 bytes at most, and the first sixty-four arguments). They cannot
+  be called `arg` and `arg_count`: those are the prelude's. One that the module does not have is a trap
+  if it is reached.
+- **What they answer**: `write_bytes` and `putchar` (`out`), `write_err` (`err`), `getchar` (`key`),
+  `flush_out` (`flush`), `arg_count` and `arg`. On the bare target those builtins are no longer refused in
+  a program that has a `system` block; in one that has none they are refused as before.
+- **What it compiles to** is §5: the functions the builtins call (`@cancho_write_bytes`, `@putchar`,
+  `@write`, `@getchar`, `@cancho_flush_out`, `@cancho_arg`) are written into the module, each loading
+  what was lent from a global and calling the module's function; a call with nothing lent traps. How many
+  arguments there are is asked once, at the block. `bare.ll` gains `strlen`, which `arg` measures with.
+- **Where there is a system under the program** the block is only its body. The module's functions are
+  still held to their places, and what their rows say the block performs, so the same source is checked
+  the same way on either kind of target.
+- **Effects are not discharged** (§10, step 1): the function that contains the block declares what its
+  body performs, `io_write` and `args` among it, and so do its callers.
+
+Not yet, and refused or stated rather than wrong:
+
+- **One `system` block in a program.** A second is refused ("no code for what is here").
+- **No `return` inside the block**, however deep: what was lent would stay lent. Refused the same way.
+- **A function that contains the block and is entered again while the block runs** (it calls itself
+  through the body) lends again, and the inner block's end switches the system off for the outer one: what
+  the outer one then asks traps. Not checked.
+- **`read_bytes`** is not answered: only `getchar`.
+
+Measured:
+
+- The compiler builds itself with the change (three stages, the second and third equal).
+- `tests/commands/freestanding.sh`: `tests/probes/bare_system.cho`, a function that writes its arguments
+  to its `Io`, with a system that writes into a slice, builds for `aarch64-none-elf` into a module that
+  calls nothing it does not define, defines the seven functions and declares none of them; lends at the
+  block and not after it. The same two files for the machine the gate runs on print the command line's
+  arguments and answer how many. With the block taken out, the bare build is refused where the builtin
+  is written.
+- **On a machine.** cancho-os, built with this compiler, with a command whose function takes an `Io` and
+  an `Args` and nothing of the kernel, and a module that answers with the shell's output and the words of
+  the line. In `qemu-system-aarch64` as a Raspberry Pi 3 and as `virt`: `tell one two three` prints the
+  three arguments and its last line, at the console and over SSH with OpenSSH's client; the shell answers
+  afterwards. `cancho authority` of that kernel gains `io_write` and no longer says it never touches the
+  console or the command line, which is what §10 said step 1 would cost.
 
 ## 1. The asker
 

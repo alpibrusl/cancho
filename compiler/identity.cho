@@ -1191,6 +1191,15 @@ fn stmt[&s, &x, &j](st: &!s [int], text: &x [byte], d: &!j [int], id: int) -> []
         d[4] = d[4] - 1;
         return 0;
     }
+    if ast.is_kind(st, id, kinds.NK::SSystem) {
+        // The module is a name of the program, as a call's qualifier is; what is lent is a list of expressions.
+        put_tag(d, 118);
+        qualified_name(st, text, d, 0 - 1, ast.get(st, id, 4));
+        put_len(d, ast.get(st, id, 6));
+        expr_list(st, text, d, ast.get(st, id, 5), ast.get(st, id, 6));
+        block(st, text, d, ast.get(st, id, 7), ast.get(st, id, 8));
+        return 0;
+    }
     if ast.is_kind(st, id, kinds.NK::SRegion) {
         put_tag(d, 103);
         d[reg_base(d) + d[4]] = ast.get(st, id, 4);

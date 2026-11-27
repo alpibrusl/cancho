@@ -1,0 +1,161 @@
+module selfhost.syscode;
+
+// syscode.cho -- the code of a lent system (`docs/bare-system.md`): `system m(a, b) in { .. }` on the target with no
+// system under it. What is lent is kept in a global of the module for the length of the block, and the functions the
+// hosted builtins call are written here, each passing what was lent, and its own arguments, to the function of the
+// program's module.
+
+import selfhost.emit;
+
+fn system_at[&s](st: &!s [int], i: int) -> [] int {
+    emit.str(st, "ptr getelementptr inbounds ([16 x i64], ptr @cancho_sys_lent, i64 0, i64 ");
+    emit.nat(st, i);
+    return emit.str(st, ")");
+}
+
+// Has a `system` block already been written into this module? (Its globals are among the constants.)
+pub fn system_seen[&s](st: &!s [int]) -> [] bool {
+    let mark = "@cancho_sys_on = ";
+    var at = 0;
+    while at + len(mark) <= st[57] {
+        var k = 0;
+        while k < len(mark) && st[st[56] + at + k] == int_of(mark[k]) {
+            k = k + 1;
+        }
+        if k == len(mark) {
+            return true;
+        }
+        at = at + 1;
+    }
+    return false;
+}
+
+// The globals: whether something is lent, what is, and room for sixty-four arguments of 255 bytes.
+pub fn system_globals[&s](st: &!s [int]) -> [] int {
+    let keep = st[49];
+    st[49] = 3;
+    emit.str(st, "@cancho_sys_on = global i64 0\n@cancho_sys_lent = global [16 x i64] zeroinitializer\n@cancho_sys_args = global [64 x [256 x i8]] zeroinitializer\n");
+    st[49] = keep;
+    return 0;
+}
+
+// The last `n` arguments pushed are what is lent: each goes to its place in the global. They stay pushed.
+pub fn system_lend[&s](st: &!s [int], n: int) -> [] int {
+    let first = st[52] - n;
+    var i = 0;
+    while i < n {
+        let at = st[51] + 4 * (first + i);
+        emit.str(st, "  store ");
+        emit.llvm_type(st, st[at]);
+        emit.str(st, " ");
+        emit.operand(st, st[at], st[at + 1] != 0, st[at + 2], st[at + 3]);
+        emit.str(st, ", ");
+        system_at(st, i);
+        emit.str(st, "\n");
+        i = i + 1;
+    }
+    return 0;
+}
+
+pub fn system_switch[&s](st: &!s [int], on: bool) -> [] int {
+    if on {
+        return emit.str(st, "  store i64 1, ptr @cancho_sys_on\n");
+    }
+    return emit.str(st, "  store i64 0, ptr @cancho_sys_on\n");
+}
+
+// The count of arguments the system gave, in the temporary `count`, to where `arg_count` reads it.
+pub fn system_count[&s](st: &!s [int], count: int) -> [] int {
+    emit.str(st, "  store i64 ");
+    emit.temp(st, count);
+    return emit.str(st, ", ptr @cancho_argc\n");
+}
+
+// The start of one of the functions: nothing lent is a trap; then what is lent, loaded.
+fn system_open[&s](st: &!s [int], n: int) -> [] int {
+    emit.str(st, "  %on = load i64, ptr @cancho_sys_on\n  %off = icmp eq i64 %on, 0\n  br i1 %off, label %none, label %lent\nnone:\n  call void @cancho_trap()\n  unreachable\nlent:\n");
+    let first = st[52] - n;
+    var i = 0;
+    while i < n {
+        let at = st[51] + 4 * (first + i);
+        emit.str(st, "  %l");
+        emit.nat(st, i);
+        emit.str(st, " = load ");
+        emit.llvm_type(st, st[at]);
+        emit.str(st, ", ");
+        system_at(st, i);
+        emit.str(st, "\n");
+        i = i + 1;
+    }
+    return 0;
+}
+
+// `%r = call i64 @lexs_<callee>(` and what is lent; the caller writes the operation's own arguments and `)`.
+fn system_call[&s](st: &!s [int], callee: int, n: int, more: bool) -> [] int {
+    emit.str(st, "  %r = call i64 @lexs_");
+    emit.nat(st, callee);
+    emit.str(st, "(");
+    let first = st[52] - n;
+    var i = 0;
+    while i < n {
+        let at = st[51] + 4 * (first + i);
+        if i > 0 {
+            emit.str(st, ", ");
+        }
+        emit.llvm_type(st, st[at]);
+        emit.str(st, " %l");
+        emit.nat(st, i);
+        i = i + 1;
+    }
+    if more && n > 0 {
+        emit.str(st, ", ");
+    }
+    return 0;
+}
+
+// The function of the runtime that operation `op` is, written among the constants: 1 `out`, 2 `err`, 3 `in`, 4 `flush`,
+// 5 `arg`. `callee` is the program's function for it, or -1 if its module has none: then the function traps.
+// The last `n` arguments pushed are what is lent.
+pub fn system_glue[&s](st: &!s [int], op: int, callee: int, n: int) -> [] int {
+    let keep = st[49];
+    st[49] = 3;
+    if op == 1 {
+        emit.str(st, "define i64 @cancho_write_bytes(ptr %p, i64 %n) {\nentry:\n");
+    } else if op == 2 {
+        emit.str(st, "define i64 @write(i32 %fd, ptr %p, i64 %n) {\nentry:\n");
+    } else if op == 3 {
+        emit.str(st, "define i32 @getchar() {\nentry:\n");
+    } else if op == 4 {
+        emit.str(st, "define void @cancho_flush_out(ptr %out) {\nentry:\n");
+    } else {
+        emit.str(st, "define ptr @cancho_arg(i64 %n) {\nentry:\n");
+    }
+    if callee < 0 {
+        emit.str(st, "  call void @cancho_trap()\n  unreachable\n}\n");
+        st[49] = keep;
+        return 0;
+    }
+    system_open(st, n);
+    if op == 1 || op == 2 {
+        system_call(st, callee, n, true);
+        emit.str(st, "ptr %p, i64 %n)\n  ret i64 %r\n}\n");
+    } else if op == 3 {
+        system_call(st, callee, n, false);
+        emit.str(st, ")\n  %c = trunc i64 %r to i32\n  ret i32 %c\n}\n");
+    } else if op == 4 {
+        // what `flush_out` reads: whether it failed, nothing, and why
+        system_call(st, callee, n, false);
+        emit.str(st, ")\n  %bad = icmp ne i64 %r, 0\n  %f = zext i1 %bad to i64\n  store i64 %f, ptr %out\n  %o1 = getelementptr inbounds i64, ptr %out, i64 1\n  store i64 0, ptr %o1\n  %o2 = getelementptr inbounds i64, ptr %out, i64 2\n  store i64 %r, ptr %o2\n  ret void\n}\n");
+    } else {
+        // the argument's bytes go to a place of their own, with a zero after them: `arg` measures it as a C string
+        emit.str(st, "  %far = icmp uge i64 %n, 64\n  br i1 %far, label %bad, label %near\nbad:\n  call void @cancho_trap()\n  unreachable\nnear:\n  %buf = getelementptr inbounds [64 x [256 x i8]], ptr @cancho_sys_args, i64 0, i64 %n, i64 0\n");
+        system_call(st, callee, n, true);
+        emit.str(st, "i64 %n, ptr %buf, i64 255)\n  %long = icmp ugt i64 %r, 255\n  br i1 %long, label %bad, label %fits\nfits:\n  %end = getelementptr inbounds i8, ptr %buf, i64 %r\n  store i8 0, ptr %end\n  ret ptr %buf\n}\n");
+    }
+    if op == 1 {
+        // `putchar` is one byte to the same function
+        emit.str(st, "define i32 @putchar(i32 %c) {\nentry:\n  %b = alloca i8\n  %t = trunc i32 %c to i8\n  store i8 %t, ptr %b\n  %w = call i64 @cancho_write_bytes(ptr %b, i64 1)\n  ret i32 %c\n}\n");
+    }
+    st[49] = keep;
+    return 0;
+}
