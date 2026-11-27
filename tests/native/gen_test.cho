@@ -1,0 +1,155 @@
+// gen_test.cho -- the first AArch64 code generator (`docs/native-backend.md` section 12) on what needs no machine to run its code: it makes code for a module
+// of most of what it lowers; it refuses, and writes nothing outside its table, when the table is too small or the module was not read; and no damaged byte
+// and no truncation of the module, once read, reaches a trap in it. That the code is right is `tests/native/gen/tricky.s`, which was run.
+//
+//     cancho test --std compiler/native/llmod.cho compiler/native/llread.cho compiler/native/llbody.cho compiler/native/lltop.cho compiler/native/lllayout.cho compiler/native/llout.cho compiler/native/a64.cho compiler/native/a64sys.cho compiler/native/a64frame.cho compiler/native/a64call.cho compiler/native/a64gen.cho compiler/native/a64fn.cho tests/native/gen_test.cho
+
+import std.test;
+import selfhost.llmod as lm;
+import selfhost.lltop as lt;
+import selfhost.llout as out;
+import selfhost.a64fn;
+
+fn sample() -> [] &static [byte] {
+    return "@tab = private constant [3 x i64] [i64 5, i64 -7, i64 9]\n@pair = internal constant { ptr, i64 } { ptr @tab, i64 3 }\n@cell = global i64 0\ndeclare i64 @other(ptr, { ptr, i64 }, double, ...)\ndeclare { i64, i1 } @llvm.smul.with.overflow.i64(i64, i64)\ndefine { i64, i64, i64 } @f(i64 %n, { ptr, i64 } %s, i8 %b, double %x) {\nentry:\n  %buf = alloca [40 x i8], align 8\n  %big = alloca [9000 x i64]\n  %p = getelementptr [9000 x i64], ptr %big, i64 0, i64 %n\n  store i64 %n, ptr %p\n  %len = extractvalue { ptr, i64 } %s, 1\n  %o = call { i64, i1 } @llvm.smul.with.overflow.i64(i64 %len, i64 %n)\n  %ov = extractvalue { i64, i1 } %o, 1\n  br i1 %ov, label %trap, label %loop\ntrap:\n  call void asm sideeffect \"udf #0xc11f\", \"\"()\n  unreachable\nloop:\n  %i = phi i64 [ 0, %entry ], [ %j, %body ]\n  %a = phi { i64, i64 } [ { i64 1, i64 2 }, %entry ], [ %a2, %body ]\n  %w = sext i8 %b to i64\n  %c = icmp slt i64 %i, %w\n  br i1 %c, label %body, label %done\nbody:\n  %j = add i64 %i, 1\n  %a0 = extractvalue { i64, i64 } %a, 0\n  %a1 = extractvalue { i64, i64 } %a, 1\n  %t = insertvalue { i64, i64 } undef, i64 %a1, 0\n  %a2 = insertvalue { i64, i64 } %t, i64 %a0, 1\n  %old = atomicrmw add ptr @cell, i64 1 seq_cst\n  switch i64 %old, label %loop [\n    i64 100, label %done\n  ]\ndone:\n  %f = fptosi double %x to i64\n  %g = sitofp i64 %f to double\n  %h = fcmp olt double %g, %x\n  %k = select i1 %h, { ptr, i64 } %s, { ptr, i64 } { ptr @tab, i64 1 }\n  %r = call i64 (ptr, { ptr, i64 }, double, ...) @other(ptr %buf, { ptr, i64 } %k, double %g, i64 %i, i1 %h)\n  %r0 = insertvalue { i64, i64, i64 } zeroinitializer, i64 %r, 0\n  %v = load i64, ptr getelementptr inbounds ([3 x i64], ptr @tab, i64 0, i64 2)\n  %r1 = insertvalue { i64, i64, i64 } %r0, i64 %v, 2\n  ret { i64, i64, i64 } %r1\n}\n";
+}
+
+// What reading `text` and making its code comes to: 0 if both went well, 1 if the reader refused it, 2 if the code generator did; then the generator's
+// reason, how many words it wrote and how many relocations.
+struct Made {
+    status: int,
+    why: int,
+    line: int,
+    words: int,
+    relocations: int,
+}
+
+fn make[&h, &t](heap: &!h Heap, text: &t [byte]) -> [heap] Made {
+    let table = box_slice(heap, lm.room(text), 0);
+    var made = Made { status: 1, why: 0, line: 0, words: 0, relocations: 0 };
+    borrow mut table as &!tw in {
+        let m = contents(tw);
+        if lt.read(text, m, 0) == 0 {
+            let code = box_slice(heap, out.room(m), 0);
+            borrow mut code as &!cw in {
+                let o = contents(cw);
+                if a64fn.generate(text, m, o) == 0 {
+                    made = Made { status: 0, why: 0, line: 0, words: out.here(o), relocations: out.relocations(o) };
+                    // Every word is 32 bits, and every relocation is of a word that was written.
+                    var k = 0;
+                    while k < out.here(o) {
+                        test.assert(out.word(o, k) >= 0 && out.word(o, k) <= 0xffffffff);
+                        k = k + 1;
+                    }
+                    k = 0;
+                    while k < out.relocations(o) {
+                        test.assert(out.relocation(o, k, 1) >= 0 && out.relocation(o, k, 1) < out.here(o));
+                        k = k + 1;
+                    }
+                } else {
+                    made = Made { status: 2, why: o[out.h_fail_why()], line: o[out.h_fail_line()], words: 0, relocations: 0 };
+                }
+            }
+            unbox_slice(heap, code);
+        }
+    }
+    unbox_slice(heap, table);
+    return made;
+}
+
+fn test_the_sample_has_code[&h](heap: &!h Heap) -> [heap] int {
+    let made = make(heap, sample());
+    test.assert_eq(made.status, 0);
+    test.assert_eq(made.words, 290);
+    test.assert_eq(made.relocations, 7);
+    return 0;
+}
+
+// A table for the code that is smaller than the module needs is a refusal at every size, and so is a module that was not read.
+fn test_too_little_room_and_no_module_are_refusals[&h](heap: &!h Heap) -> [heap] int {
+    let text = sample();
+    let table = box_slice(heap, lm.room(text), 0);
+    borrow mut table as &!tw in {
+        let m = contents(tw);
+        test.assert_eq(lt.read(text, m, 0), 0);
+        let need = out.room(m);
+        var size = 0;
+        while size < need {
+            let code = box_slice(heap, size, 0);
+            borrow mut code as &!cw in {
+                test.assert_eq(a64fn.generate(text, m, contents(cw)), 1);
+            }
+            unbox_slice(heap, code);
+            size = size + 1 + size / 3;
+        }
+        // The module refused by the reader has no code.
+        test.assert_eq(lt.read("define void @f() {\n", m, 0), 1);
+        let code = box_slice(heap, need, 0);
+        borrow mut code as &!cw in {
+            test.assert_eq(a64fn.generate(text, m, contents(cw)), 1);
+        }
+        unbox_slice(heap, code);
+    }
+    unbox_slice(heap, table);
+    // The words of a table laid out and then told its code ends sooner are refused past that end.
+    let small = box_slice(heap, lm.room(text), 0);
+    borrow mut small as &!sw in {
+        let m = contents(sw);
+        test.assert_eq(lt.read(text, m, 0), 0);
+        let code = box_slice(heap, out.room(m), 0);
+        borrow mut code as &!cw in {
+            let o = contents(cw);
+            out.layout(m, o);
+            o[out.h_code_end()] = o[out.h_code()] + 2;
+            out.emit(o, 1);
+            out.emit(o, 2);
+            test.assert(!out.failed(o));
+            out.emit(o, 3);
+            test.assert(out.failed(o));
+            test.assert_eq(out.here(o), 2);
+            test.assert_eq(o[o[out.h_code()] + 2], 0);
+        }
+        unbox_slice(heap, code);
+    }
+    unbox_slice(heap, small);
+    return 0;
+}
+
+// Every byte of the sample made each byte of `with`, and every beginning of it: read, and if it is read, its code made. The answer is how many had code; the
+// test is that this returns.
+fn damage[&h, &t, &w](heap: &!h Heap, text: &t [byte], with: &w [byte]) -> [heap] int {
+    var had = 0;
+    let copy = box_slice(heap, len(text), byte_of(0));
+    borrow mut copy as &!cw in {
+        let c = contents(cw);
+        var k = 0;
+        while k < len(text) {
+            c[k] = text[k];
+            k = k + 1;
+        }
+        k = 0;
+        while k < len(text) {
+            var j = 0;
+            while j < len(with) {
+                c[k] = with[j];
+                if make(heap, c).status == 0 {
+                    had = had + 1;
+                }
+                j = j + 1;
+            }
+            c[k] = text[k];
+            make(heap, text[0..k]);
+            k = k + 1;
+        }
+    }
+    unbox_slice(heap, copy);
+    return had;
+}
+
+fn test_no_damage_to_a_module_reaches_a_trap_in_the_generator[&h](heap: &!h Heap) -> [heap] int {
+    let had = damage(heap, sample(), " %0{,x\n\"@-19[i");
+    // Much damage is still a module with code (another number, another name that is defined) and much is not.
+    test.assert(had > 100);
+    test.assert(had < 12 * len(sample()));
+    return 0;
+}

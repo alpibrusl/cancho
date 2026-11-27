@@ -1,0 +1,358 @@
+edition 7;
+module selfhost.a64fn;
+
+// a64fn.cho -- a function of the module into AArch64 instructions (`docs/native-backend.md` section 12): its frame, its entry, its blocks and the branches
+// between them, and its end; and `generate`, which does it for every function of a module. What one instruction is, is `a64gen.cho`'s.
+//
+// The frame, from the stack pointer up: the arguments of the calls the function makes that go on the stack; the scratch bytes; a slot for each value; the
+// bytes of each `alloca`; then, at the frame pointer, the caller's frame pointer and the return address. The stack pointer does not move between the entry
+// and the end, so a slot is at one offset from it throughout.
+
+import selfhost.llmod as lm;
+import selfhost.llread as lr;
+import selfhost.llbody as lb;
+import selfhost.lltop as lt;
+import selfhost.lllayout as ly;
+import selfhost.llout as out;
+import selfhost.a64;
+import selfhost.a64frame as fr;
+import selfhost.a64call as cc;
+import selfhost.a64gen as gen;
+
+fn op_of[&m](m: &m [int], rec: int) -> [] int {
+    return lm.cell(m, rec + 2);
+}
+
+fn opnd[&m](m: &m [int], rec: int, k: int) -> [] int {
+    return rec + lb.instr_head() + 4 * k;
+}
+
+// The record after `rec`.
+fn next[&m](m: &m [int], rec: int) -> [] int {
+    let size = lm.cell(m, rec + 1);
+    if size < 2 {
+        return lm.cell(m, lm.h_top());
+    }
+    return rec + size;
+}
+
+// The first instruction at or after `rec` (constants are records too, and come before what uses them): its record, or 0 at the end of the block.
+fn instruction_at[&m](m: &m [int], rec: int) -> [] int {
+    var at = rec;
+    while at < lm.cell(m, lm.h_top()) && lm.cell(m, at) == lr.r_const() {
+        at = next(m, at);
+    }
+    if lm.cell(m, at) == lr.r_instr() {
+        return at;
+    }
+    return 0;
+}
+
+// ---- the frame ----
+
+// The frame of the function at `func`: a slot for every value, the bytes of every `alloca`, the stack its calls need, and the scratch bytes, which are as
+// large as the largest value any instruction works on.
+fn frame[&m, &o](m: &m [int], o: &!o [int], func: int) -> [] int {
+    let names = lm.cell(m, func + 9);
+    let n = lm.cell(m, names + 2);
+    var stack = 0;
+    var largest = 16;
+    var at = next(m, func);
+    while at < lm.cell(m, lm.h_top()) && lm.cell(m, at) != lr.r_end() {
+        if lm.cell(m, at) == lr.r_instr() {
+            o[out.h_line()] = lm.cell(m, at + 8);
+            let bytes = gen.call_stack(m, o, at);
+            if bytes > stack {
+                stack = bytes;
+            }
+            let result = ly.size_of(m, lm.cell(m, at + 6));
+            if result > largest {
+                largest = result;
+            }
+            var k = 0;
+            while k < lm.cell(m, at + 9) {
+                let size = ly.size_of(m, lm.cell(m, opnd(m, at, k)));
+                if size > largest && lm.cell(m, opnd(m, at, k) + 1) != lr.o_type() {
+                    largest = size;
+                }
+                k = k + 1;
+            }
+        }
+        at = next(m, at);
+    }
+    o[out.h_out_area()] = (stack + 15) / 16 * 16;
+    o[out.h_frame()] = o[out.h_out_area()];
+    o[cc.h_scratch()] = out.reserve(o, largest, 16);
+    if cc.in_memory(m, lm.cell(m, func + 5)) {
+        o[out.h_sret()] = out.reserve(o, 8, 8);
+    }
+    var id = 0;
+    while id < n && !out.failed(o) {
+        let info = names + 3 + 4 * id;
+        let ty = lm.cell(m, info + 2);
+        let def = lm.cell(m, info + 1);
+        if lm.cell(m, info + 3) == 0 && ty != lm.ty_void() {
+            if lm.type_kind(m, lm.resolved(m, ty)) == lm.k_vector() {
+                o[out.h_line()] = lm.cell(m, def + 8);
+                return out.fail(o, out.why_vector());
+            }
+            var align = ly.align_of(m, ty);
+            out.set_slot(o, id, out.reserve(o, ly.size_of(m, ty), align));
+            if lm.cell(m, def) == lr.r_instr() && op_of(m, def) == lr.op_phi() {
+                out.set_phi_slot(o, id, out.reserve(o, ly.size_of(m, ty), align));
+            }
+            if lm.cell(m, def) == lr.r_instr() && op_of(m, def) == lr.op_alloca() {
+                // The bytes it is the address of: so many of a type, the count a number.
+                let of = lm.cell(m, opnd(m, def, 0));
+                var count = 1;
+                if lm.cell(m, def + 3) & lr.f_counted() != 0 {
+                    let c = fr.constant(m, opnd(m, def, 1), 0);
+                    if !c.good || c.slot >= 0 || c.offset < 0 || c.offset > 1 << 30 {
+                        o[out.h_line()] = lm.cell(m, def + 8);
+                        return out.fail(o, out.why_alloca());
+                    }
+                    count = c.offset;
+                }
+                align = ly.align_of(m, of);
+                if lm.cell(m, def + 7) > align {
+                    align = lm.cell(m, def + 7);
+                }
+                if align > 16 || ly.size_of(m, of) > 1 << 30 {
+                    o[out.h_line()] = lm.cell(m, def + 8);
+                    return out.fail(o, out.why_frame());
+                }
+                out.set_phi_slot(o, id, out.reserve(o, ly.size_of(m, of) * count, align));
+            }
+        }
+        id = id + 1;
+    }
+    o[out.h_frame()] = (o[out.h_frame()] + 15) / 16 * 16;
+    return 0;
+}
+
+// The entry: the two registers saved, the frame pointer set, the frame made, and each parameter moved from where the caller put it into its slot.
+fn entry[&m, &o](m: &m [int], o: &!o [int], func: int) -> [] int {
+    let size = o[out.h_frame()];
+    out.emit(o, a64.load_store_pair(1, 0, 3, 0, 29, 30, 31, 0 - 2));
+    out.emit(o, a64.addsub_imm(1, 0, 0, 29, 31, 0, 0));
+    if size < 4096 {
+        out.emit(o, a64.addsub_imm(1, 1, 0, 31, 31, size, 0));
+    } else if size < 1 << 24 {
+        out.emit(o, a64.addsub_imm(1, 1, 0, 31, 31, size >> 12, 1));
+        if size & 4095 != 0 {
+            out.emit(o, a64.addsub_imm(1, 1, 0, 31, 31, size & 4095, 0));
+        }
+    } else {
+        fr.mov_imm(o, 17, size);
+        out.emit(o, a64.addsub_ext(1, 1, 0, 31, 31, 17, 3, 0));
+    }
+    if o[out.h_sret()] >= 0 {
+        fr.access(o, 3, 0, 0, 8, fr.sp(), o[out.h_sret()]);
+    }
+    cc.reset(o);
+    var k = 0;
+    while k < lm.cell(m, func + 6) && !out.failed(o) {
+        let p = func + lt.func_head() + 3 * k;
+        let ty = lm.cell(m, p);
+        let id = lm.cell(m, p + 1);
+        if id >= 0 && out.slot(o, id) >= 0 {
+            fr.add_offset(o, 14, fr.sp(), out.slot(o, id));
+            cc.walk(m, o, ty, 0, cc.w_parameter(), 0);
+        } else {
+            // A parameter with no name still took its registers.
+            cc.walk(m, o, ty, 0, cc.w_count(), 0);
+        }
+        k = k + 1;
+    }
+    return 0;
+}
+
+// The end: the frame given back, the two registers restored, and the return.
+fn leave[&o](o: &!o [int]) -> [] int {
+    out.emit(o, a64.addsub_imm(1, 0, 0, 31, 29, 0, 0));
+    out.emit(o, a64.load_store_pair(1, 0, 1, 1, 29, 30, 31, 2));
+    out.emit(o, a64.branch_reg(2, 30));
+    return 0;
+}
+
+// ---- blocks ----
+
+// The record of the block whose label is local `id` of the function at `func`.
+fn block_of[&m](m: &m [int], func: int, id: int) -> [] int {
+    let names = lm.cell(m, func + 9);
+    if id < 0 || id >= lm.cell(m, names + 2) {
+        return 0;
+    }
+    return lm.cell(m, names + 3 + 4 * id + 1);
+}
+
+// A jump from the block being written to the block of label `id`: each `phi` of that block is given the value it has when it is come to from here (into its
+// second slot: the block moves them all into the first when it begins, so that one `phi` may read another's old value), and then the branch.
+fn jump[&t, &m, &o](text: &t [byte], m: &m [int], o: &!o [int], func: int, id: int) -> [] int {
+    let block = block_of(m, func, id);
+    if block == 0 || lm.cell(m, block) != lr.r_block() {
+        return out.fail(o, out.why_operand());
+    }
+    var at = instruction_at(m, next(m, block));
+    while at != 0 && op_of(m, at) == lr.op_phi() && !out.failed(o) {
+        let phi = lm.cell(m, at + 4);
+        var k = 0;
+        var found = false;
+        while k + 1 < lm.cell(m, at + 9) && !found {
+            if lm.cell(m, opnd(m, at, k + 1) + 2) == o[cc.h_block()] {
+                found = true;
+                fr.add_offset(o, 14, fr.sp(), out.phi_slot(o, phi));
+                fr.store_value(text, m, o, opnd(m, at, k), lm.cell(m, at + 6), 0, 0);
+            }
+            k = k + 2;
+        }
+        if !found || out.phi_slot(o, phi) < 0 {
+            // A `phi` with no value for a block that jumps to it.
+            return out.fail(o, out.why_operand());
+        }
+        at = instruction_at(m, next(m, at));
+    }
+    out.fixup(o, out.here(o), id);
+    out.emit(o, a64.branch(0, 0));
+    return 0;
+}
+
+// A block begins: its label is here, and each of its `phi`s takes the value the jump left for it.
+fn begin_block[&m, &o](m: &m [int], o: &!o [int], block: int) -> [] int {
+    let id = lm.cell(m, block + 2);
+    o[cc.h_block()] = id;
+    if id >= 0 {
+        out.set_label(o, id, out.here(o));
+    }
+    var at = instruction_at(m, next(m, block));
+    while at != 0 && op_of(m, at) == lr.op_phi() && !out.failed(o) {
+        let phi = lm.cell(m, at + 4);
+        fr.add_offset(o, 13, fr.sp(), out.phi_slot(o, phi));
+        fr.add_offset(o, 14, fr.sp(), out.slot(o, phi));
+        fr.copy(o, ly.size_of(m, lm.cell(m, at + 6)), 8);
+        at = instruction_at(m, next(m, at));
+    }
+    return 0;
+}
+
+// The instruction that ends a block, or one whose meaning is the frame's.
+fn control[&t, &m, &o](text: &t [byte], m: &m [int], o: &!o [int], func: int, rec: int) -> [] int {
+    let op = op_of(m, rec);
+    let n = lm.cell(m, rec + 9);
+    if op == lr.op_phi() {
+        return 0;
+    }
+    if op == lr.op_alloca() {
+        let id = lm.cell(m, rec + 4);
+        if id < 0 {
+            return 0;
+        }
+        fr.add_offset(o, 9, fr.sp(), out.phi_slot(o, id));
+        return fr.access(o, 3, 0, 0, 9, fr.sp(), out.slot(o, id));
+    }
+    if op == lr.op_ret() {
+        if n > 0 {
+            let ty = lm.cell(m, opnd(m, rec, 0));
+            let place = fr.in_frame(text, m, o, opnd(m, rec, 0), ty, o[cc.h_scratch()]);
+            if o[out.h_sret()] >= 0 {
+                fr.add_offset(o, 13, fr.sp(), place);
+                fr.access(o, 3, 0, 1, 14, fr.sp(), o[out.h_sret()]);
+                fr.copy(o, ly.size_of(m, ty), 8);
+            } else {
+                cc.reset(o);
+                fr.add_offset(o, 14, fr.sp(), place);
+                cc.walk(m, o, ty, 0, cc.w_result_out(), 0);
+            }
+        }
+        return leave(o);
+    }
+    if op == lr.op_br() {
+        if n == 1 {
+            return jump(text, m, o, func, lm.cell(m, opnd(m, rec, 0) + 2));
+        }
+        // The condition's low bit: clear, over the jump to the first block and its `phi` values, to the jump to the second.
+        fr.operand(m, o, opnd(m, rec, 0), 9, false);
+        let test = out.emit(o, 0);
+        jump(text, m, o, func, lm.cell(m, opnd(m, rec, 1) + 2));
+        out.patch(o, test, a64.bit_branch(0, 9, 0, out.here(o) - test));
+        return jump(text, m, o, func, lm.cell(m, opnd(m, rec, 2) + 2));
+    }
+    if op == lr.op_switch() {
+        // A compare a case, in the order written; then the default.
+        let ty = lm.cell(m, opnd(m, rec, 0));
+        if fr.word_size(m, ty) < 0 {
+            return out.fail(o, out.why_operand());
+        }
+        var k = 2;
+        while k + 1 < n && !out.failed(o) {
+            fr.operand(m, o, opnd(m, rec, 0), 9, false);
+            fr.operand(m, o, opnd(m, rec, k), 10, false);
+            out.emit(o, a64.addsub_shift(1, 1, 1, 31, 9, 10, 0, 0));
+            let skip = out.emit(o, 0);
+            jump(text, m, o, func, lm.cell(m, opnd(m, rec, k + 1) + 2));
+            out.patch(o, skip, a64.branch_cond(1, out.here(o) - skip));
+            k = k + 2;
+        }
+        return jump(text, m, o, func, lm.cell(m, opnd(m, rec, 1) + 2));
+    }
+    return gen.lower(text, m, o, rec);
+}
+
+// The function whose record is at `func`.
+fn function[&t, &m, &o](text: &t [byte], m: &m [int], o: &!o [int], func: int) -> [] int {
+    let names = lm.cell(m, func + 9);
+    out.begin_function(o, func, lm.cell(m, names + 2));
+    o[out.h_line()] = lm.cell(m, func + 13);
+    frame(m, o, func);
+    if out.failed(o) {
+        return 0;
+    }
+    entry(m, o, func);
+    var at = next(m, func);
+    while at < lm.cell(m, lm.h_top()) && lm.cell(m, at) != lr.r_end() && !out.failed(o) {
+        let kind = lm.cell(m, at);
+        if kind == lr.r_block() {
+            begin_block(m, o, at);
+        } else if kind == lr.r_instr() {
+            o[out.h_line()] = lm.cell(m, at + 8);
+            control(text, m, o, func, at);
+        }
+        at = next(m, at);
+    }
+    // Every branch is given its distance.
+    var f = o[out.h_fix()];
+    while f < o[out.h_fix_top()] && !out.failed(o) {
+        let target = out.label(o, o[f + 1]);
+        if target < 0 {
+            out.fail(o, out.why_operand());
+        } else {
+            out.patch(o, o[f], a64.branch(0, target - o[f]));
+        }
+        f = f + 2;
+    }
+    return out.end_function(o);
+}
+
+// The code of every function of the module in `m` (read from `text` with no refusal), into `o`, which has `llout.room(m)` cells: 0, or 1 for a refusal, its
+// line and its reason in the header of `o`.
+pub fn generate[&t, &m, &o](text: &t [byte], m: &m [int], o: &!o [int]) -> [] int {
+    out.layout(m, o);
+    if len(o) < out.header() {
+        return 1;
+    }
+    if len(m) < lm.header() || lm.failed(m) || lm.cell(m, lm.h_ready()) == 0 {
+        out.fail(o, out.why_room());
+        return 1;
+    }
+    var at = lm.cell(m, lm.h_rec());
+    while at < lm.cell(m, lm.h_top()) && !out.failed(o) {
+        if lm.cell(m, at) == lr.r_func() {
+            function(text, m, o, at);
+        }
+        at = next(m, at);
+    }
+    if out.failed(o) {
+        return 1;
+    }
+    return 0;
+}

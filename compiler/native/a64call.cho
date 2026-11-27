@@ -1,0 +1,215 @@
+edition 7;
+module selfhost.a64call;
+
+// a64call.cho -- how a value crosses a call on AArch64 (`docs/native-backend.md` section 12.4): which register or which bytes of the stack each part of an
+// argument and of a result is in. The rule is the one LLVM applies to the types of the text, because the code this meets (the C library, and the runtime
+// while clang still compiles it) was compiled by it: a value in parts is its scalars, one after another; integers and pointers take `x0` to `x7` and
+// floating-point values `d0` to `d7`, then eight bytes of the stack each; an array goes whole in registers or whole on the stack; an integer of 128 bits takes
+// two registers from an even one; a result that does not fit eight registers of a kind is written where `x8` says.
+//
+// One walk does all of it: over the parts of a type, at an address in `x14`, in one of five ways.
+
+import selfhost.llmod as lm;
+import selfhost.lllayout as ly;
+import selfhost.llout as out;
+import selfhost.a64;
+import selfhost.a64frame as fr;
+
+// How many values of a kind have been given a register, how many bytes of the stack are taken: cells of the output's header.
+pub fn h_gp() -> [] int {
+    return 23;
+}
+
+pub fn h_fp() -> [] int {
+    return 24;
+}
+
+pub fn h_stack() -> [] int {
+    return 25;
+}
+
+// Where the scratch bytes of the function being written are, from the stack pointer, and the number of the block being written.
+pub fn h_scratch() -> [] int {
+    return 26;
+}
+
+pub fn h_block() -> [] int {
+    return 27;
+}
+
+pub fn reset[&o](o: &!o [int]) -> [] int {
+    o[h_gp()] = 0;
+    o[h_fp()] = 0;
+    o[h_stack()] = 0;
+    return 0;
+}
+
+// The ways of the walk: only count; an argument from memory to where the callee expects it; a parameter from where the caller put it to memory; a result
+// from memory to the registers; a result from the registers to memory.
+pub fn w_count() -> [] int {
+    return 0;
+}
+
+pub fn w_argument() -> [] int {
+    return 1;
+}
+
+pub fn w_parameter() -> [] int {
+    return 2;
+}
+
+pub fn w_result_out() -> [] int {
+    return 3;
+}
+
+pub fn w_result_in() -> [] int {
+    return 4;
+}
+
+// How many registers of a kind (`fp` or general) the parts of `ty` take.
+pub fn registers[&m](m: &m [int], ty: int, fp: bool, depth: int) -> [] int {
+    let t = lm.resolved(m, ty);
+    let kind = lm.type_kind(m, t);
+    if depth > lm.deepest() {
+        return 0;
+    }
+    if kind == lm.k_struct() {
+        var n = 0;
+        var k = 0;
+        while k < lm.type_count(m, t) {
+            n = n + registers(m, lm.type_part(m, t, k), fp, depth + 1);
+            k = k + 1;
+        }
+        return n;
+    }
+    if kind == lm.k_array() {
+        let each = registers(m, lm.type_part(m, t, 0), fp, depth + 1);
+        let count = lm.type_count(m, t);
+        if each > 0 && count > 1000 {
+            return 1000;
+        }
+        return each * count;
+    }
+    if fr.float_kind(m, t) >= 0 {
+        if fp {
+            return 1;
+        }
+        return 0;
+    }
+    if fp {
+        return 0;
+    }
+    if fr.is_wide(m, t) {
+        return 2;
+    }
+    if fr.word_size(m, t) >= 0 {
+        return 1;
+    }
+    return 0;
+}
+
+// Is a result of type `ty` written where `x8` says, and not answered in registers?
+pub fn in_memory[&m](m: &m [int], ty: int) -> [] bool {
+    return registers(m, ty, false, 0) > 8 || registers(m, ty, true, 0) > 8;
+}
+
+// One scalar of `1 << size` bytes at `x14 + offset`, in the way `way`: `v` 1 for a floating-point one, `bit` for an `i1`, which is kept as 0 or 1 in memory
+// whatever the other bits of the register were.
+fn scalar[&o](o: &!o [int], size: int, v: int, bit: bool, offset: int, way: int) -> [] int {
+    var counter = h_gp();
+    if v == 1 {
+        counter = h_fp();
+    }
+    let r = o[counter];
+    if r < 8 {
+        o[counter] = r + 1;
+        if way == w_argument() || way == w_result_out() {
+            return fr.access(o, size, v, 1, r, 14, offset);
+        }
+        if way == w_parameter() || way == w_result_in() {
+            if bit {
+                out.emit(o, a64.logic_imm(0, 0, r, r, 1));
+            }
+            return fr.access(o, size, v, 0, r, 14, offset);
+        }
+        return 0;
+    }
+    let place = o[h_stack()];
+    o[h_stack()] = place + 8;
+    // On its way through the stack a value is in `x15`, or in `d17` (`d15` is one a callee must keep).
+    var through = 15;
+    if v == 1 {
+        through = 17;
+    }
+    if way == w_argument() {
+        fr.access(o, size, v, 1, through, 14, offset);
+        return fr.access(o, 3, v, 0, through, fr.sp(), place);
+    }
+    if way == w_parameter() {
+        // The caller's stack is above the two saved registers the frame pointer points at.
+        fr.access(o, size, v, 1, through, 29, 16 + place);
+        if bit {
+            out.emit(o, a64.logic_imm(0, 0, 15, 15, 1));
+        }
+        return fr.access(o, size, v, 0, through, 14, offset);
+    }
+    if way != w_count() {
+        return out.fail(o, out.why_operand());
+    }
+    return 0;
+}
+
+// The parts of a value of type `ty` at `x14 + offset`, in the way `way`.
+pub fn walk[&m, &o](m: &m [int], o: &!o [int], ty: int, offset: int, way: int, depth: int) -> [] int {
+    let t = lm.resolved(m, ty);
+    let kind = lm.type_kind(m, t);
+    if depth > lm.deepest() || out.failed(o) {
+        return 0;
+    }
+    if kind == lm.k_struct() {
+        var k = 0;
+        while k < lm.type_count(m, t) {
+            walk(m, o, lm.type_part(m, t, k), offset + ly.offset_of(m, t, k), way, depth + 1);
+            k = k + 1;
+        }
+        return 0;
+    }
+    if kind == lm.k_array() {
+        // Whole in registers, or whole on the stack.
+        let element = lm.type_part(m, t, 0);
+        if o[h_gp()] + registers(m, t, false, 0) > 8 {
+            o[h_gp()] = 8;
+        }
+        if o[h_fp()] + registers(m, t, true, 0) > 8 {
+            o[h_fp()] = 8;
+        }
+        let each = ly.size_of(m, element);
+        var k = 0;
+        while k < lm.type_count(m, t) && !out.failed(o) {
+            walk(m, o, element, offset + k * each, way, depth + 1);
+            k = k + 1;
+        }
+        return 0;
+    }
+    if kind == lm.k_vector() {
+        return out.fail(o, out.why_vector());
+    }
+    if fr.float_kind(m, t) >= 0 {
+        return scalar(o, 2 + fr.float_kind(m, t), 1, false, offset, way);
+    }
+    if fr.is_wide(m, t) {
+        // Two registers from an even one, or sixteen bytes of the stack at a multiple of sixteen.
+        o[h_gp()] = (o[h_gp()] + 1) / 2 * 2;
+        if o[h_gp()] > 6 {
+            o[h_gp()] = 8;
+            o[h_stack()] = (o[h_stack()] + 15) / 16 * 16;
+        }
+        scalar(o, 3, 0, false, offset, way);
+        return scalar(o, 3, 0, false, offset + 8, way);
+    }
+    let size = fr.word_size(m, t);
+    if size >= 0 {
+        return scalar(o, size, 0, fr.int_bits(m, t) == 1, offset, way);
+    }
+    return 0;
+}

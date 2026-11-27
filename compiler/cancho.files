@@ -66,9 +66,17 @@ listing.cho
 lookup.cho
 mmio.cho
 narrowing.cho
+native/a64.cho
+native/a64call.cho
+native/a64fn.cho
+native/a64frame.cho
+native/a64gen.cho
+native/a64sys.cho
 native/llback.cho
 native/llbody.cho
+native/lllayout.cho
 native/llmod.cho
+native/llout.cho
 native/llprint.cho
 native/llread.cho
 native/lltop.cho

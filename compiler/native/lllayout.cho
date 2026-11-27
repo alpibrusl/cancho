@@ -8,14 +8,6 @@ module selfhost.lllayout;
 
 import selfhost.llmod as lm;
 
-// The type a named type names, and any other type as it is.
-pub fn resolved[&m](m: &m [int], ty: int) -> [] int {
-    if lm.type_kind(m, ty) == lm.k_named() {
-        return lm.cell(m, lm.type_part(m, ty, 0) + 2) - 1;
-    }
-    return ty;
-}
-
 fn up(n: int, align: int) -> [] int {
     if align <= 1 {
         return n;
@@ -24,7 +16,7 @@ fn up(n: int, align: int) -> [] int {
 }
 
 fn align_at[&m](m: &m [int], ty: int, depth: int) -> [] int {
-    let t = resolved(m, ty);
+    let t = lm.resolved(m, ty);
     let kind = lm.type_kind(m, t);
     if depth > lm.deepest() {
         return 1;
@@ -79,7 +71,7 @@ fn align_at[&m](m: &m [int], ty: int, depth: int) -> [] int {
 }
 
 fn size_at[&m](m: &m [int], ty: int, depth: int) -> [] int {
-    let t = resolved(m, ty);
+    let t = lm.resolved(m, ty);
     let kind = lm.type_kind(m, t);
     if depth > lm.deepest() {
         return 0;
@@ -112,7 +104,7 @@ fn size_at[&m](m: &m [int], ty: int, depth: int) -> [] int {
         let each = up(size_at(m, element, depth + 1), align_at(m, element, depth + 1));
         if kind == lm.k_vector() {
             // The elements of a vector are packed by bits: sixteen `i1` are two bytes.
-            let e = resolved(m, element);
+            let e = lm.resolved(m, element);
             if lm.type_kind(m, e) == lm.k_int() {
                 return up((lm.type_count(m, e) * count + 7) / 8, 1);
             }
@@ -151,7 +143,7 @@ pub fn size_of[&m](m: &m [int], ty: int) -> [] int {
 
 // Where field `index` of the struct `ty` is, in bytes from its start; where element `index` of an array is. -1 for a type that has no such part.
 pub fn offset_of[&m](m: &m [int], ty: int, index: int) -> [] int {
-    let t = resolved(m, ty);
+    let t = lm.resolved(m, ty);
     let kind = lm.type_kind(m, t);
     if kind == lm.k_array() || kind == lm.k_vector() {
         if index < 0 || index >= lm.type_count(m, t) {
@@ -177,7 +169,7 @@ pub fn offset_of[&m](m: &m [int], ty: int, index: int) -> [] int {
 
 // The type of part `index` of `ty`: a field, or the element. -1 for none.
 pub fn part_of[&m](m: &m [int], ty: int, index: int) -> [] int {
-    let t = resolved(m, ty);
+    let t = lm.resolved(m, ty);
     let kind = lm.type_kind(m, t);
     if kind == lm.k_array() || kind == lm.k_vector() {
         return lm.type_part(m, t, 0);

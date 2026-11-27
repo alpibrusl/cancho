@@ -2,16 +2,18 @@ edition 7;
 module selfhost.llback;
 
 // llback.cho -- what the command line asks of the native backend today (`docs/native-backend.md` sections 8 and 10): a module of the compiler read, and either
-// judged (`--backend native`: the reader with vectors refused; there is no code generator yet) or written back (`--backend roundtrip`: the module the reader
+// judged (`--backend native`: the reader with vectors refused, then the code generator; there is no object to put the code in yet) or written back (`--backend roundtrip`: the module the reader
 // read, as text, for clang).
 
 import std.buffer;
 import selfhost.llmod as lm;
 import selfhost.lltop as lt;
 import selfhost.llprint as lp;
+import selfhost.llout as out;
+import selfhost.a64fn;
 
 // What became of a module: the text to give clang (empty unless it was written back), and the refusal if there was one (`why` 0 for none; else the line of the
-// module and the reason, a code of `llmod.why_text`).
+// module and the reason, a code of `llout.why_text`, which has the reader's and the code generator's).
 pub res struct Judged {
     text: buffer.Buffer,
     line: int,
@@ -26,8 +28,9 @@ pub fn roundtrip() -> [] int {
     return 2;
 }
 
-// The module `ir` through the backend `backend`.
-pub fn through[&h, &r](heap: &!h Heap, ir: &r [byte], backend: int) -> [heap] Judged {
+// The module `ir`, written for the target `target` of the driver (0 Linux on x86-64, 1 Darwin, 2 Linux on AArch64, 3 AArch64 with no system), through the
+// backend `backend`.
+pub fn through[&h, &r](heap: &!h Heap, ir: &r [byte], backend: int, target: int) -> [heap] Judged {
     var strict = 0;
     if backend == native() {
         strict = 1;
@@ -47,6 +50,23 @@ pub fn through[&h, &r](heap: &!h Heap, ir: &r [byte], backend: int) -> [heap] Ju
         } else if backend == roundtrip() {
             buffer.drop(heap, text);
             text = lp.print(heap, ir, m);
+        } else if target != 2 && target != 3 {
+            why = out.why_machine();
+        } else {
+            // The module is read: its code (`docs/native-backend.md` section 12). There is nothing yet to put the code in, so it is made and dropped, and
+            // what is said is whether it could be made.
+            let code = box_slice(heap, out.room(m), 0);
+            borrow mut code as &!cw in {
+                let o = contents(cw);
+                if a64fn.generate(ir, m, o) != 0 {
+                    line = lm.cell(o, out.h_fail_line());
+                    why = lm.cell(o, out.h_fail_why());
+                    if why == 0 {
+                        why = out.why_room();
+                    }
+                }
+            }
+            unbox_slice(heap, code);
         }
     }
     unbox_slice(heap, table);

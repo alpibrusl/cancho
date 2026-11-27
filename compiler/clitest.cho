@@ -256,7 +256,7 @@ pub fn test_files[&h, &i, &a, &f, &x, &c, &t, &l, &s, &k](heap: &!h Heap, io: &!
                     if status == 0 {
                         borrow exe as &ep in {
                             borrow names as &nm in {
-                                status = cliprog.make_through(heap, io, args, fs, exec, buffer.bytes(b.ir), buffer.bytes(ep), clang, false, false, false, clibase.backend_asked(args), clibase.name_at(buffer.bytes(nm), 0));
+                                status = cliprog.make_through(heap, io, args, fs, exec, buffer.bytes(b.ir), buffer.bytes(ep), clang, false, false, false, clibase.backend_asked(args), host, clibase.name_at(buffer.bytes(nm), 0));
                             }
                             if status == 0 {
                                 status = run_tests(heap, io, exec, clock, buffer.bytes(ep), tests);

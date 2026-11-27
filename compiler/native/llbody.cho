@@ -15,14 +15,6 @@ pub fn instr_head() -> [] int {
     return 10;
 }
 
-// The type a named type names, and any other type as it is.
-pub fn resolved[&m](m: &m [int], ty: int) -> [] int {
-    if lm.type_kind(m, ty) == lm.k_named() {
-        return lm.cell(m, lm.type_part(m, ty, 0) + 2) - 1;
-    }
-    return ty;
-}
-
 // The type of operand `k` above `mark`.
 fn op_type[&m](m: &m [int], mark: int, k: int) -> [] int {
     return lm.cell(m, mark + 4 * k);
@@ -72,15 +64,15 @@ fn truth_of[&m](m: &!m [int], ty: int) -> [] int {
 
 // The type of the part of `ty` that the indices above `from` (operands of kind index, `n` of them) lead to: or -1.
 fn part_type[&m](m: &m [int], ty: int, from: int, n: int) -> [] int {
-    var at = resolved(m, ty);
+    var at = lm.resolved(m, ty);
     var k = 0;
     while k < n {
         let index = lm.cell(m, from + 4 * k + 2);
         let kind = lm.type_kind(m, at);
         if kind == lm.k_struct() && index >= 0 && index < lm.type_count(m, at) {
-            at = resolved(m, lm.type_part(m, at, index));
+            at = lm.resolved(m, lm.type_part(m, at, index));
         } else if kind == lm.k_array() && index >= 0 && index < lm.type_count(m, at) {
-            at = resolved(m, lm.type_part(m, at, 0));
+            at = lm.resolved(m, lm.type_part(m, at, 0));
         } else {
             return 0 - 1;
         }
