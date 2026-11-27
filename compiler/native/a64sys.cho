@@ -1,0 +1,55 @@
+edition 7;
+module selfhost.a64sys;
+
+// a64sys.cho -- the system registers of AArch64 by name (`docs/native-backend.md` section 11): the fifteen bits `o0:op1:CRn:CRm:op2` that `mrs` and `msr` carry
+// for each name `Cpu` accepts (`compiler/bare.cho`, `docs/cpu.md`). The table is not written by hand: `tests/native/a64_vectors.py` asks clang's assembler for
+// each name and writes what it answered here, and the same answers are vectors the encoder is held to.
+
+// Each name, `=`, and its fifteen bits as a number, with a space before each and after the last.
+fn table() -> [] &static [byte] {
+    return " sctlr_el1=16512 actlr_el1=16513 cpacr_el1=16514 ttbr0_el1=16640 ttbr1_el1=16641 tcr_el1=16642 esr_el1=17040 far_el1=17152 afsr0_el1=17032 afsr1_el1=17033 mair_el1=17680 amair_el1=17688 vbar_el1=17920 contextidr_el1=18049 tpidr_el1=18052 tpidr_el0=24194 tpidrro_el0=24195 par_el1=17312 spsr_el1=16896 elr_el1=16897 sp_el0=16904 sp_el1=25096 spsel=16912 daif=23057 nzcv=23056 fpcr=23072 fpsr=23073 csselr_el1=20480 mdscr_el1=18 osdlr_el1=156 mdccint_el1=16 cntkctl_el1=18184 cntfrq_el0=24320 cntp_tval_el0=24336 cntp_ctl_el0=24337 cntp_cval_el0=24338 cntv_tval_el0=24344 cntv_ctl_el0=24345 cntv_cval_el0=24346 cntps_tval_el1=32528 cntps_ctl_el1=32529 cntps_cval_el1=32530 cntvoff_el2=26371 cnthctl_el2=26376 cnthp_tval_el2=26384 cnthp_ctl_el2=26385 cnthp_cval_el2=26386 sctlr_el2=24704 actlr_el2=24705 hcr_el2=24712 mdcr_el2=24713 cptr_el2=24714 hstr_el2=24715 hacr_el2=24719 ttbr0_el2=24832 tcr_el2=24834 vttbr_el2=24840 vtcr_el2=24842 esr_el2=25232 far_el2=25344 hpfar_el2=25348 afsr0_el2=25224 afsr1_el2=25225 mair_el2=25872 amair_el2=25880 vbar_el2=26112 tpidr_el2=26242 spsr_el2=25088 elr_el2=25089 sp_el2=29192 vpidr_el2=24576 vmpidr_el2=24581 dacr32_el2=24960 ifsr32_el2=25217 fpexc32_el2=25240 sctlr_el3=28800 actlr_el3=28801 scr_el3=28808 cptr_el3=28810 mdcr_el3=28825 ttbr0_el3=28928 tcr_el3=28930 esr_el3=29328 far_el3=29440 afsr0_el3=29320 afsr1_el3=29321 mair_el3=29968 amair_el3=29976 vbar_el3=30208 tpidr_el3=30338 spsr_el3=29184 elr_el3=29185 pmcr_el0=23776 pmcntenset_el0=23777 pmcntenclr_el0=23778 pmovsclr_el0=23779 pmovsset_el0=23795 pmselr_el0=23781 pmccntr_el0=23784 pmccfiltr_el0=24447 pmxevtyper_el0=23785 pmxevcntr_el0=23786 pmuserenr_el0=23792 pmintenset_el1=17649 pmintenclr_el1=17650 icc_pmr_el1=16944 icc_bpr0_el1=17987 icc_bpr1_el1=18019 icc_ctlr_el1=18020 icc_sre_el1=18021 icc_igrpen0_el1=18022 icc_igrpen1_el1=18023 icc_sre_el2=26189 midr_el1=16384 mpidr_el1=16389 revidr_el1=16390 aidr_el1=18439 currentel=16914 ctr_el0=22529 dczid_el0=22535 ccsidr_el1=18432 clidr_el1=18433 isr_el1=17928 rvbar_el1=17921 cntpct_el0=24321 cntvct_el0=24322 mdccsr_el0=6152 oslsr_el1=140 pmceid0_el0=23782 pmceid1_el0=23783 id_pfr0_el1=16392 id_pfr1_el1=16393 id_dfr0_el1=16394 id_afr0_el1=16395 id_mmfr0_el1=16396 id_mmfr1_el1=16397 id_mmfr2_el1=16398 id_mmfr3_el1=16399 id_isar0_el1=16400 id_isar1_el1=16401 id_isar2_el1=16402 id_isar3_el1=16403 id_isar4_el1=16404 id_isar5_el1=16405 mvfr0_el1=16408 mvfr1_el1=16409 mvfr2_el1=16410 id_aa64pfr0_el1=16416 id_aa64pfr1_el1=16417 id_aa64dfr0_el1=16424 id_aa64dfr1_el1=16425 id_aa64afr0_el1=16428 id_aa64afr1_el1=16429 id_aa64isar0_el1=16432 id_aa64isar1_el1=16433 id_aa64mmfr0_el1=16440 id_aa64mmfr1_el1=16441 id_aa64mmfr2_el1=16442 icc_iar0_el1=17984 icc_iar1_el1=18016 icc_hppir0_el1=17986 icc_hppir1_el1=18018 icc_rpr_el1=18011 oslar_el1=132 pmswinc_el0=23780 icc_eoir0_el1=17985 icc_eoir1_el1=18017 icc_dir_el1=18009 icc_sgi0r_el1=18015 icc_sgi1r_el1=18013 icc_asgi1r_el1=18014 ";
+}
+
+// The fifteen bits of the register called `name` (lower case, as `Cpu` takes it), or -1 for a name that is not in the table.
+pub fn encoding[&n](name: &n [byte]) -> [] int {
+    let all = table();
+    if len(name) == 0 {
+        return 0 - 1;
+    }
+    var i = 1;
+    while i + len(name) + 2 < len(all) {
+        // An entry begins after a space.
+        var k = 0;
+        while k < len(name) && int_of(all[i + k]) == int_of(name[k]) {
+            k = k + 1;
+        }
+        if k == len(name) && int_of(all[i + k]) == '=' {
+            var value = 0;
+            var d = i + k + 1;
+            while d < len(all) && int_of(all[d]) >= '0' && int_of(all[d]) <= '9' && value < 32768 {
+                value = value * 10 + (int_of(all[d]) - '0');
+                d = d + 1;
+            }
+            return value;
+        }
+        while i < len(all) && int_of(all[i]) != ' ' {
+            i = i + 1;
+        }
+        i = i + 1;
+    }
+    return 0 - 1;
+}
+
+// How many registers the table has.
+pub fn count() -> [] int {
+    let all = table();
+    var n = 0;
+    var i = 0;
+    while i < len(all) {
+        if int_of(all[i]) == '=' {
+            n = n + 1;
+        }
+        i = i + 1;
+    }
+    return n;
+}
