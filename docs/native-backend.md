@@ -788,3 +788,36 @@ what the CI job says, and a failure there is this section's to record.
 - The command tests on a real AArch64 machine, until CI has run them.
 - Vector instructions, and the ciphers fast: N9 to N11 help the second, nothing here does.
 
+---
+
+## 15. The compiler builds itself with the native backend (N6)
+
+`scripts/build-standalone.sh --backend native`: stage 1 is built as always (by the seed, through clang); stage 2 by stage 1
+with `--backend native`; stage 3 by stage 2 the same way; and the script fails unless stage 2 and stage 3 are the same file.
+Between the compiler's sources and stage 2's object there is then no clang and no LLVM; `clang` is still the name the system's
+linker is started by. A job of CI on Linux on AArch64 (`native-self-build`) does this on every change, and then runs stage
+`walk` of the gate with the compiler it made: a compiler this backend miscompiled would refuse, accept or build some fixture
+differently.
+
+### 15.1 What was measured
+
+Under `qemu-aarch64` 8.2.2 on Linux x86-64, since that is the AArch64 machine there was; the compilers were cross-built and
+linked by `aarch64-linux-gnu-gcc`. The figures of a real machine are the CI job's, which prints them.
+
+| what | result |
+|---|---|
+| The natively built compiler builds itself natively, and that one again | the second object and the third are the same file (section 13.4), **and the same file the clang-built compiler writes**: the three compilers are one program |
+| The text each compiler writes for its own sources (29 MB), clang-built on x86-64, clang-built for AArch64, natively built for AArch64 | the same file, three times |
+| The time to write that text | clang-built (`-O2`): 41 s. Natively built: 7 min 19 s. **10.6 times slower**, both emulated, on a machine doing other work |
+| The size of the compiler | clang-built 4,262,248 bytes; natively built 10,066,960: 2.4 times |
+| TEXTS |
+
+The slowdown is the price of section 12's "every value in memory", with no instruction chosen for speed and none removed;
+N9 to N11 are where it is paid back, and this number is what they are measured against.
+
+### 15.2 Not done
+
+- **None of this on a real machine** before the CI job's first run, and the whole gate (not only `walk`) with the natively
+  built compiler as the one under test: the job runs `walk`, which is every fixture built, run and refused.
+- The seed is still built by clang (decision O3).
+
