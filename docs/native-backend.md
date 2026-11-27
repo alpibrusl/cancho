@@ -937,7 +937,7 @@ Linux x86-64, clang 18.1.3 and `ld.lld` as the other implementations, `qemu-syst
 | 2,700 single instructions made at random, each given to both assemblers | every line both take gives the same word, and none is taken here that clang refuses |
 | Every beginning of the three sources, and thousands of bytes of each replaced by each of twenty | refused or assembled; none traps (`tests/commands/native_asm.sh` runs it for the two kept sources) |
 | The layout reader on every beginning of a kernel's layout and every byte replaced by each of fourteen (8,000 texts) | none traps |
-| Ten layouts that cannot be followed, and a boot page with an instruction the assembler has not | each refused by the rule, with the name, the number or the line; nothing written |
+| Eight layouts that cannot be followed, a boot page that is not there, and one with an instruction the assembler has not | each refused by the rule, with the name, the number or the line; nothing written |
 | **cancho-os's kernel** through `--layout`, with its layout as section 16.1 has it | its boot page assembles, the image is placed, and **it is refused by the layout's own `limit`: the image is 139,856 bytes past the 2 MB where the kernel's tables are.** The linker's image of clang's code is 349,200 bytes; this one would be about 1.71 MB, 4.9 times. Booting it is N8, and needs either smaller code (N9) or the tables moved, which is cancho-os's to decide |
 
 Running against clang found two mistakes in the assembler that no reading had: `mov wzr, #0xff000` was taken as an `orr` whose
@@ -953,10 +953,11 @@ says it and an entry of a pool at the end of the section otherwise, as clang doe
 ### 16.6 Not done
 
 - **The image writer has no run of damaged inputs of its own**: it is given only what the reader, the generator, the layout
-  reader and the assembler accepted, each of which has one, and the gate's script gives it ten layouts it must refuse.
+  reader and the assembler accepted, each of which has one, and the gate's script gives it eight layouts it must refuse.
 - **cancho-os built this way** (N8): today its image passes its own limit.
 - **A map of the image** (where each name went), which a person debugging a kernel wants and a linker gives.
-- **Debug information.** An ELF executable from here has one loaded part and no sections or symbols.
+- **Debug information.** An ELF executable from here has one loaded part and no sections or symbols. `llvm-readelf -l` reads it and
+  QEMU loads it; `llvm-objdump -d` finds no section to disassemble and says the file ends early.
 - **Images for another processor**, and position-independent ones.
 - The QEMU run in the gate needs `qemu-system-aarch64`; where there is none the image is made and not booted, and the script
   says so. CI's Linux gate installs it.
