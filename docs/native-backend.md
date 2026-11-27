@@ -707,7 +707,7 @@ it does not run and passes. The programs of `tests/reject` are not run again: a 
 backend, and `tests/commands/native_elf.sh` holds three of them to the same answer with either.
 
 On every machine, `tests/commands/native_elf.sh` holds the writer to the bytes of the object that was linked and run
-(`tests/native/gen/tricky.o.hex`, 10,136 bytes; `llvm-readelf -a` and `llvm-objdump -dr` read it with no warning, and what
+(`tests/native/gen/tricky.o.hex`, 9,592 bytes; `llvm-readelf -a` and `llvm-objdump -dr` read it with no warning, and what
 `readelf` says is kept beside it), shows that one instruction or one value changed is another object, and builds the four
 programs for no system as objects with a `--clang` that does not exist.
 
@@ -719,12 +719,13 @@ compiler on x86-64 and the walker could run what they had built.
 
 | what | result |
 |---|---|
-| `tests/native/gen/tricky.ll` as an object | 10,136 bytes; `llvm-readelf -a` and `llvm-objdump -dr` read it with no warning; linked, it prints what section 12.6's run printed |
+| `tests/native/gen/tricky.ll` as an object | 9,592 bytes; `llvm-readelf -a` and `llvm-objdump -dr` read it with no warning; linked, it prints what section 12.6's run printed |
 | **Every `cancho test` run of `tests/cancho-tests.txt`** (17 runs, 266 tests), built with `--backend native` and run under qemu | **all pass**, with the number of tests each must have. `native_reader`, whose tests damage a module a byte at a time, takes 410 s there |
 | **`tests/accept` and `examples`, by the gate's own walker** (134 and 16 programs) | all the examples, and all of `tests/accept` **but two**: `exec_spawn_under` and `exec_spawn_detached_under` print `worker code 127`. Built by clang and run under the same qemu they print the same: the emulator does not start a program by a directory and a name. Whether they pass on a real machine is the first thing the CI job of section 13.3 says |
 | **The compiler, built by the native backend, building itself with the native backend** (under qemu), and that one again | the second object and the third are the same 11,673,792 bytes, **and they are the bytes the clang-built compiler writes for the same sources**. 517 s for one build under qemu |
 | The compiler's object, from its sources, on x86-64 | 10.6 s with `--backend native`, of which 9.7 s is the front end writing the module; clang takes 45 s for the object alone. 11.7 MB against clang's 5.2 MB |
 | The four programs for no system (`freestanding`, `cpu`, `mmio`, `bare_heap`) with `--emit obj` and a `--clang` that does not exist | four objects for AArch64; the LLVM backend, asked the same, fails for want of clang |
+| `llvm-nm -u` on the objects | for a program of Linux, functions of the C library and nothing else; for `bare_heap`, the heap's two ends and nothing else. (The first objects also named LLVM's own functions, `llvm.ctlz.i64` and eleven more, as symbols for the linker to find; nothing used them, so every link passed, and `nm` showed it) |
 | One `sub` made an `add` in the module, and one value 5 made 6 | each one line of the object's bytes changed: the gate's comparison can fail |
 
 A `cancho test` run built natively was also the first time section 13.2 was run whole: the searches of `std.bytes` and the

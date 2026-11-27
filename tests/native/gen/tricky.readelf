@@ -10,7 +10,7 @@ ELF Header:
   Version:                           0x1
   Entry point address:               0x0
   Start of program headers:          0 (bytes into file)
-  Start of section headers:          9432 (bytes into file)
+  Start of section headers:          8888 (bytes into file)
   Flags:                             0x0
   Size of this header:               64 (bytes)
   Size of program headers:           0 (bytes)
@@ -18,7 +18,7 @@ ELF Header:
   Size of section headers:           64 (bytes)
   Number of section headers:         11
   Section header string table index: 7
-There are 11 section headers, starting at offset 0x24d8:
+There are 11 section headers, starting at offset 0x22b8:
 
 Section Headers:
   [Nr] Name              Type            Address          Off    Size   ES Flg Lk Inf Al
@@ -27,12 +27,12 @@ Section Headers:
   [ 2] .rodata           PROGBITS        0000000000000000 001900 00000b 00   A  0   0 16
   [ 3] .data             PROGBITS        0000000000000000 001910 00000c 00  WA  0   0 16
   [ 4] .bss              NOBITS          0000000000000000 001920 000000 00  WA  0   0 16
-  [ 5] .symtab           SYMTAB          0000000000000000 001920 000318 18      6   3  8
-  [ 6] .strtab           STRTAB          0000000000000000 001c38 00016d 00      0   0  1
-  [ 7] .shstrtab         STRTAB          0000000000000000 001da5 00005a 00      0   0  1
-  [ 8] .rela.text        RELA            0000000000000000 001e00 0006d8 18   I  5   1  8
-  [ 9] .rela.data        RELA            0000000000000000 0024d8 000000 18   I  5   3  8
-  [10] .note.GNU-stack   PROGBITS        0000000000000000 0024d8 000000 00      0   0  1
+  [ 5] .symtab           SYMTAB          0000000000000000 001920 0001f8 18      6   3  8
+  [ 6] .strtab           STRTAB          0000000000000000 001b18 00006b 00      0   0  1
+  [ 7] .shstrtab         STRTAB          0000000000000000 001b83 00005a 00      0   0  1
+  [ 8] .rela.text        RELA            0000000000000000 001be0 0006d8 18   I  5   1  8
+  [ 9] .rela.data        RELA            0000000000000000 0022b8 000000 18   I  5   3  8
+  [10] .note.GNU-stack   PROGBITS        0000000000000000 0022b8 000000 00      0   0  1
 Key to Flags:
   W (write), A (alloc), X (execute), M (merge), S (strings), I (info),
   L (link order), O (extra OS processing required), G (group), T (TLS),
@@ -45,7 +45,7 @@ There are no program headers in this file.
   Segment Sections...
    None   .text .rodata .data .bss .symtab .strtab .shstrtab .rela.text .rela.data .note.GNU-stack 
 
-Relocation section '.rela.text' at offset 0x1e00 contains 73 entries:
+Relocation section '.rela.text' at offset 0x1be0 contains 73 entries:
     Offset             Info             Type               Symbol's Value  Symbol's Name + Addend
 0000000000000018  0000000100000113 R_AARCH64_ADR_PREL_PG_HI21 0000000000000000 fmt + 0
 000000000000001c  0000000100000115 R_AARCH64_ADD_ABS_LO12_NC 0000000000000000 fmt + 0
@@ -121,10 +121,10 @@ Relocation section '.rela.text' at offset 0x1e00 contains 73 entries:
 0000000000001874  000000050000011b R_AARCH64_CALL26       0000000000000000 show + 0
 0000000000001890  000000050000011b R_AARCH64_CALL26       0000000000000000 show + 0
 
-Relocation section '.rela.data' at offset 0x24d8 contains 0 entries:
+Relocation section '.rela.data' at offset 0x22b8 contains 0 entries:
     Offset             Info             Type               Symbol's Value  Symbol's Name + Addend
 
-Symbol table '.symtab' contains 33 entries:
+Symbol table '.symtab' contains 21 entries:
    Num:    Value          Size Type    Bind   Vis       Ndx Name
      0: 0000000000000000     0 NOTYPE  LOCAL  DEFAULT   UND 
      1: 0000000000000000     6 OBJECT  LOCAL  DEFAULT     2 fmt
@@ -147,18 +147,6 @@ Symbol table '.symtab' contains 33 entries:
     18: 000000000000103c   280 FUNC    GLOBAL DEFAULT     1 rest
     19: 0000000000001154  1888 FUNC    GLOBAL DEFAULT     1 main
     20: 0000000000000000     0 NOTYPE  GLOBAL DEFAULT   UND printf
-    21: 0000000000000000     0 NOTYPE  GLOBAL DEFAULT   UND llvm.sadd.with.overflow.i64
-    22: 0000000000000000     0 NOTYPE  GLOBAL DEFAULT   UND llvm.ssub.with.overflow.i64
-    23: 0000000000000000     0 NOTYPE  GLOBAL DEFAULT   UND llvm.smul.with.overflow.i64
-    24: 0000000000000000     0 NOTYPE  GLOBAL DEFAULT   UND llvm.uadd.with.overflow.i64
-    25: 0000000000000000     0 NOTYPE  GLOBAL DEFAULT   UND llvm.usub.with.overflow.i64
-    26: 0000000000000000     0 NOTYPE  GLOBAL DEFAULT   UND llvm.umul.with.overflow.i64
-    27: 0000000000000000     0 NOTYPE  GLOBAL DEFAULT   UND llvm.memset.p0.i64
-    28: 0000000000000000     0 NOTYPE  GLOBAL DEFAULT   UND llvm.ctpop.i64
-    29: 0000000000000000     0 NOTYPE  GLOBAL DEFAULT   UND llvm.ctlz.i64
-    30: 0000000000000000     0 NOTYPE  GLOBAL DEFAULT   UND llvm.cttz.i64
-    31: 0000000000000000     0 NOTYPE  GLOBAL DEFAULT   UND llvm.sqrt.f64
-    32: 0000000000000000     0 NOTYPE  GLOBAL DEFAULT   UND llvm.sqrt.f32
 There are no section groups in this file.
 Memtag Dynamic Entries:
     < none found >
