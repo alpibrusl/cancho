@@ -8,6 +8,8 @@ work=$2
 . tests/commands/script_lib.sh
 layout=tests/native/asm/virt.layout
 mkdir -p "$work/empty"
+# The layout with the line $2 added after its line $1 (awk: a `sed` does not everywhere take a new line in what it puts).
+after() { awk -v at="$1" -v more="$2" '{ print } $0 == at { print more }' $layout; }
 build() { PATH="$work/empty" "$cancho" build tests/probes/freestanding.cho --std --target aarch64-none-elf --backend native "$@"; }
 
 begin the_compiler_alone_writes_the_image_and_the_executable_that_holds_it
@@ -61,9 +63,9 @@ try() {
     same "$(sed -n 2p "$work/$1.txt" | sed 's/^ *//')" "$2" "what is said for $1"
 }
 grep -v '__stack_top' $layout | try undefined 'the image: a name the image uses is defined by nothing: not by the program, the boot page or a `symbol` of the layout: `__stack_top`'
-sed 's/^symbol __bss_end$/symbol __bss_end\nsymbol main/' $layout | try twice 'the image: a name is defined twice, among the program, the boot page and the layout'"'"'s `symbol` lines: `main`'
+after 'symbol __bss_end' 'symbol main' | try twice 'the image: a name is defined twice, among the program, the boot page and the layout'"'"'s `symbol` lines: `main`'
 # (By how much depends on the code, so the number is not held to one value: it is a number, and not zero.)
-sed 's/^text$/text\nlimit 0x80100/' $layout > "$work/limit.layout.txt"
+after 'text' 'limit 0x80100' > "$work/limit.layout.txt"
 mkdir -p "$work/limit" && cp tests/native/asm/virt.S "$work/limit/virt.S" && cp "$work/limit.layout.txt" "$work/limit/case.layout"
 build --layout "$work/limit/case.layout" -o "$work/out/limit.img" > "$work/limit.txt" 2>&1
 same "$?" 1 "the status for limit"
@@ -71,7 +73,7 @@ same "$(sed -n 2p "$work/limit.txt" | sed 's/^ *//; s/([1-9][0-9]*)$/(N)/')" 'th
 grep -v '^rodata$' $layout | try unplaced 'the image: the image has something the layout has no line for (1 the boot page, 2 `text`, 3 `rodata`, 4 `data`, 5 `bss`) (3)'
 sed 's/^entry _start$/entry main/' $layout | try entry 'the image: a flat image starts at its first byte, and `entry` names another place: `main`'
 grep -v '^entry' $layout | try noentry 'the image: the layout has no `entry` line'
-sed 's/^at 0x80000$/at 0x80000\nat 0x1000/' $layout | try back 'the image: an `at` of the layout is before the place: the place only goes forward (520192)'
+after 'at 0x80000' 'at 0x1000' | try back 'the image: an `at` of the layout is before the place: the place only goes forward (520192)'
 sed 's/^align 4096$/align 4000/' $layout | try layout 'line 6 of the layout: `align` takes a power of two'
 sed 's/^boot virt.S$/boot none.S/' $layout > "$work/missing.layout"
 build --layout "$work/missing.layout" -o "$work/out/missing.img" > "$work/missing.txt" 2>&1
