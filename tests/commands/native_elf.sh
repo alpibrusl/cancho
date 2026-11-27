@@ -1,7 +1,7 @@
 # native_elf.sh -- the script of tests/commands/script_tests.cho for the native backend's objects (docs/native-backend.md section 13, epic #840 N4).
 # $1 is the compiler, $2 a scratch directory; run from the root of the repository.
 # The object of tests/native/gen/tricky.ll is kept, as the bytes `od` prints (tests/native/gen/tricky.o.hex): it is the object that was linked by the system's
-# linker and run under qemu, where it printed tests/native/gen/tricky.out, and that `llvm-readelf -a` (kept beside it, tricky.readelf) and `llvm-objdump -dr`
+# linker and run under qemu, where it printed what clang's build of the module prints, and that `llvm-readelf -a` (kept beside it, tricky.readelf) and `llvm-objdump -dr`
 # read with no warning. The gate has no AArch64 machine but one (stage `native`, on Linux on AArch64, is where programs built so are run), so here the
 # writer must write those bytes again; and the compiler must write an object for a machine with no system from any host.
 cancho=$1

@@ -274,6 +274,11 @@ fn binding[&t, &m](text: &t [byte], m: &m [int], slot: int) -> [] int {
         return 2;
     }
     if kind == lr.r_declare() && lm.cell(m, slot + 3) != 0 {
+        // A function of LLVM's is not one the linker finds: the generator wrote its instructions where it was called.
+        let name = lm.cell(m, slot);
+        if lm.at(text, name + 1) == 'l' && lm.at(text, name + 2) == 'l' && lm.at(text, name + 3) == 'v' && lm.at(text, name + 4) == 'm' && lm.at(text, name + 5) == '.' {
+            return 0;
+        }
         return 3;
     }
     return 0;
