@@ -80,9 +80,9 @@ cancho build $(sed 's|^|compiler/|' compiler/cancho.files) --std --emit ll --hos
   `floatcode.cho`, `threadcode.cho`, `cryptocode.cho`, `filecode.cho`, `netcode.cho`, `externcode.cho`, `consteval.cho`,
   `platform.cho`, `bare.cho`) and the runtime files, read for every form. Nothing was found there that the 459 modules do not
   also hold, so the committed set is the census and nothing was added by hand.
-- **Not re-measured here: cancho-os's kernel.** It needs `cancho-ssh`, which this work could not read. The epic's count of the
-  kernel stands as the epic's; every form it lists is in the set (the floating-point instructions, `inttoptr`, the volatile
-  accesses and the registers all come from probes and fixtures here).
+- **cancho-os's kernel** (0.0.30 at `adaf83e`, with cancho-ssh at the commit it pins), counted again with N1, when cancho-ssh
+  could be read: 143,933 lines, **834 functions, 846 globals and 18 strings of assembly, as the epic said**, and every form of
+  it is in the set. (N0 wrote here that it had not been measured, and relied on probes for the forms a kernel uses.)
 
 The compiler's module for darwin, counted again: **454,230 lines, 2,947 functions, 8,719 globals**, the epic's numbers exactly,
 and `load` 114,283, `call` 51,779, `br` 46,825, `store` 44,788, as it said. Writing it takes 7.2 s on this machine (3.7 s on the
@@ -248,8 +248,6 @@ to read a module with.) `tests/reject/backend_native_not_built.cho` is the rule'
 ## 9. Not done
 
 - Any encoder, code generator, object or image writer: N2 to N8.
-- The census of cancho-os's kernel, made again (section 3.1); and the kernel booted from a module that went through the reader
-  (section 10.6).
 - The census as a job over every module of every host; today it is the gate's host and the bare probe.
 - Section 10.7 lists what the reader itself leaves for later.
 
@@ -413,7 +411,7 @@ cancho test --std compiler/native/llmod.cho compiler/native/llread.cho compiler/
 | A vector, `invoke`, `urem`, `tail`, metadata, an attribute, a quoted name, an unknown target: 18 forms | each refused with its reason and its line |
 | Every byte of three modules (5,000 bytes) made each of ten bytes, strict and not; every truncation | each read or refused; none reaches a trap (100,000 reads, 6 s) |
 | The reader broken on purpose in seven ways (the printer drops `volatile`; an undefined name, a name defined twice, a vector and an unknown instruction let through; the room's check removed; a hexadecimal number of any length taken) | five were caught by the suite as it was written; the last two had no test, and have one now |
-| cancho-os's kernel through the reader, booted | **not done** (section 10.7) |
+| cancho-os's kernel (0.0.30, `adaf83e`) built by its own `build.sh` with every module through the reader | `kernel.o`, `kernel8.img` and `kernel-virt.elf` are **the same bytes** as without it; the image boots in QEMU 8.2.2 (`raspi3b`) and `./test.sh about 'echo ci' ticks crash about` answers as it should, the trap of `crash` included |
 
 The round trip is stronger than N1 asked: it asked that programs behave the same, and the objects are the same bytes, so the
 printer loses nothing clang reads. What it does lose is what clang does not read: comments, and the spacing.
@@ -421,9 +419,6 @@ printer loses nothing clang reads. What it does lose is what clang does not read
 ### 10.7 Left for later
 
 - **The room.** `room` is an upper bound that holds for any text; it is four times what the compiler's module uses.
-- **The kernel through the round trip, booted.** N1's acceptance asks for cancho-os built through the reader and booted in
-  QEMU. It needs `cancho-ssh` beside it, which this work could not read; the probes for no system are what was tried
-  (section 10.6). It is one command in cancho-os's CI once this is in a compiler it pins.
 - **`byte_mask64` under the native backend** (section 3.4): still a vector, so `--backend native` refuses a program that
   searches bytes, at the line. N3 decides between a scalar form in the front end and vectors in the code generator.
 - **Undeclared intrinsics** are accepted, as clang accepts them; the driver could declare them instead.
