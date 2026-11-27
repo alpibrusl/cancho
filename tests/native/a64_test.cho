@@ -189,7 +189,7 @@ fn test_a_few_words_everyone_knows() -> [] int {
     test.assert_eq(a64sys.encoding("midr_el2"), 0 - 1);
     test.assert_eq(a64sys.encoding("midr_el"), 0 - 1);
     test.assert_eq(a64sys.encoding(""), 0 - 1);
-    test.assert_eq(a64sys.encoding("midr_el1=4000"), 0 - 1);
+    test.assert_eq(a64sys.encoding("midr_el1=16384"), 0 - 1);
     return 0;
 }
 

@@ -297,7 +297,7 @@ def main():
             assert table.setdefault(name, operands[2]) == operands[2]
         lines.append("%s %s%08x ; %s\n" % (form, "".join("%d " % o for o in operands), word, text))
     vectors_text = "".join(lines)
-    names = "".join(" %s=%04x" % (name, table[name]) for name, _, _ in regs) + " "
+    names = "".join(" %s=%d" % (name, table[name]) for name, _, _ in regs) + " "
     sys_text = open(SYS).read() if os.path.exists(SYS) else ""
     new_sys = re.sub(r'(fn table\(\) -> \[\] &static \[byte\] \{\n    return ")[^"]*(";)', lambda m: m.group(1) + names + m.group(2), sys_text)
     if "--check" in sys.argv:
