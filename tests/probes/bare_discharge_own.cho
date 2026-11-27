@@ -1,0 +1,61 @@
+edition 13;
+
+// bare_discharge_own.cho -- what a `system` block does not discharge (`docs/bare-system.md` 12): the row of `lend`, for no system, is the addresses the module's `out`
+// writes to, the addresses the body writes to itself inside the block, and `io_read`, which the module `probe_dev` has no `key` for. `io_write` and `args` are not in it.
+// tests/commands/freestanding.sh builds it for `aarch64-none-elf` and takes each label out of the row in turn.
+import probe_dev;
+
+fn tell[&i, &g](io: &!i Io, args: &g Args) -> [io_write, io_read, args] int {
+    var n = 0;
+    while n < arg_count(args) {
+        write_bytes(io, arg(args, n));
+        n = n + 1;
+    }
+    flush_out(io);
+    return n + getchar(io);
+}
+
+fn lend[&i, &g, &c, &l, &u](io: &!i Io, args: &g Args, con: &!c Mmio("0x1000..0x1010"), lamp: &!l Mmio("0x2000..0x2008"), used: &!u [int]) -> [io_read, mmio("0x1000..0x1010"), mmio("0x2000..0x2008")] int {
+    var n = 0;
+    system probe_dev(con, used) in {
+        n = tell(io, args);
+        // the body's own hardware, reached through no hosted builtin
+        mmio_write32(lamp, 8192, n);
+    }
+    return n;
+}
+
+fn main(world: World) -> [] int {
+    let Split { io, ffi, fs, heap, args, out, ports, clock, signals, exec, tty, camera, mic, speaker, mmio } = split(world);
+    release(ffi);
+    release(fs);
+    release(heap);
+    release(out);
+    release(ports);
+    release(clock);
+    release(signals);
+    release(exec);
+    release(tty);
+    release(camera);
+    release(mic);
+    release(speaker);
+    let (con, lamp) = narrow(mmio, "0x1000..0x1010", "0x2000..0x2008");
+    var status = 0;
+    region r {
+        let used = alloc_slice[r](2, 0);
+        borrow mut io as &!i in {
+            borrow args as &g in {
+                borrow mut con as &!c in {
+                    borrow mut lamp as &!l in {
+                        status = lend(i, g, c, l, used);
+                    }
+                }
+            }
+        }
+    }
+    release(con);
+    release(lamp);
+    release(io);
+    release(args);
+    return status;
+}

@@ -155,6 +155,105 @@ else
 fi
 end
 
+# What a `system` block discharges (docs/bare-system.md 12). rule_for FILES...: the rule `check` refuses the program by, for no system; nothing if it is accepted.
+rule_for() { "$cancho" check "$@" --target aarch64-none-elf --output json 2> /dev/null | grep -o '"rule": "[a-z-]*"' | head -n 1 | sed 's/.*: "\(.*\)"/\1/'; }
+# rule_here FILES...: the same, for the machine this runs on.
+rule_here() { "$cancho" check "$@" --output json 2> /dev/null | grep -o '"rule": "[a-z-]*"' | head -n 1 | sed 's/.*: "\(.*\)"/\1/'; }
+# performs FILE: the labels of the report FILE, on one line.
+performs() { awk '/^performs/ { on = 1; next } /^[a-z]/ { on = 0 } on { sub(/^ */, ""); printf "%s ", $0 }' "$1"; }
+never() { awk '/^never touches/ { on = 1; next } /^[a-z]/ { on = 0 } on { sub(/^ */, ""); printf "%s, ", $0 }' "$1"; }
+
+# The function that contains the block performs, for no system, none of the labels the module answers every function of: its row is empty, and one that still lists
+# them says more than the body does. For this machine the block is only its body and the same function performs them: the empty row says less.
+begin a_lent_system_discharges_the_labels_it_answers
+same "$(rule_for tests/probes/bare_discharge.cho tests/probes/bare_system_io.cho)" "" "the row with nothing in it, for no system"
+sed 's/^\(fn lend\[.*\) -> \[\] int {$/\1 -> [io_write, args] int {/' tests/probes/bare_discharge.cho > "$work/hosted_row.cho"
+same "$(grep -c '^fn lend.* -> \[io_write, args\] int {$' "$work/hosted_row.cho")" 1 "the row for a system was written in"
+same "$(rule_for "$work/hosted_row.cho" tests/probes/bare_system_io.cho)" "effect-declared-not-performed" "a row that still lists what is discharged, for no system"
+sed 's/^\(fn lend\[.*\) -> \[\] int {$/\1 -> [args] int {/' tests/probes/bare_discharge.cho > "$work/one_left.cho"
+same "$(rule_for "$work/one_left.cho" tests/probes/bare_system_io.cho)" "effect-declared-not-performed" "a row that still lists one of them"
+same "$(rule_here tests/probes/bare_discharge.cho tests/probes/bare_system_io.cho)" "effect-not-declared" "the row with nothing in it, for this machine"
+same "$(rule_here "$work/one_left.cho" tests/probes/bare_system_io.cho)" "effect-not-declared" "half of the row, for this machine"
+if "$cancho" build "$work/hosted_row.cho" tests/probes/bare_system_io.cho -o "$work/discharge-host" > "$work/discharge-host.txt" 2>&1; then
+    same "$("$work/discharge-host" one two | tail -n 2 | tr '\n' ' ')" "one two " "what it writes on this machine, with the row for a system"
+else
+    fail "with the row for a system, for this machine, the build said: $(head -c 300 "$work/discharge-host.txt")"
+fi
+# The module without `flush`: `io_write` has a function missing and is not discharged; `args` still is.
+grep -v '^$' tests/probes/bare_system_io.cho | sed 's/^pub fn flush\[/pub fn flushed[/' > "$work/noflush.cho"
+same "$(rule_for tests/probes/bare_discharge.cho "$work/noflush.cho")" "effect-not-declared" "with no flush in the module, the empty row"
+sed 's/^\(fn lend\[.*\) -> \[\] int {$/\1 -> [io_write] int {/' tests/probes/bare_discharge.cho > "$work/write_left.cho"
+same "$(rule_for "$work/write_left.cho" "$work/noflush.cho")" "" "with no flush in the module, the row with io_write"
+# The report: for no system the discharged labels are not in it, whoever performed them; for this machine they are.
+"$cancho" authority tests/probes/bare_discharge.cho tests/probes/bare_system_io.cho --target aarch64-none-elf > "$work/discharge-auth.txt" 2>&1
+same "$(head -n 1 "$work/discharge-auth.txt")" "performs nothing" "the report for no system"
+same "$(never "$work/discharge-auth.txt")" "the console, the filesystem, the network, the heap, the command line, signals, other programs, foreign code, " "what it never touches"
+"$cancho" authority "$work/hosted_row.cho" tests/probes/bare_system_io.cho > "$work/discharge-auth-host.txt" 2>&1
+same "$(performs "$work/discharge-auth-host.txt")" "args io_write " "the report for this machine"
+"$cancho" authority "$work/write_left.cho" "$work/noflush.cho" --target aarch64-none-elf > "$work/noflush-auth.txt" 2>&1
+same "$(performs "$work/noflush-auth.txt")" "io_write " "the report with no flush in the module"
+end
+
+# What the block does not discharge stays in the row, exactly: the addresses the module's own functions write to, the addresses the body writes to itself inside the block,
+# and a hosted label the module has no function for.
+begin what_a_lent_system_does_not_answer_stays_in_the_row
+if "$cancho" build tests/probes/bare_discharge_own.cho tests/probes/bare_discharge_dev.cho --target aarch64-none-elf --emit ll -o "$work/own.ll" > "$work/own.txt" 2>&1; then
+    same "$(calls_undefined "$work/own.ll")" "" "what the module calls and does not define"
+    same "$(awk '/^define i32 @getchar\(/ { on = 1 } on && /call void @cancho_trap\(/ { print "trap"; exit } on && /^}/ { exit }' "$work/own.ll")" "trap" "reading with no key in the module is a trap"
+else
+    fail "a block with hardware of its own, for no system, said: $(head -c 300 "$work/own.txt")"
+fi
+sed 's/^\(fn lend\[.*\), mmio("0x2000\.\.0x2008")\] int {$/\1] int {/' tests/probes/bare_discharge_own.cho > "$work/nolamp.cho"
+same "$(grep -c '^fn lend.*0x2000\.\.0x2008")\] int {$' "$work/nolamp.cho")" 0 "the lamp was taken out of the row"
+same "$(rule_for "$work/nolamp.cho" tests/probes/bare_discharge_dev.cho)" "effect-not-declared" "without the addresses the body writes to itself"
+sed 's/^\(fn lend\[.*\) -> \[io_read, mmio("0x1000\.\.0x1010"), /\1 -> [io_read, /' tests/probes/bare_discharge_own.cho > "$work/nocon.cho"
+same "$(rule_for "$work/nocon.cho" tests/probes/bare_discharge_dev.cho)" "effect-not-declared" "without the addresses the module writes to"
+sed 's/^\(fn lend\[.*\)\] int {$/\1, mmio("0x3000..0x3008")] int {/' tests/probes/bare_discharge_own.cho > "$work/extra.cho"
+same "$(rule_for "$work/extra.cho" tests/probes/bare_discharge_dev.cho)" "effect-declared-not-performed" "with addresses nothing writes to"
+sed 's/^\(fn lend\[.*\) -> \[io_read, /\1 -> [/' tests/probes/bare_discharge_own.cho > "$work/noread.cho"
+same "$(grep -c '^fn lend.* -> \[mmio' "$work/noread.cho")" 1 "io_read was taken out of the row"
+same "$(rule_for "$work/noread.cho" tests/probes/bare_discharge_dev.cho)" "effect-not-declared" "without io_read, which the module has no key for"
+# A row that still lists what the block discharged is refused in a function that has addresses in its row too, where `check` alone would not say so.
+sed 's/^\(fn lend\[.*\) -> \[io_read, /\1 -> [io_read, io_write, /' tests/probes/bare_discharge_own.cho > "$work/stale.cho"
+same "$(grep -c '^fn lend.* -> \[io_read, io_write, mmio' "$work/stale.cho")" 1 "io_write was written into the row"
+same "$(rule_for "$work/stale.cho" tests/probes/bare_discharge_dev.cho)" "effect-declared-not-performed" "a row with addresses that still lists what is discharged"
+# The same for a path, with a module that answers paths: the row lists `fs_read("")` and nothing reads a file.
+{ cat tests/probes/bare_discharge_dev.cho; printf '\npub fn open[&c, &u, &p](con: &!c Mmio("0x1000..0x1010"), used: &!u [int], path: &p [byte], mode: int) -> [] int {\n    return 0 - 2;\n}\n\npub fn folder[&c, &u, &p](con: &!c Mmio("0x1000..0x1010"), used: &!u [int], path: &p [byte]) -> [] int {\n    return 0 - 2;\n}\n'; } > "$work/withpaths.cho"
+sed 's/^\(fn lend\[.*\) -> \[io_read, /\1 -> [io_read, fs_read(""), /' tests/probes/bare_discharge_own.cho > "$work/stale_path.cho"
+same "$(rule_for tests/probes/bare_discharge_own.cho "$work/withpaths.cho")" "" "the row as it is, with a module that answers paths"
+same "$(rule_for "$work/stale_path.cho" "$work/withpaths.cho")" "effect-declared-not-performed" "a row with addresses that lists a path nothing reads"
+# With a `key` in the module the same row is the right one.
+{ cat tests/probes/bare_discharge_dev.cho; printf '\npub fn key[&c, &u](con: &!c Mmio("0x1000..0x1010"), used: &!u [int]) -> [] int {\n    return 0 - 1;\n}\n'; } > "$work/withkey.cho"
+same "$(rule_for "$work/noread.cho" "$work/withkey.cho")" "" "without io_read, with a key in the module"
+"$cancho" authority tests/probes/bare_discharge_own.cho tests/probes/bare_discharge_dev.cho --target aarch64-none-elf > "$work/own-auth.txt" 2>&1
+same "$(performs "$work/own-auth.txt")" 'io_read mmio("0x1000..0x1010") mmio("0x2000..0x2008") ' "the report: what was not discharged, the module's own and the body's own"
+"$cancho" authority "$work/noread.cho" "$work/withkey.cho" --target aarch64-none-elf > "$work/key-auth.txt" 2>&1
+same "$(performs "$work/key-auth.txt")" 'mmio("0x1000..0x1010") mmio("0x2000..0x2008") ' "the report with a key in the module"
+end
+
+# And a path: `fs_read("")` and `file_read` are discharged when the module has `open` and `folder`, and `read`, `read_at` and `size`. A file read outside the block is
+# the function's own, before the block or after it.
+begin a_lent_system_discharges_the_paths_it_answers
+same "$(rule_for tests/probes/bare_discharge_files.cho tests/probes/bare_system_fs.cho)" "" "the row with nothing in it, for no system"
+same "$(rule_here tests/probes/bare_discharge_files.cho tests/probes/bare_system_fs.cho)" "effect-not-declared" "the same row for this machine"
+grep -v '^$' tests/probes/bare_system_fs.cho | sed 's/^pub fn open\[/pub fn opened[/' > "$work/noopen.cho"
+same "$(rule_for tests/probes/bare_discharge_files.cho "$work/noopen.cho")" "effect-not-declared" "with no open in the module, the empty row"
+sed 's/^\(fn lend\[.*\) -> \[\] int {$/\1 -> [fs_read("")] int {/' tests/probes/bare_discharge_files.cho > "$work/path_left.cho"
+same "$(rule_for "$work/path_left.cho" "$work/noopen.cho")" "" "with no open in the module, the row with the path"
+sed 's/^    var c = 0;$/    var c = first(fs);/' tests/probes/bare_discharge_files.cho > "$work/before.cho"
+same "$(grep -c '^    var c = first(fs);$' "$work/before.cho")" 1 "a file is read before the block"
+same "$(rule_for "$work/before.cho" tests/probes/bare_system_fs.cho)" "effect-not-declared" "a file read before the block, the empty row"
+sed 's/^\(fn lend\[.*\) -> \[\] int {$/\1 -> [fs_read(""), file_read] int {/' "$work/before.cho" > "$work/before_row.cho"
+same "$(rule_for "$work/before_row.cho" tests/probes/bare_system_fs.cho)" "" "a file read before the block, with its row"
+sed 's/^    return c;$/    return c + first(fs);/' tests/probes/bare_discharge_files.cho > "$work/after.cho"
+same "$(grep -c '^    return c + first(fs);$' "$work/after.cho")" 1 "a file is read after the block"
+same "$(rule_for "$work/after.cho" tests/probes/bare_system_fs.cho)" "effect-not-declared" "a file read after the block, the empty row"
+"$cancho" authority tests/probes/bare_discharge_files.cho tests/probes/bare_system_fs.cho --target aarch64-none-elf > "$work/files-auth.txt" 2>&1
+same "$(head -n 1 "$work/files-auth.txt")" "performs nothing" "the report for no system"
+"$cancho" authority "$work/path_left.cho" "$work/noopen.cho" --target aarch64-none-elf > "$work/noopen-auth.txt" 2>&1
+same "$(performs "$work/noopen-auth.txt")" 'fs_read("") ' "the report with no open in the module"
+end
+
 begin an_object_for_no_system_is_an_elf_for_aarch64
 if "$cancho" build tests/probes/freestanding.cho --std --target aarch64-none-elf --emit obj -o "$work/bare.o" > "$work/obj.txt" 2>&1; then
     # The four bytes of the magic, then (at 18) the machine: 183, AArch64, little-endian.

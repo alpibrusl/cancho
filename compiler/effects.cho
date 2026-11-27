@@ -140,6 +140,18 @@ pub fn perform_named[&s](st: &!s [int], name: &static [byte]) -> [] int {
     return 0;
 }
 
+// The bit of a set for the label called `name`, which some builtin performs.
+pub fn label_bit[&s](st: &!s [int], name: &static [byte]) -> [] int {
+    var n = 0;
+    while n < builtins.effect_count() {
+        if bytes.equal(builtins.effect_name(n), name) {
+            return two_to(st, n);
+        }
+        n = n + 1;
+    }
+    return 0;
+}
+
 // The function performed something the masks do not keep: a label with an argument (a path, a program, an address, a
 // library), or what a function value does. Bit 61 of the set says so, and the refusal that the row says more than the body
 // does is not made for such a function.
@@ -217,6 +229,108 @@ pub fn discharged[&s](st: &!s [int], index: int) -> [] int {
     return mask;
 }
 
+// ------------------------------------------------------------------- a lent system (`docs/bare-system.md` 12) ---
+//
+// On the target with no system, a `system` block discharges the hosted labels its module answers: the body's set is counted apart from the function's, and what is not
+// discharged is added back after it. `instances.lent` is what the block discharges, with bit 59 while its body is walked.
+
+// Is the body of a `system` block being walked, and does the block answer the label with an argument numbered `label` (`arg_label_name`)? Only `fs_read` (1) is ever answered.
+fn answered[&s](st: &!s [int], label: int) -> [] bool {
+    let lent = instances.lent(st);
+    return has(st, lent, 59) && label == 1 && has(st, lent, 60);
+}
+
+// Inside the body of a `system` block, the function performed a label with an argument the block does not answer (or something that has no row to tell by): bit 55 of the
+// body's set, which is in no set outside a body.
+fn mark_kept[&s](st: &!s [int]) -> [] int {
+    if has(st, instances.lent(st), 59) && !has(st, st[54], 55) {
+        st[54] = st[54] + two_to(st, 55);
+    }
+    return 0;
+}
+
+// The function being checked performs `label` with the argument whose literal is the token `lit`: the row is kept (`instances.note_label`), and a `system` block is told
+// whether it is one of its own.
+fn note_arg[&s](st: &!s [int], label: int, lit: int) -> [] bool {
+    if !answered(st, label) {
+        mark_kept(st);
+    }
+    return instances.note_label(st, st[64], label, lit);
+}
+
+// The body of a `system` block that discharges `labels` (the plain ones by their bits, bit 60 for `fs_read`) starts: the set the function has so far is answered, to be
+// given back to `lend_end`, and the body starts from the empty one.
+pub fn lend[&s](st: &!s [int], labels: int) -> [] int {
+    let outer = st[54];
+    st[54] = 0;
+    instances.set_lent(st, labels + two_to(st, 59));
+    instances.set_lender(st, st[64] + 1);
+    return outer;
+}
+
+// The body has ended. The function's set is `outer` and, of the body's: every plain label the block does not discharge; the flags for a function value and for a label that
+// was not followed; and the flags for a label with an argument only if the body performed one the block does not answer, since otherwise all it performed were the
+// `fs_read` rows taken out here (those from row `rows` on; one the function had before the block stays).
+pub fn lend_end[&s](st: &!s [int], outer: int, rows: int) -> [] int {
+    let labels = instances.lent(st) - two_to(st, 59);
+    let body = st[54];
+    var set = outer;
+    var n = 0;
+    while n < label_count() {
+        if has(st, body, n) && !has(st, labels, n) && !has(st, set, n) {
+            set = set + two_to(st, n);
+        }
+        n = n + 1;
+    }
+    let kept = has(st, body, 55) || has(st, body, 56) || has(st, body, 57) || has(st, body, 58);
+    n = 56;
+    while n < 63 {
+        if n != 59 && n != 60 && has(st, body, n) && !has(st, set, n) && (kept || n < 61) {
+            set = set + two_to(st, n);
+        }
+        n = n + 1;
+    }
+    if has(st, labels, 60) {
+        instances.forget_labels(st, st[64], 1, rows);
+    }
+    st[54] = set;
+    instances.set_lent(st, labels);
+    return 0;
+}
+
+// The function `fn_item`, if it is the one that contains the `system` block, is held to what the block discharged: a label of those that its row still lists, and that
+// it performs nowhere outside the block, is `effect-declared-not-performed`. `check` does not say so of a function that performs a label with an argument while code is
+// written, and the function that lends is such a one in a kernel (its `mmio`). Not asked where the set is not all there is: a function value called, a label not followed.
+pub fn lender_exact[&s, &x](st: &!s [int], text: &x [byte], fn_item: int, from: int, to: int) -> [] int {
+    if instances.lender(st) != fn_item + 1 || has(st, st[54], 56) || has(st, st[54], 58) {
+        return 0;
+    }
+    let labels = instances.lent(st);
+    let declared = row_mask(st, text, fn_item);
+    var n = 0;
+    while n < label_count() {
+        if has(st, labels, n) && has(st, declared, n) && !has(st, st[54], n) {
+            ast.fail(st, rules.r_effect_declared_not_performed(), from, to);
+            return 0;
+        }
+        n = n + 1;
+    }
+    if has(st, labels, 60) && mmio_in_row(st, text, 1, ast.get(st, fn_item, 9), 0) >= 0 {
+        var reads = false;
+        var row = 0;
+        while row < instances.label_rows(st) {
+            if instances.label_item(st, row) == fn_item && instances.label_name(st, row) == 1 {
+                reads = true;
+            }
+            row = row + 1;
+        }
+        if !reads {
+            ast.fail(st, rules.r_effect_declared_not_performed(), from, to);
+        }
+    }
+    return 0;
+}
+
 // Does a function that owns `Fs("/tmp")` or `Exec("/bin")` discharge the path or program in token `lit`, which a callee
 // performs (`family` 0 reads and writes of `Fs`, 1 `Exec`)? A `World` discharges every one; a borrowed capability none
 // (`discharged_by`). What is not a literal of a prelude type is not judged: true.
@@ -255,7 +369,10 @@ pub fn outside_owned[&s, &x](st: &!s [int], text: &x [byte], caller: int, callee
     var p = ast.get(st, callee, 9) + 1;
     while !pass1.is_code(st, p, lc.Tok::RBracket) {
         var family = 0 - 1;
-        if lc.spells(text, ast.tstart(st, p), ast.tend(st, p), "fs_read") || lc.spells(text, ast.tstart(st, p), ast.tend(st, p), "fs_write") {
+        if lc.spells(text, ast.tstart(st, p), ast.tend(st, p), "fs_read") && answered(st, 1) {
+            // a path read inside a `system` block that answers `fs_read` is the block's to answer, not an owner's
+            family = 0 - 1;
+        } else if lc.spells(text, ast.tstart(st, p), ast.tend(st, p), "fs_read") || lc.spells(text, ast.tstart(st, p), ast.tend(st, p), "fs_write") {
             family = 0;
         } else if lc.spells(text, ast.tstart(st, p), ast.tend(st, p), "exec") {
             family = 1;
@@ -641,7 +758,7 @@ pub fn note_call[&s, &x](st: &!s [int], text: &x [byte], id: int, cap: int) -> [
             } else if bit == 6 {
                 label = 8;
             }
-            if !instances.note_label(st, st[64], label, lit) {
+            if !note_arg(st, label, lit) {
                 ok = false;
             }
         }
@@ -653,7 +770,7 @@ pub fn note_call[&s, &x](st: &!s [int], text: &x [byte], id: int, cap: int) -> [
 // The function being checked performs `cpu` with the name in the string token `lit` (`atoms.cpu_builtin`).
 pub fn note_cpu[&s](st: &!s [int], lit: int) -> [] int {
     mark_arg(st);
-    followed(st, st[64] >= 0 && instances.note_label(st, st[64], 9, lit));
+    followed(st, st[64] >= 0 && note_arg(st, 9, lit));
     return 0;
 }
 
@@ -675,7 +792,7 @@ pub fn note_row_args[&s, &x](st: &!s [int], text: &x [byte], open: int) -> [] bo
         }
         p = p + 1;
         if pass1.is_code(st, p, lc.Tok::LParen) {
-            if found < 0 || !pass1.is_code(st, p + 1, lc.Tok::Str) || !instances.note_label(st, st[64], found, p + 1) {
+            if found < 0 || !pass1.is_code(st, p + 1, lc.Tok::Str) || !note_arg(st, found, p + 1) {
                 ok = false;
             }
             while !pass1.is_code(st, p, lc.Tok::RParen) {
@@ -693,6 +810,8 @@ pub fn note_row_args[&s, &x](st: &!s [int], text: &x [byte], open: int) -> [] bo
 // The function being checked calls the foreign function `it`: it performs the labels of its row, with their arguments, and `cancho authority` lists the symbol (a row with the label 100).
 pub fn perform_extern[&s, &x](st: &!s [int], text: &x [byte], it: int) -> [] int {
     mark_arg(st);
+    // (a foreign function is never a lent system's to answer, whatever its row says)
+    mark_kept(st);
     followed(st, note_row_args(st, text, ast.get(st, it, 9)));
     if st[64] >= 0 {
         instances.note_label(st, st[64], 100, it);
@@ -705,13 +824,15 @@ pub fn perform_extern[&s, &x](st: &!s [int], text: &x [byte], it: int) -> [] int
 // does, and an empty row on a function that owns no capability is refused as saying less (#638).
 pub fn note_signals[&s](st: &!s [int], cap: int) -> [] int {
     mark_arg(st);
+    // (a set that was not narrowed has no row)
+    mark_kept(st);
     var ok = st[64] >= 0;
     var inner = cap;
     if types.is_ref(st, inner) {
         inner = types.ref_inner(st, inner);
     }
     if ok && types.is_prelude(st, inner) && types.prelude_lit_tok(st, inner) >= 0 {
-        ok = instances.note_label(st, st[64], 5, types.prelude_lit_tok(st, inner));
+        ok = note_arg(st, 5, types.prelude_lit_tok(st, inner));
     }
     followed(st, ok);
     return 0;

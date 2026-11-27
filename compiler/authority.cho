@@ -248,9 +248,12 @@ fn performed_labels[&h, &s, &x, &k](heap: &!h Heap, st: &!s [int], text: &x [byt
         if mask < 0 {
             mask = 0;
         }
+        // What a `system` block of a program for no system discharges is left out, whichever function performed it (`docs/bare-system.md` 12.5): in that image a hosted
+        // builtin is the module's function or a trap, and what the module's functions perform is among the labels here.
+        let lent = instances.lent(st);
         var n = 0;
         while n < effects.label_count() {
-            if mask / effects.two_to(st, n) % 2 == 1 {
+            if mask / effects.two_to(st, n) % 2 == 1 && lent / effects.two_to(st, n) % 2 == 0 {
                 let key = label_key(heap, bit_name(n), false, "");
                 borrow key as &kb in {
                     var present = false;
@@ -267,7 +270,7 @@ fn performed_labels[&h, &s, &x, &k](heap: &!h Heap, st: &!s [int], text: &x [byt
         }
         var row = 0;
         while row < instances.label_rows(st) {
-            if instances.label_item(st, row) == item && instances.label_name(st, row) < 100 {
+            if instances.label_item(st, row) == item && instances.label_name(st, row) < 100 && !(instances.label_name(st, row) == 1 && lent / effects.arg_flag(st) % 2 == 1) {
                 var arg = buffer.empty(heap, 16);
                 if instances.label_literal(st, row) >= 0 {
                     arg = identity.decoded_text(heap, arg, st, text, instances.label_literal(st, row));

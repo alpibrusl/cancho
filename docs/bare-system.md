@@ -1,7 +1,7 @@
 # A system lent for a block: programs written for a system, built into one that has none
 
 > **Status: the mechanism is built, for the streams, the arguments, files and directories** ("What is built",
-> below). The discharge of effects (§6) is designed in §12 and not built; the block's own capabilities (§4 `as`,
+> below), **and so is the discharge of effects** (§6, as §12 designs it). The block's own capabilities (§4 `as`,
 > §7 (b)) are not.
 > Decided in #857 (option A, 2026-11-26). Sections 1 to 9 are the design as it was written before any code;
 > where what was built differs, "What is built" says so.
@@ -67,10 +67,30 @@ system probe_io(mem, used) in {
   hosted target, now in `bare.ll`): one that is outside it, or has `..` in it, is a trap, as it is on a
   system. A name under a directory is held to being one component (`cancho_sys_component` in `bare.ll`,
   what `dirrt_component` of `dirs.c` checks) and is refused with 22 without the module being asked.
-- **Effects are not discharged** (§10, step 1): the function that contains the block declares what its
-  body performs, `io_write` and `args` among it, and so do its callers.
+- **Effects are discharged at the block, for no system** (§12). The function that contains the block does not
+  declare a hosted label the module answers every function of (the table of §12.2): `io_write`, `err_write`,
+  `io_read`, `args`, `fs_read("...")`, `file_read`, `dir_read`, `file_write`, `dir_write`. It still declares
+  what the module's functions perform, what the body performs that is not hosted (an `mmio` of its own, the
+  `heap`), and a hosted label one of whose functions the module lacks. If it is the function that contains
+  the block and its row still lists a discharged label it performs nowhere else, it is refused
+  (`effect-declared-not-performed`). For a hosted target nothing is discharged, so the row of such a function
+  is one for no system or one for a system, not both; a function that owns its capabilities (a `main` with
+  the `World`) is the same on both.
+- **`cancho authority --target aarch64-none-elf`** is taken, and leaves the labels the program's block
+  discharges out of the report (§12.5). `cancho check --target aarch64-none-elf` is how such a program is
+  checked.
 
 Not yet, and refused or stated rather than wrong:
+
+- **A function with a type parameter cannot contain a block that discharges.** Its definition is checked once
+  without code being written, and that check is the hosted one: it asks for the hosted labels, which its
+  instances for no system then refuse. Region parameters are no trouble (a kernel's function has only those).
+- **A caller's row that still lists a discharged label** is refused only as far as rows were held before: a
+  function that performs a label with an argument is not held to "the row says more" for plain labels while
+  code is written (`effects.check`). The function that contains the block is held; the functions that call it
+  are the writer's to clean. A stale label there travels up the callers' rows and not into the report.
+- **A command that checks without a target** (the ones that list identities) holds the program as a hosted
+  one, and refuses a row written for no system.
 
 - **One `system` block in a program.** A second is refused ("no code for what is here").
 - **No `return` inside the block**, however deep: what was lent would stay lent. Refused the same way.
@@ -89,7 +109,28 @@ Not yet, and refused or stated rather than wrong:
 
 Measured:
 
-- The compiler builds itself with the change (three stages, the second and third equal).
+- **The discharge** (§12). The compiler builds itself with it (three stages, the second and third equal).
+  `tests/commands/freestanding.sh`, three cases over `tests/probes/bare_discharge*.cho`, thirty-nine comparisons and two builds:
+  the row with nothing in it is accepted for no system and is `effect-not-declared` for the machine the
+  gate runs on, and the row for a system the other way round (and built and run there); with no `flush`,
+  no `key` or no `open` in the module, `io_write`, `io_read` or `fs_read("")` stays in the row and in the
+  report; the addresses the body writes to itself inside the block, and the ones the module's `out` writes
+  to, are in the row exactly (one less is `effect-not-declared`, one more
+  `effect-declared-not-performed`); a file read before or after the block is the function's own; a
+  discharged label left in the row of the function that lends is `effect-declared-not-performed`, with
+  addresses in that row or without. The compiler before the change fails eighteen of those steps. Broken
+  four ways by hand, each rebuilt and run: the body's whole set dropped (twelve steps fail); the module's
+  functions not looked at (ten); discharged on a hosted target too (five); the flags for a label with an
+  argument never carried over (two).
+- **The discharge, on the kernel.** cancho-os at `83bc06e` (0.0.48), built with this compiler: as it is
+  written it is refused at `hosted`, the function with the block (`effect-declared-not-performed`). With
+  the nine hosted labels taken out of the rows of `hosted`, `shell` and `kernel` it builds, and the image is
+  the same bytes the compiler before the change makes from the rows as they were. `cancho authority
+  --target aarch64-none-elf` of it is `docs/authority.txt` without `args`, `dir_read`, `dir_write`,
+  `err_write`, `file_read`, `file_write`, `fs_read("")`, `io_read` and `io_write`, and with the console, the
+  filesystem and the command line under "never touches"; the addresses, the registers and `heap` are line
+  for line the same. Not run on a machine: the image did not change.
+- The compiler builds itself with the first step (three stages, the second and third equal).
 - `tests/commands/freestanding.sh`: `tests/probes/bare_system.cho`, a function that writes its arguments
   to its `Io`, with a system that writes into a slice, builds for `aarch64-none-elf` into a module that
   calls nothing it does not define, defines the seven functions and declares none of them; lends at the
@@ -392,7 +433,8 @@ Step 1 is enough for cancho-os to run the tools. Step 2 is what makes the report
 
 ## 12. The discharge of §6, designed against the checker
 
-Written before the code, after reading `effects.cho`, `authority.cho`, `narrowing.cho` and the block in
+Built as written here; what was learned building it is marked "(built)". Written before the code, after
+reading `effects.cho`, `authority.cho`, `narrowing.cho` and the block in
 `body.cho` at `f1fa983b`. It is step 2 of §10 as far as effects go. The capabilities of the block's own
 (§4 `as (...)`, §7 (b)) are a separate change and are not part of it: the discharge needs to know what the
 body performed and which functions the module has, and neither depends on where the body's `Io` came from.
@@ -423,6 +465,9 @@ aarch64-none-elf`, which this change makes `authority` accept.
 
 A command that checks a program without building it for a target (the ones that list identities) holds it
 as a hosted one. That is stated here and not changed.
+
+(built) So does the check of a generic definition: a function with a type parameter is checked once with no
+code written, as for a hosted target, and cannot contain a block that discharges. Not changed either.
 
 ### 12.2 Which labels
 
@@ -537,12 +582,14 @@ there first).
 
 ### 12.6 Not in this change, and stated
 
-- **A row that still lists a discharged label is refused only as far as rows are held exact today.** A
-  function that performs no label with an argument is held both ways: `effect-declared-not-performed`. A
-  function that does (a kernel's, with its `mmio`) is, while code is written, not held to "the row says
-  more" for plain labels (`effects.check`, `both`); that is how it was, and a stale `io_write` there is
-  accepted. It then travels to the callers' sets and to the report only if the report is not the one of
-  12.5, so the report is still sharp; the rows are the writer's to clean.
+- **A row that still lists a discharged label.** A function that performs no label with an argument is held
+  both ways as every function is: `effect-declared-not-performed`. A function that does (a kernel's, with
+  its `mmio`) is, while code is written, not held to "the row says more" for plain labels (`effects.check`,
+  `both`); that is how it was. (built) The function that contains the block is held to it all the same
+  (`effects.lender_exact`): a discharged label in its row that it performs nowhere outside the block is
+  refused, unless it called a function value or performed a label that was not followed, where its set is
+  not all there is. Its callers are not: a stale `io_write` in one of theirs is accepted as before, and
+  travels up their rows; the report of 12.5 does not list it.
 - **§7 (a) stays**: a hosted builtin reached outside the block is a trap, found when it runs.
 - **One block in a program**, and none inside another, as before.
 
