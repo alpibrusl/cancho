@@ -7,6 +7,8 @@
 cancho=$1
 work=$2
 . tests/commands/script_lib.sh
+# The bytes of a file, sixteen to a line, written the same way whatever `od` this machine has (they space their columns differently).
+hex() { od -An -v -tx1 "$1" | tr -s ' \n' '\n\n' | grep . | awk '{ printf "%s%s", $0, (NR % 16 == 0 ? "\n" : " ") } END { if (NR % 16) print "" }'; }
 native="compiler/native/llmod.cho compiler/native/llread.cho compiler/native/llbody.cho compiler/native/lltop.cho compiler/native/lllayout.cho compiler/native/llout.cho compiler/native/a64.cho compiler/native/a64sys.cho compiler/native/a64frame.cho compiler/native/a64call.cho compiler/native/a64gen.cho compiler/native/a64fn.cho compiler/native/elf.cho"
 
 begin the_writer_writes_the_object_that_was_run
@@ -14,7 +16,7 @@ begin the_writer_writes_the_object_that_was_run
 if "$cancho" build tests/native/gen_object.cho $native --std -o "$work/object" > "$work/build.txt" 2>&1; then
     "$work/object" tests/native/gen/tricky.ll > "$work/tricky.o" 2> "$work/tricky.txt"
     same "$?" 0 "the status"
-    od -An -v -tx1 "$work/tricky.o" > "$work/tricky.o.hex"
+    hex "$work/tricky.o" > "$work/tricky.o.hex"
     same "$(cmp -s "$work/tricky.o.hex" tests/native/gen/tricky.o.hex; echo $?)" 0 "the bytes against tests/native/gen/tricky.o.hex"
     same "$(od -An -tx1 -N4 "$work/tricky.o" | tr -d ' \n')" "7f454c46" "the magic"
     same "$(od -An -tx1 -j16 -N4 "$work/tricky.o" | tr -d ' \n')" "0100b700" "a relocatable file for AArch64"
@@ -26,10 +28,12 @@ end
 # One instruction changed, and one value, are other bytes: the comparison above can fail.
 begin a_changed_module_is_another_object
 sed 's/^  %d = sub i64 %b, %m$/  %d = add i64 %b, %m/' tests/native/gen/tricky.ll > "$work/code.ll"
-"$work/object" "$work/code.ll" 2> /dev/null | od -An -v -tx1 > "$work/code.hex"
+"$work/object" "$work/code.ll" > "$work/code.o" 2> /dev/null
+hex "$work/code.o" > "$work/code.hex"
 same "$(diff "$work/code.hex" tests/native/gen/tricky.o.hex | grep -c '^<')" 1 "lines of bytes that differ for the instruction"
 sed 's/^@cell = global i64 5$/@cell = global i64 6/' tests/native/gen/tricky.ll > "$work/value.ll"
-"$work/object" "$work/value.ll" 2> /dev/null | od -An -v -tx1 > "$work/value.hex"
+"$work/object" "$work/value.ll" > "$work/value.o" 2> /dev/null
+hex "$work/value.o" > "$work/value.hex"
 same "$(diff "$work/value.hex" tests/native/gen/tricky.o.hex | grep -c '^<')" 1 "lines of bytes that differ for the value"
 end
 
