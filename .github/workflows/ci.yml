@@ -29,6 +29,10 @@ jobs:
             target: darwin-aarch64
     steps:
       - uses: actions/checkout@v4
+      # docs/native-backend.md section 16: tests/commands/native_image.sh boots the image the compiler wrote, where there is a machine to boot it on.
+      - name: qemu-system-aarch64, for the image test
+        if: runner.os == 'Linux'
+        run: sudo apt-get update && sudo apt-get install -y --no-install-recommends qemu-system-arm
       - name: scripts/gate.sh
         run: scripts/gate.sh
 

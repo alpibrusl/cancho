@@ -1,0 +1,958 @@
+edition 7;
+module selfhost.image;
+
+// image.cho -- the file that boots, for a program with no system (`docs/native-backend.md` section 16): the module's code and values and the boot page,
+// placed as the layout says, every address written, with no linker. What the image does not reach is not in it. Pure; no trap on any module the reader read,
+// any code the generator made, any layout `layout.read` read and any boot page `a64asm.assemble` assembled: what cannot be placed is a refusal.
+
+import std.buffer;
+import selfhost.llmod as lm;
+import selfhost.llread as lr;
+import selfhost.lllayout as ly;
+import selfhost.llout as out;
+import selfhost.a64frame as fr;
+import selfhost.elf;
+import selfhost.layout as la;
+import selfhost.a64asm as asm;
+
+// What was made: the file, or a refusal (`why` not 0) with the name it is about (`size` bytes at `from` of the module's text, `space` 0; of the boot page,
+// 1; of the layout, 2) and a number (by how much a limit was passed, or the kind of thing that has no place).
+pub res struct Made {
+    file: buffer.Buffer,
+    why: int,
+    space: int,
+    from: int,
+    size: int,
+    number: int,
+}
+
+pub fn why_undefined() -> [] int {
+    return 1;
+}
+
+pub fn why_twice() -> [] int {
+    return 2;
+}
+
+pub fn why_far() -> [] int {
+    return 3;
+}
+
+pub fn why_limit() -> [] int {
+    return 4;
+}
+
+pub fn why_back() -> [] int {
+    return 5;
+}
+
+pub fn why_unplaced() -> [] int {
+    return 6;
+}
+
+pub fn why_entry() -> [] int {
+    return 7;
+}
+
+pub fn why_no_entry() -> [] int {
+    return 8;
+}
+
+pub fn why_value() -> [] int {
+    return 9;
+}
+
+pub fn why_code() -> [] int {
+    return 10;
+}
+
+pub fn why_no_boot() -> [] int {
+    return 11;
+}
+
+pub fn why_text(why: int) -> [] &static [byte] {
+    if why == why_undefined() {
+        return "a name the image uses is defined by nothing: not by the program, the boot page or a `symbol` of the layout";
+    }
+    if why == why_twice() {
+        return "a name is defined twice, among the program, the boot page and the layout's `symbol` lines";
+    }
+    if why == why_far() {
+        return "a name is too far from where it is used for the instruction that reaches it";
+    }
+    if why == why_limit() {
+        return "the image has grown past a `limit` of the layout, by this many bytes";
+    }
+    if why == why_back() {
+        return "an `at` of the layout is before the place: the place only goes forward";
+    }
+    if why == why_unplaced() {
+        return "the image has something the layout has no line for (1 the boot page, 2 `text`, 3 `rodata`, 4 `data`, 5 `bss`)";
+    }
+    if why == why_entry() {
+        return "a flat image starts at its first byte, and `entry` names another place";
+    }
+    if why == why_no_entry() {
+        return "the layout has no `entry` line";
+    }
+    if why == why_value() {
+        return "a value of the program that an image has no form for";
+    }
+    if why == why_no_boot() {
+        return "the layout has a `boot` line and no boot page was read";
+    }
+    return "code the image writer cannot place (this is a mistake of the compiler's)";
+}
+
+// ---- the scratch table: a head, then a mark and a function's number for each name, a stack of names, where each section of the boot page is, and what each
+// line of the layout came to ----
+
+fn h_why() -> [] int {
+    return 0;
+}
+
+fn h_space() -> [] int {
+    return 1;
+}
+
+fn h_from() -> [] int {
+    return 2;
+}
+
+fn h_size() -> [] int {
+    return 3;
+}
+
+fn h_number() -> [] int {
+    return 4;
+}
+
+fn h_slots() -> [] int {
+    return 5;
+}
+
+fn h_mark() -> [] int {
+    return 6;
+}
+
+fn h_fn() -> [] int {
+    return 7;
+}
+
+fn h_stack() -> [] int {
+    return 8;
+}
+
+fn h_top() -> [] int {
+    return 9;
+}
+
+fn h_sections() -> [] int {
+    return 10;
+}
+
+fn h_lines() -> [] int {
+    return 11;
+}
+
+// The address of the first byte of the file, of the byte after its last, and of the byte after the last the image uses (`bss` included).
+fn h_start() -> [] int {
+    return 12;
+}
+
+fn h_file_end() -> [] int {
+    return 13;
+}
+
+fn h_mem_end() -> [] int {
+    return 14;
+}
+
+fn h_base() -> [] int {
+    return 15;
+}
+
+fn head() -> [] int {
+    return 16;
+}
+
+fn refuse[&x](x: &!x [int], why: int, space: int, from: int, size: int, number: int) -> [] int {
+    if x[h_why()] == 0 {
+        x[h_why()] = why;
+        x[h_space()] = space;
+        x[h_from()] = from;
+        x[h_size()] = size;
+        x[h_number()] = number;
+    }
+    return 1;
+}
+
+// A name's number among the names of the module.
+fn index_of[&m](m: &m [int], slot: int) -> [] int {
+    return (slot - lm.cell(m, lm.h_gh())) / 4;
+}
+
+// ---- names ----
+
+fn same_bytes[&a, &b](a: &a [byte], af: int, b: &b [byte], bf: int, n: int) -> [] bool {
+    if af < 0 || bf < 0 || n < 0 || af + n > len(a) || bf + n > len(b) {
+        return false;
+    }
+    var k = 0;
+    while k < n {
+        if a[af + k] != b[bf + k] {
+            return false;
+        }
+        k = k + 1;
+    }
+    return true;
+}
+
+// The slot of the module's name that is `name[from..from + size]` (the module writes it after an `@`), or -1.
+fn module_slot[&t, &m, &n](text: &t [byte], m: &m [int], name: &n [byte], from: int, size: int) -> [] int {
+    let base = lm.cell(m, lm.h_gh());
+    let slots = lm.cell(m, lm.h_gh_size());
+    var s = 0;
+    while s < slots {
+        let c = base + 4 * s;
+        if lm.cell(m, c + 1) == size + 1 && lm.at(text, lm.cell(m, c)) == '@' && same_bytes(text, lm.cell(m, c) + 1, name, from, size) {
+            return c;
+        }
+        s = s + 1;
+    }
+    return 0 - 1;
+}
+
+// The label of the boot page that is `name[from..from + size]`, or -1.
+fn boot_label[&s, &a, &n](src: &s [byte], a: &a [int], name: &n [byte], from: int, size: int) -> [] int {
+    var k = 0;
+    while k < asm.labels(a) {
+        if asm.label(a, k, 1) == size && same_bytes(src, asm.label(a, k, 0), name, from, size) {
+            return k;
+        }
+        k = k + 1;
+    }
+    return 0 - 1;
+}
+
+// The `symbol` line of the layout that names `name[from..from + size]`, or -1.
+fn layout_symbol[&q, &l, &n](lt: &q [byte], l: &l [int], name: &n [byte], from: int, size: int) -> [] int {
+    var k = 0;
+    while k < la.count(l) {
+        if la.line(l, k, 0) == la.v_symbol() && la.line(l, k, 2) == size && same_bytes(lt, la.line(l, k, 1), name, from, size) {
+            return k;
+        }
+        k = k + 1;
+    }
+    return 0 - 1;
+}
+
+// Where `name[from..from + size]` is: a label of the boot page, a name the module defines, or a `symbol` of the layout. The second answer is false for a
+// name none of them defines.
+fn address_of[&t, &m, &i, &x, &s, &a, &q, &l, &n](text: &t [byte], m: &m [int], info: &i [int], x: &x [int], src: &s [byte], a: &a [int], lt: &q [byte], l: &l [int], name: &n [byte], from: int, size: int) -> [] (int, bool) {
+    let label = boot_label(src, a, name, from, size);
+    if label >= 0 {
+        return (lm.cell(x, x[h_sections()] + asm.label(a, label, 2)) + asm.label(a, label, 3), true);
+    }
+    let slot = module_slot(text, m, name, from, size);
+    if slot >= 0 && lm.cell(info, elf.info_of(m, slot)) != 0 {
+        return (lm.cell(info, elf.info_of(m, slot) + 1), true);
+    }
+    let line = layout_symbol(lt, l, name, from, size);
+    if line >= 0 {
+        return (lm.cell(x, x[h_lines()] + line), true);
+    }
+    return (0, false);
+}
+
+// Where the module's name of `slot` is; one the module only uses is looked for in the boot page and the layout.
+fn slot_address[&t, &m, &i, &x, &s, &a, &q, &l](text: &t [byte], m: &m [int], info: &i [int], x: &x [int], src: &s [byte], a: &a [int], lt: &q [byte], l: &l [int], slot: int) -> [] (int, bool) {
+    if lm.cell(info, elf.info_of(m, slot)) != 0 {
+        return (lm.cell(info, elf.info_of(m, slot) + 1), true);
+    }
+    return address_of(text, m, info, x, src, a, lt, l, text, lm.cell(m, slot) + 1, lm.cell(m, slot + 1) - 1);
+}
+
+// ---- what the image reaches ----
+
+fn push[&m, &x](m: &m [int], x: &!x [int], slot: int) -> [] int {
+    let i = index_of(m, slot);
+    if i < 0 || i >= x[h_slots()] || slot < 0 {
+        return 0;
+    }
+    if x[x[h_mark()] + i] == 0 {
+        x[x[h_mark()] + i] = 1;
+        x[x[h_stack()] + x[h_top()]] = slot;
+        x[h_top()] = x[h_top()] + 1;
+    }
+    return 0;
+}
+
+fn reached[&m, &x](m: &m [int], x: &x [int], slot: int) -> [] bool {
+    let i = index_of(m, slot);
+    return i >= 0 && i < x[h_slots()] && x[x[h_mark()] + i] != 0;
+}
+
+// Every name the constant operand at `at` holds the address of is reached.
+fn reach_value[&m, &x](m: &m [int], x: &!x [int], at: int, depth: int) -> [] int {
+    if depth > lm.deepest() {
+        return 0;
+    }
+    let kind = lm.cell(m, at + 1);
+    let a = lm.cell(m, at + 2);
+    var address = kind == lr.o_global();
+    if kind == lr.o_const() {
+        let which = lm.cell(m, a + 2);
+        if which == lr.c_ints() || which == lr.c_cstring() {
+            return 0;
+        }
+        if which == lr.c_expr() {
+            address = true;
+        } else {
+            var k = 0;
+            while k < lm.cell(m, a + 4) {
+                reach_value(m, x, a + lr.const_head() + 4 * k, depth + 1);
+                k = k + 1;
+            }
+            return 0;
+        }
+    }
+    if address {
+        let c = fr.constant(m, at, 0);
+        if c.good && c.slot >= 0 {
+            push(m, x, c.slot);
+        }
+    }
+    return 0;
+}
+
+// The first relocation of the code at or after the word `index` (they are in the order of the code).
+fn first_relocation[&o](o: &o [int], index: int) -> [] int {
+    var low = 0;
+    var high = out.relocations(o);
+    while low < high {
+        let mid = (low + high) / 2;
+        if out.relocation(o, mid, 1) < index {
+            low = mid + 1;
+        } else {
+            high = mid;
+        }
+    }
+    return low;
+}
+
+// From the names on the stack, every name they reach: a function reaches what its code names, a value what it holds the address of.
+fn reach_all[&m, &o, &x](m: &m [int], o: &o [int], x: &!x [int]) -> [] int {
+    while x[h_top()] > 0 {
+        x[h_top()] = x[h_top()] - 1;
+        let slot = x[x[h_stack()] + x[h_top()]];
+        let f = x[x[h_fn()] + index_of(m, slot)];
+        let record = lm.cell(m, slot + 2);
+        if f > 0 {
+            let end = out.function(o, f - 1, 2);
+            var k = first_relocation(o, out.function(o, f - 1, 1));
+            while k < out.relocations(o) && out.relocation(o, k, 1) < end {
+                push(m, x, out.relocation(o, k, 2));
+                k = k + 1;
+            }
+        } else if record != 0 && lm.cell(m, record) == lr.r_global() && lm.cell(m, record + 4) & 4 == 0 {
+            reach_value(m, x, record + 8, 0);
+        }
+    }
+    return 0;
+}
+
+// ---- the module's values ----
+
+// The alignment of the value of the record at `at` (16 at most: more is a refusal by `kind_of`).
+fn align_of[&m](m: &m [int], at: int) -> [] int {
+    var align = ly.align_of(m, lm.cell(m, at + 5));
+    if lm.cell(m, at + 6) > align {
+        align = lm.cell(m, at + 6);
+    }
+    if align < 1 {
+        align = 1;
+    }
+    return align;
+}
+
+// Which part of the image the value of the record at `at` is in: 3 the constants, 4 the values that change, 5 the ones that start as zero. (The object
+// writer decides the same way, `elf.object`.)
+fn kind_of[&m](m: &m [int], at: int) -> [] int {
+    let flags = lm.cell(m, at + 4);
+    if elf.is_zero(m, at + 8) || flags & 8 != 0 {
+        return 5;
+    }
+    if elf.has_address(m, at + 8, 0) || flags & 32 == 0 {
+        return 4;
+    }
+    return 3;
+}
+
+// Is the record at `at` a value the module defines and the image reaches?
+fn kept_value[&m, &x](m: &m [int], x: &x [int], at: int) -> [] bool {
+    return lm.cell(m, at) == lr.r_global() && lm.cell(m, at + 4) & 4 == 0 && reached(m, x, lm.cell(m, at + 3));
+}
+
+// ---- placing ----
+
+// The values of `kind` the image reaches, each given its address from `place` on: the place after them. With `count` true nothing is given an address
+// and the answer is how many there are.
+fn place_values[&m, &i, &x](m: &m [int], info: &!i [int], x: &x [int], kind: int, place: int, count: bool) -> [] int {
+    var dot = place;
+    var n = 0;
+    var at = lm.cell(m, lm.h_rec());
+    let last = lm.cell(m, lm.h_top());
+    while at < last && lm.cell(m, at + 1) >= 2 {
+        if kept_value(m, x, at) && kind_of(m, at) == kind {
+            let cell = elf.info_of(m, lm.cell(m, at + 3));
+            if !count && cell >= 0 && cell + 3 < len(info) {
+                dot = ly.up(dot, align_of(m, at));
+                info[cell] = kind;
+                info[cell + 1] = dot;
+                info[cell + 2] = ly.size_of(m, lm.cell(m, at + 5));
+                dot = dot + info[cell + 2];
+            }
+            n = n + 1;
+        }
+        at = at + lm.cell(m, at + 1);
+    }
+    if count {
+        return n;
+    }
+    return dot;
+}
+
+// The functions the image reaches, each given its address from `place` on (or counted).
+fn place_functions[&m, &o, &i, &x](m: &m [int], o: &o [int], info: &!i [int], x: &x [int], place: int, count: bool) -> [] int {
+    var dot = place;
+    var n = 0;
+    var f = 0;
+    while f < out.functions(o) {
+        let slot = lm.cell(m, out.function(o, f, 0) + 3);
+        let cell = elf.info_of(m, slot);
+        if reached(m, x, slot) && cell >= 0 && cell + 3 < len(info) {
+            if !count {
+                dot = ly.up(dot, 4);
+                info[cell] = 2;
+                info[cell + 1] = dot;
+                info[cell + 2] = 4 * (out.function(o, f, 2) - out.function(o, f, 1));
+                dot = dot + info[cell + 2];
+            }
+            n = n + 1;
+        }
+        f = f + 1;
+    }
+    if count {
+        return n;
+    }
+    return dot;
+}
+
+fn note_piece[&x](x: &!x [int], from: int, to: int, bytes: bool) -> [] int {
+    if x[h_start()] < 0 {
+        x[h_start()] = from;
+    }
+    if bytes && to > x[h_file_end()] {
+        x[h_file_end()] = to;
+    }
+    if to > x[h_mem_end()] {
+        x[h_mem_end()] = to;
+    }
+    return 0;
+}
+
+// The layout followed once: every function, value, section of the boot page and `symbol` gets its address. 0, or 1 with a refusal.
+fn place[&m, &o, &i, &x, &a, &l](m: &m [int], o: &o [int], info: &!i [int], x: &!x [int], a: &a [int], l: &l [int], boot: bool) -> [] int {
+    var dot = 0;
+    var placed = 0;
+    var k = 0;
+    x[h_start()] = 0 - 1;
+    x[h_file_end()] = 0;
+    x[h_mem_end()] = 0;
+    x[h_base()] = 0;
+    while k < la.count(l) {
+        let verb = la.line(l, k, 0);
+        let value = la.line(l, k, 1);
+        let from = dot;
+        if verb == la.v_base() {
+            x[h_base()] = value;
+        } else if verb == la.v_at() {
+            if x[h_base()] + value < dot {
+                return refuse(x, why_back(), 2, 0, 0, dot - (x[h_base()] + value));
+            }
+            dot = x[h_base()] + value;
+        } else if verb == la.v_align() {
+            dot = ly.up(dot, value);
+        } else if verb == la.v_skip() {
+            dot = dot + value;
+        } else if verb == la.v_limit() {
+            if dot > x[h_base()] + value {
+                return refuse(x, why_limit(), 2, 0, 0, dot - (x[h_base()] + value));
+            }
+        } else if verb == la.v_symbol() {
+            if la.line(l, k, 3) > 0 {
+                x[x[h_lines()] + k] = x[h_base()] + la.line(l, k, 3) - 1;
+            } else {
+                x[x[h_lines()] + k] = dot;
+            }
+        } else if verb == la.v_boot() {
+            if !boot {
+                return refuse(x, why_no_boot(), 2, 0, 0, 0);
+            }
+            var s = 0;
+            while s < asm.sections(a) {
+                var align = asm.section(a, s, 4);
+                if align < 1 {
+                    align = 1;
+                }
+                dot = ly.up(dot, align);
+                if s == 0 {
+                    note_piece(x, dot, dot, true);
+                }
+                x[x[h_sections()] + s] = dot;
+                dot = dot + asm.section(a, s, 3);
+                s = s + 1;
+            }
+            note_piece(x, dot, dot, true);
+            placed = placed | 2;
+        } else if verb == la.v_text() {
+            dot = place_functions(m, o, info, x, ly.up(dot, 4), false);
+            note_piece(x, ly.up(from, 4), dot, true);
+            placed = placed | 4;
+        } else if verb == la.v_rodata() || verb == la.v_data() || verb == la.v_bss() {
+            let kind = verb - la.v_rodata() + 3;
+            dot = place_values(m, info, x, kind, dot, false);
+            if place_values(m, info, x, kind, 0, true) > 0 {
+                note_piece(x, from, dot, kind != 5);
+            }
+            placed = placed | 1 << kind;
+        }
+        k = k + 1;
+    }
+    // Something the image has and the layout has no line for.
+    if boot && placed & 2 == 0 {
+        return refuse(x, why_unplaced(), 2, 0, 0, 1);
+    }
+    if placed & 4 == 0 && place_functions(m, o, info, x, 0, true) > 0 {
+        return refuse(x, why_unplaced(), 2, 0, 0, 2);
+    }
+    var kind = 3;
+    while kind <= 5 {
+        if placed & 1 << kind == 0 && place_values(m, info, x, kind, 0, true) > 0 {
+            return refuse(x, why_unplaced(), 2, 0, 0, kind);
+        }
+        kind = kind + 1;
+    }
+    if x[h_start()] < 0 {
+        x[h_start()] = dot;
+        x[h_file_end()] = dot;
+        x[h_mem_end()] = dot;
+    }
+    if x[h_file_end()] < x[h_start()] {
+        x[h_file_end()] = x[h_start()];
+    }
+    return 0;
+}
+
+// ---- writing ----
+
+// Zeros up to the address `to`, the file's next byte being at `at`: the address the file is then at.
+fn fill[&h](heap: &!h Heap, file: buffer.Buffer, at: int, to: int) -> [heap] (buffer.Buffer, int) {
+    if to > at {
+        return (elf.zeros(heap, file, to - at), to);
+    }
+    return (file, at);
+}
+
+// The word `word` of the code, which is at the address `place`, with the address `target` written into it as the relocation `kind` asks; -1 if it does not
+// fit, -2 for a word that is not the instruction the relocation is for.
+fn patched(word: int, kind: int, place: int, target: int) -> [] int {
+    if kind == out.r_call() {
+        let distance = target - place;
+        if distance & 3 != 0 || distance < 0 - (1 << 27) || distance >= 1 << 27 {
+            return 0 - 1;
+        }
+        return word | distance >> 2 & 67108863;
+    }
+    if kind == out.r_page() || kind == out.r_got_page() {
+        let pages = (target >> 12) - (place >> 12);
+        if pages < 0 - (1 << 20) || pages >= 1 << 20 {
+            return 0 - 1;
+        }
+        return word | (pages & 3) << 29 | (pages >> 2 & 524287) << 5;
+    }
+    if kind == out.r_lo12() {
+        return word | (target & 4095) << 10;
+    }
+    if kind == out.r_got_lo12() {
+        // `ldr xT, [xN, #0]`, a load from the linker's table of addresses: there is no table, so it is the `add xT, xN, #low` that makes the address itself.
+        if word & 4290772992 != 4181721088 {
+            return 0 - 2;
+        }
+        return 2432696320 | (target & 4095) << 10 | word & 1023;
+    }
+    return 0 - 2;
+}
+
+// The functions the image reaches, written at their addresses.
+fn write_functions[&h, &t, &m, &o, &i, &x, &s, &a, &q, &l](heap: &!h Heap, text: &t [byte], m: &m [int], o: &o [int], info: &i [int], x: &!x [int], src: &s [byte], a: &a [int], lt: &q [byte], l: &l [int], into: buffer.Buffer, at: int) -> [heap] (buffer.Buffer, int) {
+    var file = into;
+    var dot = at;
+    var f = 0;
+    while f < out.functions(o) && x[h_why()] == 0 {
+        let slot = lm.cell(m, out.function(o, f, 0) + 3);
+        if reached(m, x, slot) {
+            let address = lm.cell(info, elf.info_of(m, slot) + 1);
+            let (padded, now) = fill(heap, file, dot, address);
+            file = padded;
+            dot = now;
+            let first = out.function(o, f, 1);
+            let end = out.function(o, f, 2);
+            var k = first_relocation(o, first);
+            var w = first;
+            while w < end {
+                var word = out.word(o, w);
+                while k < out.relocations(o) && out.relocation(o, k, 1) == w {
+                    let name = out.relocation(o, k, 2);
+                    let (target, found) = slot_address(text, m, info, x, src, a, lt, l, name);
+                    if !found {
+                        refuse(x, why_undefined(), 0, lm.cell(m, name) + 1, lm.cell(m, name + 1) - 1, 0);
+                    } else {
+                        word = patched(word, out.relocation(o, k, 0), address + 4 * (w - first), target + out.relocation(o, k, 3));
+                        if word == 0 - 1 {
+                            refuse(x, why_far(), 0, lm.cell(m, name) + 1, lm.cell(m, name + 1) - 1, 0);
+                        } else if word < 0 {
+                            refuse(x, why_code(), 0, lm.cell(m, name) + 1, lm.cell(m, name + 1) - 1, 0);
+                        }
+                    }
+                    k = k + 1;
+                }
+                file = elf.le(heap, file, word, 4);
+                w = w + 1;
+            }
+            dot = dot + 4 * (end - first);
+        }
+        f = f + 1;
+    }
+    return (file, dot);
+}
+
+// Eight bytes of `b` at `i`, the low one first.
+fn word_at[&b](b: &b [byte], i: int, n: int) -> [] int {
+    var value = 0;
+    var k = 0;
+    while k < n && i + k < len(b) && i >= 0 {
+        value = value | int_of(b[i + k]) << 8 * k;
+        k = k + 1;
+    }
+    return value;
+}
+
+// The values of `kind` the image reaches, written at their addresses.
+fn write_values[&h, &t, &m, &i, &x, &s, &a, &q, &l](heap: &!h Heap, text: &t [byte], m: &m [int], info: &i [int], x: &!x [int], src: &s [byte], a: &a [int], lt: &q [byte], l: &l [int], kind: int, into: buffer.Buffer, at: int) -> [heap] (buffer.Buffer, int) {
+    var file = into;
+    var dot = at;
+    var rec = lm.cell(m, lm.h_rec());
+    let last = lm.cell(m, lm.h_top());
+    while rec < last && lm.cell(m, rec + 1) >= 2 && x[h_why()] == 0 {
+        if kept_value(m, x, rec) && kind_of(m, rec) == kind {
+            let slot = lm.cell(m, rec + 3);
+            let address = lm.cell(info, elf.info_of(m, slot) + 1);
+            let size = lm.cell(info, elf.info_of(m, slot) + 2);
+            let (padded, now) = fill(heap, file, dot, address);
+            file = padded;
+            dot = now;
+            // The value's bytes, with a relocation for each address in it (`elf.value`); the address is written where the relocation is.
+            let (bytes, relocs, bad) = elf.value(heap, text, m, info, buffer.empty(heap, size + 8), buffer.empty(heap, 48), rec + 8, lm.cell(m, rec + 5), 0);
+            if bad != 0 || align_of(m, rec) > 16 {
+                refuse(x, why_value(), 0, lm.cell(m, slot) + 1, lm.cell(m, slot + 1) - 1, 0);
+            }
+            borrow bytes as &bb in {
+                borrow relocs as &rb in {
+                    let b = buffer.bytes(bb);
+                    let r = buffer.bytes(rb);
+                    var pos = 0;
+                    var k = 0;
+                    while 24 * k + 24 <= len(r) {
+                        let offset = word_at(r, 24 * k, 8);
+                        let name = lm.cell(m, lm.h_gh()) + 4 * ((word_at(r, 24 * k + 8, 8) >> 32) - 1);
+                        let (target, found) = slot_address(text, m, info, x, src, a, lt, l, name);
+                        if !found {
+                            refuse(x, why_undefined(), 0, lm.cell(m, name) + 1, lm.cell(m, name + 1) - 1, 0);
+                        }
+                        if offset >= pos && offset + 8 <= len(b) {
+                            file = buffer.append(heap, file, b[pos..offset]);
+                            file = elf.le(heap, file, target + word_at(r, 24 * k + 16, 8), 8);
+                            pos = offset + 8;
+                        }
+                        k = k + 1;
+                    }
+                    if pos <= len(b) {
+                        file = buffer.append(heap, file, b[pos..len(b)]);
+                    }
+                    dot = dot + len(b);
+                }
+            }
+            buffer.drop(heap, bytes);
+            buffer.drop(heap, relocs);
+        }
+        rec = rec + lm.cell(m, rec + 1);
+    }
+    return (file, dot);
+}
+
+// The relocation of the boot page at `offset` of its section `section`, or -1.
+fn boot_relocation[&a](a: &a [int], section: int, offset: int) -> [] int {
+    var k = 0;
+    while k < asm.relocations(a) {
+        if asm.relocation(a, k, 1) == section && asm.relocation(a, k, 2) == offset {
+            return k;
+        }
+        k = k + 1;
+    }
+    return 0 - 1;
+}
+
+// The sections of the boot page, written at their addresses, each name they use written in.
+fn write_boot[&h, &t, &m, &i, &x, &s, &a, &c, &q, &l](heap: &!h Heap, text: &t [byte], m: &m [int], info: &i [int], x: &!x [int], src: &s [byte], a: &a [int], code: &c [byte], lt: &q [byte], l: &l [int], into: buffer.Buffer, at: int) -> [heap] (buffer.Buffer, int) {
+    var file = into;
+    var dot = at;
+    var s = 0;
+    while s < asm.sections(a) && x[h_why()] == 0 {
+        let address = lm.cell(x, x[h_sections()] + s);
+        let (padded, now) = fill(heap, file, dot, address);
+        file = padded;
+        dot = now;
+        let from = asm.section(a, s, 2);
+        let size = asm.section(a, s, 3);
+        var i = 0;
+        while i < size {
+            let k = boot_relocation(a, s, i);
+            if k < 0 {
+                file = elf.le(heap, file, word_at(code, from + i, 1), 1);
+                i = i + 1;
+            } else {
+                let kind = asm.relocation(a, k, 0);
+                let (target, found) = address_of(text, m, info, x, src, a, lt, l, src, asm.relocation(a, k, 3), asm.relocation(a, k, 4));
+                let value = target + asm.relocation(a, k, 5);
+                let distance = value - (address + i);
+                var word = word_at(code, from + i, 4);
+                var width = 4;
+                var far = false;
+                if !found {
+                    refuse(x, why_undefined(), 1, asm.relocation(a, k, 3), asm.relocation(a, k, 4), 0);
+                }
+                if kind == asm.r_abs64() {
+                    word = value;
+                    width = 8;
+                } else if kind == asm.r_call26() || kind == asm.r_jump26() {
+                    far = distance & 3 != 0 || distance < 0 - (1 << 27) || distance >= 1 << 27;
+                    word = word | distance >> 2 & 67108863;
+                } else if kind == asm.r_adr21() {
+                    far = distance < 0 - (1 << 20) || distance >= 1 << 20;
+                    word = word | (distance & 3) << 29 | (distance >> 2 & 524287) << 5;
+                } else {
+                    // A conditional branch, or a load from a place near the instruction: 19 bits of words.
+                    far = distance & 3 != 0 || distance < 0 - (1 << 20) || distance >= 1 << 20;
+                    word = word | (distance >> 2 & 524287) << 5;
+                }
+                if far {
+                    refuse(x, why_far(), 1, asm.relocation(a, k, 3), asm.relocation(a, k, 4), 0);
+                }
+                file = elf.le(heap, file, word, width);
+                i = i + width;
+            }
+        }
+        dot = dot + size;
+        s = s + 1;
+    }
+    return (file, dot);
+}
+
+// A name defined twice: a `symbol` of the layout or a label of the boot page that the module defines too, or a `symbol` that is a label. 0, or 1 refused.
+fn twice[&t, &m, &i, &x, &s, &a, &q, &l](text: &t [byte], m: &m [int], info: &i [int], x: &!x [int], src: &s [byte], a: &a [int], lt: &q [byte], l: &l [int]) -> [] int {
+    var k = 0;
+    while k < la.count(l) {
+        if la.line(l, k, 0) == la.v_symbol() {
+            let from = la.line(l, k, 1);
+            let size = la.line(l, k, 2);
+            let slot = module_slot(text, m, lt, from, size);
+            if slot >= 0 && lm.cell(info, elf.info_of(m, slot)) != 0 || boot_label(src, a, lt, from, size) >= 0 || layout_symbol(lt, l, lt, from, size) != k {
+                return refuse(x, why_twice(), 2, from, size, 0);
+            }
+        }
+        k = k + 1;
+    }
+    k = 0;
+    while k < asm.labels(a) {
+        let slot = module_slot(text, m, src, asm.label(a, k, 0), asm.label(a, k, 1));
+        if slot >= 0 && lm.cell(info, elf.info_of(m, slot)) != 0 {
+            return refuse(x, why_twice(), 1, asm.label(a, k, 0), asm.label(a, k, 1), 0);
+        }
+        k = k + 1;
+    }
+    return 0;
+}
+
+// The head of an ELF executable for AArch64 with one loaded part: 64 bytes, the one program header, and zeros up to where the part's bytes start.
+fn executable_head[&h](heap: &!h Heap, into: buffer.Buffer, entry: int, start: int, bytes: int, memory: int) -> [heap] buffer.Buffer {
+    let offset = 4096 + (start & 4095);
+    var file = elf.le(heap, into, 127, 1);
+    file = buffer.append(heap, file, "ELF");
+    file = elf.le(heap, file, 2, 1);
+    file = elf.le(heap, file, 1, 1);
+    file = elf.le(heap, file, 1, 1);
+    file = elf.zeros(heap, file, 9);
+    file = elf.le(heap, file, 2, 2);
+    file = elf.le(heap, file, 183, 2);
+    file = elf.le(heap, file, 1, 4);
+    file = elf.le(heap, file, entry, 8);
+    file = elf.le(heap, file, 64, 8);
+    file = elf.le(heap, file, 0, 8);
+    file = elf.le(heap, file, 0, 4);
+    file = elf.le(heap, file, 64, 2);
+    file = elf.le(heap, file, 56, 2);
+    file = elf.le(heap, file, 1, 2);
+    file = elf.le(heap, file, 64, 2);
+    file = elf.le(heap, file, 0, 2);
+    file = elf.le(heap, file, 0, 2);
+    // The part: loaded (1); read, written and run (7).
+    file = elf.le(heap, file, 1, 4);
+    file = elf.le(heap, file, 7, 4);
+    file = elf.le(heap, file, offset, 8);
+    file = elf.le(heap, file, start, 8);
+    file = elf.le(heap, file, start, 8);
+    file = elf.le(heap, file, bytes, 8);
+    file = elf.le(heap, file, memory, 8);
+    file = elf.le(heap, file, 4096, 8);
+    return elf.zeros(heap, file, offset - 120);
+}
+
+// The image of the module in `m` (read from `text`) with its code in `o`, the boot page in `a` (assembled from `src` into `code`; `boot` false for none)
+// and the layout in `l` (read from `lt`): the flat file, or with `executable` an ELF executable that holds it.
+pub fn make[&h, &t, &m, &o, &s, &a, &c, &q, &l](heap: &!h Heap, text: &t [byte], m: &m [int], o: &o [int], src: &s [byte], a: &a [int], code: &c [byte], boot: bool, lt: &q [byte], l: &l [int], executable: bool) -> [heap] Made {
+    var file = buffer.empty(heap, 4096);
+    if len(m) < lm.header() || len(o) < out.header() || lm.failed(m) || out.failed(o) || lm.cell(m, lm.h_ready()) == 0 || la.failed(l) || boot && asm.failed(a) {
+        return Made { file: file, why: why_code(), space: 0, from: 0, size: 0, number: 0 };
+    }
+    let slots = lm.cell(m, lm.h_gh_size());
+    var sections = 0;
+    if boot {
+        sections = asm.sections(a);
+    }
+    let table = box_slice(heap, 4 * slots + 4, 0);
+    let scratch = box_slice(heap, head() + 3 * slots + sections + la.count(l) + 8, 0);
+    var why = 0;
+    var space = 0;
+    var from = 0;
+    var size = 0;
+    var number = 0;
+    borrow mut table as &!tw in {
+        borrow mut scratch as &!sw in {
+            let info = contents(tw);
+            let x = contents(sw);
+            x[h_slots()] = slots;
+            x[h_mark()] = head();
+            x[h_fn()] = head() + slots;
+            x[h_stack()] = head() + 2 * slots;
+            x[h_sections()] = head() + 3 * slots;
+            x[h_lines()] = head() + 3 * slots + sections;
+            // `elf.value` names an address by the number of its name, which is one more than the name's place among the names.
+            var n = 0;
+            while n < slots {
+                info[4 * n + 3] = n + 1;
+                n = n + 1;
+            }
+            var f = 0;
+            var order = 0;
+            while f < out.functions(o) {
+                let i = index_of(m, lm.cell(m, out.function(o, f, 0) + 3));
+                if i >= 0 && i < slots {
+                    x[x[h_fn()] + i] = f + 1;
+                }
+                f = f + 1;
+            }
+            // The relocations must be in the order of the code, which is how a function's are found.
+            n = 1;
+            while n < out.relocations(o) {
+                if out.relocation(o, n, 1) < out.relocation(o, n - 1, 1) {
+                    order = 1;
+                }
+                n = n + 1;
+            }
+            if order != 0 {
+                refuse(x, why_code(), 0, 0, 0, 0);
+            }
+            // The roots: `entry`, and every name the boot page uses and does not define.
+            var entry = 0 - 1;
+            n = 0;
+            while n < la.count(l) {
+                if la.line(l, n, 0) == la.v_entry() {
+                    entry = n;
+                    let slot = module_slot(text, m, lt, la.line(l, n, 1), la.line(l, n, 2));
+                    if slot >= 0 {
+                        push(m, x, slot);
+                    }
+                }
+                n = n + 1;
+            }
+            if entry < 0 {
+                refuse(x, why_no_entry(), 2, 0, 0, 0);
+            }
+            n = 0;
+            while boot && n < asm.relocations(a) {
+                let slot = module_slot(text, m, src, asm.relocation(a, n, 3), asm.relocation(a, n, 4));
+                if slot >= 0 {
+                    push(m, x, slot);
+                }
+                n = n + 1;
+            }
+            reach_all(m, o, x);
+            if x[h_why()] == 0 && place(m, o, info, x, a, l, boot) == 0 && twice(text, m, info, x, src, a, lt, l) == 0 {
+                let (start, known) = address_of(text, m, info, x, src, a, lt, l, lt, la.line(l, entry, 1), la.line(l, entry, 2));
+                if !known {
+                    refuse(x, why_undefined(), 2, la.line(l, entry, 1), la.line(l, entry, 2), 0);
+                } else if !executable && start != x[h_start()] {
+                    refuse(x, why_entry(), 2, la.line(l, entry, 1), la.line(l, entry, 2), 0);
+                }
+                if executable {
+                    file = executable_head(heap, file, start, x[h_start()], x[h_file_end()] - x[h_start()], x[h_mem_end()] - x[h_start()]);
+                }
+                // The layout again, in its order, which is the order of the addresses: each part written where it was placed.
+                var dot = x[h_start()];
+                n = 0;
+                while n < la.count(l) && x[h_why()] == 0 {
+                    let verb = la.line(l, n, 0);
+                    if verb == la.v_boot() {
+                        let (more, now) = write_boot(heap, text, m, info, x, src, a, code, lt, l, file, dot);
+                        file = more;
+                        dot = now;
+                    } else if verb == la.v_text() {
+                        let (more, now) = write_functions(heap, text, m, o, info, x, src, a, lt, l, file, dot);
+                        file = more;
+                        dot = now;
+                    } else if verb == la.v_rodata() || verb == la.v_data() {
+                        let (more, now) = write_values(heap, text, m, info, x, src, a, lt, l, verb - la.v_rodata() + 3, file, dot);
+                        file = more;
+                        dot = now;
+                    }
+                    n = n + 1;
+                }
+                let (whole, end) = fill(heap, file, dot, x[h_file_end()]);
+                file = whole;
+                if end != x[h_file_end()] {
+                    refuse(x, why_code(), 0, 0, 0, 0);
+                }
+            }
+            why = x[h_why()];
+            space = x[h_space()];
+            from = x[h_from()];
+            size = x[h_size()];
+            number = x[h_number()];
+        }
+    }
+    unbox_slice(heap, table);
+    unbox_slice(heap, scratch);
+    return Made { file: file, why: why, space: space, from: from, size: size, number: number };
+}

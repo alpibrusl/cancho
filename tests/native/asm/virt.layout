@@ -1,0 +1,21 @@
+# An image for QEMU's virt machine (docs/native-backend.md section 16.1): memory starts at 1 GB, and `-kernel` puts a flat image 512 KB above that.
+base 0x40000000
+at 0x80000
+boot virt.S
+text
+align 4096
+rodata
+align 16
+data
+align 16
+symbol __bss_start
+bss
+align 16
+symbol __bss_end
+skip 65536              # the stack, which grows down from its top
+align 16
+symbol __stack_top
+align 4096
+symbol __cancho_heap_start
+symbol __cancho_heap_end = 0x4000000
+entry _start

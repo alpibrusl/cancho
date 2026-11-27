@@ -1,0 +1,139 @@
+// plan_test.cho -- the layout description of an image for no system (`compiler/native/layout.cho`, `docs/native-backend.md` section 16.1): the layout of
+// cancho-os's link script reads into its lines, each line that is not one of the twelve is refused with its number, and no bytes reach a trap.
+//
+//     cancho test --std compiler/native/llmod.cho compiler/native/layout.cho tests/native/plan_test.cho
+
+import std.test;
+import selfhost.layout as la;
+
+// The layout of section 16.1, for a Raspberry Pi.
+fn pi() -> [] &static [byte] {
+    return "# a kernel for a Raspberry Pi\nbase 0\nat 0x80000\nsymbol __text_start\nboot boot.S\ntext\nalign 4096\nsymbol __text_end\nrodata\nalign 4096\nsymbol __rodata_end\ndata\nalign 16\nsymbol __bss_start\nbss\nsymbol __bss_end\nlimit 0x200000   # the tables are next\nat 0x200000\nsymbol __tables\nskip 32768\nsymbol __fault_note\nskip 4096\nat 0x210000\nskip 0x10000\nsymbol __stage\nskip 0x200000\nsymbol __stage_end\nsymbol __mapped_start = 0x1000\nsymbol __copier = 0x2000\nalign 4096\nsymbol __cancho_heap_start\n\tsymbol   __cancho_heap_end   =   0x3c000000\nentry _start\n";
+}
+
+fn test_the_layout_of_a_kernel_reads_into_its_lines[&h](heap: &!h Heap) -> [heap] int {
+    let text = pi();
+    let table = box_slice(heap, la.room(text), 0);
+    borrow mut table as &!tw in {
+        let l = contents(tw);
+        test.assert_eq(la.read(text, l), 0);
+        test.assert(!la.failed(l));
+        test.assert_eq(la.count(l), 32);
+        test.assert_eq(la.line(l, 0, 0), la.v_base());
+        test.assert_eq(la.line(l, 1, 0), la.v_at());
+        test.assert_eq(la.line(l, 1, 1), 524288);
+        // `boot boot.S`: the name is where it is in the text.
+        test.assert_eq(la.line(l, 3, 0), la.v_boot());
+        test.assert_eq(la.line(l, 3, 2), 6);
+        test.assert_eq(int_of(text[la.line(l, 3, 1)]), 'b');
+        test.assert_eq(la.line(l, 5, 0), la.v_align());
+        test.assert_eq(la.line(l, 5, 1), 4096);
+        test.assert_eq(la.line(l, 15, 0), la.v_limit());
+        test.assert_eq(la.line(l, 15, 1), 2097152);
+        // `symbol NAME` is the place; `symbol NAME = OFFSET` keeps the offset and one more.
+        test.assert_eq(la.line(l, 2, 3), 0);
+        test.assert_eq(la.line(l, 26, 0), la.v_symbol());
+        test.assert_eq(la.line(l, 26, 3), 4097);
+        test.assert_eq(la.line(l, 30, 3), 1006632961);
+        test.assert_eq(la.line(l, 31, 0), la.v_entry());
+        // Past the lines there is nothing.
+        test.assert_eq(la.line(l, 32, 0), 0);
+        test.assert_eq(la.line(l, 0 - 1, 0), 0);
+    }
+    unbox_slice(heap, table);
+    return 0;
+}
+
+// `text` is refused at `line` for `why`.
+fn refused[&h, &t](heap: &!h Heap, text: &t [byte], line: int, why: int) -> [heap] int {
+    let table = box_slice(heap, la.room(text), 0);
+    borrow mut table as &!tw in {
+        let l = contents(tw);
+        test.assert_eq(la.read(text, l), 1);
+        test.assert(la.failed(l));
+        test.assert_eq(l[la.h_fail_line()], line);
+        test.assert_eq(l[la.h_fail_why()], why);
+    }
+    unbox_slice(heap, table);
+    return 0;
+}
+
+fn test_a_line_that_is_not_one_of_the_twelve_is_refused_with_its_number[&h](heap: &!h Heap) -> [heap] int {
+    refused(heap, "base 0\nsection text\n", 2, la.why_word());
+    refused(heap, "base 0\n\n\nat\n", 4, la.why_number());
+    refused(heap, "at 0x\n", 1, la.why_number());
+    refused(heap, "at 12z\n", 1, la.why_number());
+    refused(heap, "skip 0x10000000000000000\n", 1, la.why_number());
+    refused(heap, "align 24\n", 1, la.why_power());
+    refused(heap, "align 0\n", 1, la.why_power());
+    refused(heap, "text\nrodata\ntext\n", 3, la.why_twice());
+    refused(heap, "entry a\nentry b\n", 2, la.why_twice());
+    refused(heap, "symbol\n", 1, la.why_name());
+    refused(heap, "boot # the page\n", 1, la.why_name());
+    refused(heap, "symbol a = \n", 1, la.why_number());
+    refused(heap, "symbol a 12\n", 1, la.why_number());
+    refused(heap, "text here\n", 1, la.why_more());
+    refused(heap, "at 4096 4096\n", 1, la.why_more());
+    refused(heap, "symbol a = 1 2\n", 1, la.why_more());
+    // A table with no room for the lines: a refusal, not a write past it.
+    let small = box_slice(heap, la.head() + 4, 0);
+    borrow mut small as &!sw in {
+        let l = contents(sw);
+        test.assert_eq(la.read("at 1\nat 2\nat 3\n", l), 1);
+        test.assert_eq(l[la.h_fail_why()], la.why_room());
+        test.assert_eq(l[la.h_fail_line()], 2);
+    }
+    unbox_slice(heap, small);
+    let none = box_slice(heap, 2, 0);
+    borrow mut none as &!nw in {
+        test.assert_eq(la.read("at 1\n", contents(nw)), 1);
+        test.assert(la.failed(contents(nw)));
+    }
+    unbox_slice(heap, none);
+    return 0;
+}
+
+// Every truncation of the layout, and every byte of it made each of fourteen bytes: read, with any answer, and no trap. What is read is within the table.
+fn test_no_bytes_reach_a_trap[&h](heap: &!h Heap) -> [heap] int {
+    let text = pi();
+    let bytes = "\0\n #=x0\t9a-_Xzs";
+    let table = box_slice(heap, la.room(text) + 64, 0);
+    let copy = box_slice(heap, len(text), byte_of(0));
+    var runs = 0;
+    borrow mut table as &!tw in {
+        borrow mut copy as &!cw in {
+            let l = contents(tw);
+            let c = contents(cw);
+            var cut = 0;
+            while cut <= len(text) {
+                la.read(text[0..cut], l);
+                test.assert(la.count(l) <= 40);
+                runs = runs + 1;
+                cut = cut + 1;
+            }
+            var i = 0;
+            while i < len(text) {
+                c[i] = text[i];
+                i = i + 1;
+            }
+            i = 0;
+            while i < len(text) {
+                var k = 0;
+                while k < len(bytes) {
+                    let kept = c[i];
+                    c[i] = bytes[k];
+                    la.read(c, l);
+                    test.assert(la.count(l) <= 40);
+                    c[i] = kept;
+                    runs = runs + 1;
+                    k = k + 1;
+                }
+                i = i + 1;
+            }
+        }
+    }
+    unbox_slice(heap, table);
+    unbox_slice(heap, copy);
+    test.assert(runs > 8000);
+    return 0;
+}

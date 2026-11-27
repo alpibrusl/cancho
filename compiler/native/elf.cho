@@ -15,7 +15,7 @@ import selfhost.llout as out;
 import selfhost.a64frame as fr;
 
 // `n` bytes of `value`, the low one first.
-fn le[&h](heap: &!h Heap, b: buffer.Buffer, value: int, n: int) -> [heap] buffer.Buffer {
+pub fn le[&h](heap: &!h Heap, b: buffer.Buffer, value: int, n: int) -> [heap] buffer.Buffer {
     var o = b;
     var k = 0;
     while k < n {
@@ -30,7 +30,7 @@ fn le[&h](heap: &!h Heap, b: buffer.Buffer, value: int, n: int) -> [heap] buffer
     return o;
 }
 
-fn zeros[&h](heap: &!h Heap, b: buffer.Buffer, n: int) -> [heap] buffer.Buffer {
+pub fn zeros[&h](heap: &!h Heap, b: buffer.Buffer, n: int) -> [heap] buffer.Buffer {
     var o = b;
     var k = 0;
     while k < n {
@@ -100,12 +100,12 @@ fn s_bss() -> [] int {
     return 4;
 }
 
-fn info_of[&m](m: &m [int], slot: int) -> [] int {
+pub fn info_of[&m](m: &m [int], slot: int) -> [] int {
     return (slot - lm.cell(m, lm.h_gh())) / 4 * 4;
 }
 
 // Does the constant operand at `at` hold the address of a name anywhere in it?
-fn has_address[&m](m: &m [int], at: int, depth: int) -> [] bool {
+pub fn has_address[&m](m: &m [int], at: int, depth: int) -> [] bool {
     let kind = lm.cell(m, at + 1);
     let a = lm.cell(m, at + 2);
     if kind == lr.o_global() {
@@ -132,7 +132,7 @@ fn has_address[&m](m: &m [int], at: int, depth: int) -> [] bool {
 }
 
 // Is the constant operand at `at` all zeros?
-fn is_zero[&m](m: &m [int], at: int) -> [] bool {
+pub fn is_zero[&m](m: &m [int], at: int) -> [] bool {
     let kind = lm.cell(m, at + 1);
     return kind == lr.o_word() && lm.cell(m, at + 2) != 5 || kind == lr.o_int() && lm.cell(m, at + 2) == 0;
 }
@@ -146,7 +146,7 @@ fn rela[&h](heap: &!h Heap, b: buffer.Buffer, offset: int, symbol: int, kind: in
 
 // The value of the constant operand at `at`, of type `ty`, as its bytes at the end of `bytes` (a section); an address in it is eight zeros and a relocation
 // at the end of `relocs`. The third answer is 1 for a value the object has no form for.
-fn value[&h, &t, &m, &i](heap: &!h Heap, text: &t [byte], m: &m [int], info: &i [int], bytes: buffer.Buffer, relocs: buffer.Buffer, at: int, ty: int, depth: int) -> [heap] (buffer.Buffer, buffer.Buffer, int) {
+pub fn value[&h, &t, &m, &i](heap: &!h Heap, text: &t [byte], m: &m [int], info: &i [int], bytes: buffer.Buffer, relocs: buffer.Buffer, at: int, ty: int, depth: int) -> [heap] (buffer.Buffer, buffer.Buffer, int) {
     var b = bytes;
     var r = relocs;
     var bad = 0;

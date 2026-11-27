@@ -247,6 +247,19 @@ pub fn refuse_backend[&h, &i, &p](heap: &!h Heap, io: &!i Io, path: &p [byte], j
     return 1;
 }
 
+// The same refusal, with what the backend says of it in `said` (a layout, a boot page or an image that cannot be made, `docs/native-backend.md` section 16).
+pub fn refuse_backend_saying[&h, &i, &p, &s](heap: &!h Heap, io: &!i Io, path: &p [byte], said: &s [byte]) -> [heap, err_write] int {
+    var out = diagnose.render_program(heap, buffer.empty(heap, 512), path, rules.r_unsupported_by_backend(), 0);
+    out = buffer.append(heap, out, "\n    ");
+    out = buffer.append(heap, out, said);
+    out = buffer.append(heap, out, "\n");
+    borrow out as &t in {
+        console.error_all(io, buffer.bytes(t));
+    }
+    buffer.drop(heap, out);
+    return 1;
+}
+
 // A bad command line: what is wrong, then the usage, on the standard error. Status 2.
 pub fn usage_error[&h, &i, &w](heap: &!h Heap, io: &!i Io, why: &w [byte]) -> [heap, err_write] int {
     console.error_all(io, why);
@@ -265,7 +278,7 @@ pub fn takes_value[&w](word: &w [byte], build: bool) -> [] bool {
     if bytes.equal(word, "--output") || bytes.equal(word, "--host") || bytes.equal(word, "--backend") || bytes.equal(word, "--std-dir") || bytes.equal(word, "--target") {
         return true;
     }
-    return build && (bytes.equal(word, "-o") || bytes.equal(word, "--emit") || bytes.equal(word, "-l") || bytes.equal(word, "-L") || bytes.equal(word, "--clang"));
+    return build && (bytes.equal(word, "-o") || bytes.equal(word, "--emit") || bytes.equal(word, "-l") || bytes.equal(word, "-L") || bytes.equal(word, "--clang") || bytes.equal(word, "--layout"));
 }
 
 // A word that starts with a `-` and is none of the options of the command: said as the Rust command says it, with the usage. The status, 2.

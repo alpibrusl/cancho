@@ -1,0 +1,172 @@
+edition 7;
+module selfhost.cliimage;
+
+// cliimage.cho -- `cancho build --target aarch64-none-elf --backend native --layout FILE` (`docs/native-backend.md` section 16): the layout and the boot
+// page it names are read, the native backend makes the image, and it is written. No program is started.
+
+import std.buffer;
+import std.bytes;
+import selfhost.clibase;
+import selfhost.filewrite;
+import selfhost.llback;
+import selfhost.layout as la;
+import selfhost.a64asm as asm;
+import selfhost.image;
+
+// Where the path after `--layout` is among the arguments, or -1.
+pub fn layout_at[&a](args: &a Args) -> [args] int {
+    var n = 2;
+    while n + 1 < arg_count(args) {
+        if bytes.equal(arg(args, n), "--layout") {
+            return n + 1;
+        }
+        n = n + 1;
+    }
+    return 0 - 1;
+}
+
+// Was `--emit exe` asked for? (An ELF executable that holds the image, and not the flat file.)
+fn executable[&a](args: &a Args) -> [args] bool {
+    var n = 2;
+    while n + 1 < arg_count(args) {
+        if bytes.equal(arg(args, n), "--emit") && bytes.equal(arg(args, n + 1), "exe") {
+            return true;
+        }
+        n = n + 1;
+    }
+    return false;
+}
+
+// The file the layout's `boot` line names, from the layout's own directory: its path, empty if the layout has no such line or cannot be read as one (which
+// the backend then says).
+fn boot_path[&h, &p, &t](heap: &!h Heap, path: &p [byte], plan: &t [byte]) -> [heap] buffer.Buffer {
+    var out = buffer.empty(heap, 64);
+    let table = box_slice(heap, la.room(plan), 0);
+    borrow mut table as &!tw in {
+        let l = contents(tw);
+        if la.read(plan, l) == 0 {
+            var k = 0;
+            while k < la.count(l) {
+                let from = la.line(l, k, 1);
+                let size = la.line(l, k, 2);
+                if la.line(l, k, 0) == la.v_boot() && from >= 0 && size > 0 && from + size <= len(plan) {
+                    var cut = len(path);
+                    while cut > 0 && int_of(path[cut - 1]) != '/' {
+                        cut = cut - 1;
+                    }
+                    out = buffer.append(heap, out, path[0..cut]);
+                    out = buffer.append(heap, out, plan[from..from + size]);
+                }
+                k = k + 1;
+            }
+        }
+    }
+    unbox_slice(heap, table);
+    return out;
+}
+
+// What is said of a refusal at `stage` (of `llback.Imaged`): the sentence, with the line or the name it is about.
+fn said[&h, &r, &t, &s](heap: &!h Heap, ir: &r [byte], plan: &t [byte], page: &s [byte], stage: int, line: int, why: int, space: int, from: int, size: int, number: int) -> [heap] buffer.Buffer {
+    var out = buffer.empty(heap, 256);
+    if stage == 2 || stage == 3 {
+        out = buffer.append(heap, out, "line ");
+        out = buffer.push_nat(heap, out, line);
+        if stage == 2 {
+            out = buffer.append(heap, out, " of the layout: ");
+            out = buffer.append(heap, out, la.why_text(why));
+        } else {
+            out = buffer.append(heap, out, " of the boot page: ");
+            out = buffer.append(heap, out, asm.why_text(why));
+        }
+        return out;
+    }
+    out = buffer.append(heap, out, "the image: ");
+    out = buffer.append(heap, out, image.why_text(why));
+    if size > 0 && from >= 0 {
+        out = buffer.append(heap, out, ": `");
+        if space == 0 && from + size <= len(ir) {
+            out = buffer.append(heap, out, ir[from..from + size]);
+        } else if space == 1 && from + size <= len(page) {
+            out = buffer.append(heap, out, page[from..from + size]);
+        } else if space == 2 && from + size <= len(plan) {
+            out = buffer.append(heap, out, plan[from..from + size]);
+        }
+        out = buffer.append(heap, out, "`");
+    }
+    if number > 0 {
+        out = buffer.append(heap, out, " (");
+        out = buffer.push_nat(heap, out, number);
+        out = buffer.append(heap, out, ")");
+    }
+    return out;
+}
+
+// What is in the file at `path`, and 0; or nothing and 1, which has been said.
+fn read_whole[&h, &i, &f, &p](heap: &!h Heap, io: &!i Io, fs: &f Fs(""), path: &p [byte]) -> [heap, err_write, fs_read(""), file_read] (buffer.Buffer, int) {
+    let clibase.Contents { bytes, failed } = clibase.read_file(heap, fs, path);
+    if failed != 0 {
+        clibase.complain(heap, io, path, "cannot read the file");
+        return (bytes, 1);
+    }
+    return (bytes, 0);
+}
+
+// The image of the module `ir`, written at `out`. `path` is the program's first file, for what is said. 0; 1 for a refusal, which has been said; 3 for a
+// file that cannot be read or written.
+pub fn make[&h, &i, &a, &f, &r, &o, &p](heap: &!h Heap, io: &!i Io, args: &a Args, fs: &f Fs(""), ir: &r [byte], out: &o [byte], path: &p [byte]) -> [heap, io_write, err_write, args, fs_read(""), fs_write(""), file_read, file_write] int {
+    let at = layout_at(args);
+    if at < 0 {
+        return 3;
+    }
+    let plan_path = arg(args, at);
+    let (layout, unread) = read_whole(heap, io, fs, plan_path);
+    var status = 0;
+    if unread != 0 {
+        buffer.drop(heap, layout);
+        return 3;
+    }
+    borrow layout as &pb in {
+        let plan = buffer.bytes(pb);
+        let named = boot_path(heap, plan_path, plan);
+        var page = buffer.empty(heap, 0);
+        var boot = false;
+        borrow named as &nb in {
+            if len(buffer.bytes(nb)) > 0 {
+                let (text, missing) = read_whole(heap, io, fs, buffer.bytes(nb));
+                buffer.drop(heap, page);
+                page = text;
+                boot = true;
+                if missing != 0 {
+                    status = 3;
+                }
+            }
+        }
+        buffer.drop(heap, named);
+        if status == 0 {
+            borrow page as &sb in {
+                let made = llback.bare_image(heap, ir, plan, buffer.bytes(sb), boot, executable(args));
+                let llback.Imaged { file, stage, line, why, space, from, size, number } = made;
+                if stage == 1 {
+                    status = clibase.refuse_backend(heap, io, path, false, line, why);
+                } else if stage != 0 {
+                    let words = said(heap, ir, plan, buffer.bytes(sb), stage, line, why, space, from, size, number);
+                    borrow words as &wb in {
+                        status = clibase.refuse_backend_saying(heap, io, path, buffer.bytes(wb));
+                    }
+                    buffer.drop(heap, words);
+                } else {
+                    borrow file as &fb in {
+                        if filewrite.store(fs, out, buffer.bytes(fb)) != 0 {
+                            clibase.complain(heap, io, out, "cannot write the file");
+                            status = 3;
+                        }
+                    }
+                }
+                buffer.drop(heap, file);
+            }
+        }
+        buffer.drop(heap, page);
+    }
+    buffer.drop(heap, layout);
+    return status;
+}

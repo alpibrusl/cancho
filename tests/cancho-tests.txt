@@ -23,3 +23,5 @@ native_a64 | 6 | --std compiler/native/a64.cho compiler/native/a64sys.cho tests/
 # The native backend's data layout against clang's, and its first code generator on what needs no machine (docs/native-backend.md sections 4 and 12).
 native_layout | 2 | --std compiler/native/llmod.cho compiler/native/llread.cho compiler/native/llbody.cho compiler/native/lltop.cho compiler/native/lllayout.cho tests/native/layout_test.cho
 native_gen | 3 | --std compiler/native/llmod.cho compiler/native/llread.cho compiler/native/llbody.cho compiler/native/lltop.cho compiler/native/lllayout.cho compiler/native/llout.cho compiler/native/a64.cho compiler/native/a64sys.cho compiler/native/a64frame.cho compiler/native/a64call.cho compiler/native/a64gen.cho compiler/native/a64fn.cho tests/native/gen_test.cho
+# The layout description of an image for no system (docs/native-backend.md section 16.1): a kernel's layout read, refusals with their line, no trap on any bytes.
+native_plan | 3 | --std compiler/native/llmod.cho compiler/native/layout.cho tests/native/plan_test.cho

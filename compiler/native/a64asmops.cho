@@ -1,0 +1,1356 @@
+edition 7;
+module selfhost.a64asmops;
+
+// a64asmops.cho -- the assembler's table, the line it reads, and each instruction of the subset as its word (`docs/native-backend.md`, N7; `a64asm.cho` is
+// the entry and says what the subset is). The table is one `[int]` the caller allocates: a header, the line being read, and the lists. Pure, and no trap:
+// every cell is reached through `get` and `put`, which check the index, and whatever is not understood is a refusal with its line.
+//
+// An instruction is written as clang's assembler writes it, form by form: the choices that are clang's and not the architecture's (which of `movz`, `movn`
+// and `orr` a `mov` is, when `ldr x, =v` is a `mov`, when an offset is `ldur`) were found by assembling, and `tests/native/asm/*.expected` holds them.
+
+import selfhost.a64;
+import selfhost.a64sys;
+import selfhost.llmod as lm;
+
+// ---- the header ----
+
+// The refusal (0 or 1), its line and why; how many records a list may hold; the line being read (1-based); the section being written; the pass (-1: the one
+// that finds the labels, else the section whose bytes are written); how many numbered labels have gone by.
+pub fn h_fail() -> [] int {
+    return 0;
+}
+
+pub fn h_cap() -> [] int {
+    return 3;
+}
+
+pub fn h_line() -> [] int {
+    return 4;
+}
+
+pub fn h_cur() -> [] int {
+    return 5;
+}
+
+pub fn h_pass() -> [] int {
+    return 6;
+}
+
+pub fn h_seen() -> [] int {
+    return 7;
+}
+
+// Where in the line the reader is, and how long the line is.
+pub fn h_at() -> [] int {
+    return 8;
+}
+
+pub fn h_len() -> [] int {
+    return 9;
+}
+
+// What a statement leaves to be written: a word, or how many bytes of padding.
+pub fn h_word() -> [] int {
+    return 10;
+}
+
+// The macro being expanded (its number plus one; 0 for none), and at `h_args` its arguments, two cells each: where in the source, and how long.
+pub fn h_macro() -> [] int {
+    return 11;
+}
+
+pub fn h_args() -> [] int {
+    return 16;
+}
+
+// What `target` found: 0 a place in this section (`h_target + 1`), 1 a name for whoever links (`+ 2` where in the source, `+ 3` how long), 2 not known yet.
+fn h_target() -> [] int {
+    return 12;
+}
+
+// The lists, two cells each from `h_lists`: where its records begin, and how many there are.
+pub fn h_lists() -> [] int {
+    return 32;
+}
+
+// How many macros there may be.
+pub fn h_macro_cap() -> [] int {
+    return 48;
+}
+
+// The line being read begins here, a cell a byte: the byte, and above it where in the source it came from.
+pub fn h_text() -> [] int {
+    return 64;
+}
+
+pub fn line_room() -> [] int {
+    return 512;
+}
+
+// The lists: sections (name start, name length, offset in the bytes, size, alignment, how far it is written), labels (name start, name length, section,
+// offset, global), relocations (kind, section, offset, name start, name length, addend), numbered labels (number, section, offset), the literal pool
+// (section, size, 0 a number or 1 a name, the number or the name's start, the name's length, offset), names made global (start, length), and macros (name
+// start, name length, where the body begins and ends, how many parameters, then each parameter's start and length).
+pub fn l_section() -> [] int {
+    return 0;
+}
+
+pub fn l_label() -> [] int {
+    return 1;
+}
+
+pub fn l_reloc() -> [] int {
+    return 2;
+}
+
+pub fn l_numbered() -> [] int {
+    return 3;
+}
+
+pub fn l_pool() -> [] int {
+    return 4;
+}
+
+pub fn l_global() -> [] int {
+    return 5;
+}
+
+pub fn l_macro() -> [] int {
+    return 6;
+}
+
+pub fn width(list: int) -> [] int {
+    if list == 0 || list == 2 || list == 4 {
+        return 6;
+    }
+    if list == 1 {
+        return 5;
+    }
+    if list == 3 {
+        return 3;
+    }
+    if list == 5 {
+        return 2;
+    }
+    if list == 6 {
+        return 21;
+    }
+    return 0;
+}
+
+// ---- why a source is refused ----
+
+pub fn why_room() -> [] int {
+    return 1;
+}
+
+pub fn why_long() -> [] int {
+    return 2;
+}
+
+pub fn why_mnemonic() -> [] int {
+    return 4;
+}
+
+pub fn why_directive() -> [] int {
+    return 5;
+}
+
+pub fn why_register() -> [] int {
+    return 6;
+}
+
+pub fn why_operand() -> [] int {
+    return 7;
+}
+
+pub fn why_number() -> [] int {
+    return 8;
+}
+
+pub fn why_encoding() -> [] int {
+    return 9;
+}
+
+pub fn why_range() -> [] int {
+    return 10;
+}
+
+pub fn why_numbered() -> [] int {
+    return 11;
+}
+
+pub fn why_twice() -> [] int {
+    return 12;
+}
+
+pub fn why_macro() -> [] int {
+    return 14;
+}
+
+pub fn why_syntax() -> [] int {
+    return 15;
+}
+
+pub fn why_system() -> [] int {
+    return 16;
+}
+
+pub fn why_pool() -> [] int {
+    return 17;
+}
+
+pub fn why_size() -> [] int {
+    return 20;
+}
+
+// ---- cells ----
+
+// A cell read with its index checked: 0 outside the table.
+pub fn get[&t](t: &t [int], i: int) -> [] int {
+    return lm.cell(t, i);
+}
+
+pub fn put[&t](t: &!t [int], i: int, v: int) -> [] int {
+    if i >= 0 && i < len(t) {
+        t[i] = v;
+    }
+    return 0;
+}
+
+pub fn failed[&t](t: &t [int]) -> [] bool {
+    return len(t) < 3 || t[0] != 0;
+}
+
+// The first refusal is the one that is kept.
+pub fn refuse[&t](t: &!t [int], why: int) -> [] int {
+    if len(t) >= 3 && t[0] == 0 {
+        t[0] = 1;
+        t[1] = get(t, h_line());
+        t[2] = why;
+    }
+    return 0 - 1;
+}
+
+pub fn count[&t](t: &t [int], list: int) -> [] int {
+    return get(t, h_lists() + 2 * list + 1);
+}
+
+// Cell `c` of record `k` of a list; 0 for one that is not there.
+pub fn rec[&t](t: &t [int], list: int, k: int, c: int) -> [] int {
+    let base = get(t, h_lists() + 2 * list);
+    if list < 0 || list > 6 || base < 0 || base > len(t) || k < 0 || k >= count(t, list) || k > len(t) || c < 0 || c >= width(list) {
+        return 0;
+    }
+    return get(t, base + k * width(list) + c);
+}
+
+pub fn set[&t](t: &!t [int], list: int, k: int, c: int, v: int) -> [] int {
+    let base = get(t, h_lists() + 2 * list);
+    if list < 0 || list > 6 || base < 0 || base > len(t) || k < 0 || k >= count(t, list) || k > len(t) || c < 0 || c >= width(list) {
+        return 0;
+    }
+    return put(t, base + k * width(list) + c, v);
+}
+
+// A new record of a list, its cells zero: its number, or -1 with the refusal made when the list is full.
+pub fn add[&t](t: &!t [int], list: int) -> [] int {
+    let n = count(t, list);
+    var cap = get(t, h_cap());
+    if list == l_macro() {
+        cap = get(t, h_macro_cap());
+    }
+    if n < 0 || n >= cap {
+        return refuse(t, why_room());
+    }
+    put(t, h_lists() + 2 * list + 1, n + 1);
+    var c = 0;
+    while c < width(list) {
+        set(t, list, n, c, 0);
+        c = c + 1;
+    }
+    return n;
+}
+
+// ---- the source ----
+
+pub fn at[&s](source: &s [byte], i: int) -> [] int {
+    if i < 0 || i >= len(source) {
+        return 0;
+    }
+    return int_of(source[i]);
+}
+
+// Are two names of the source the same?
+pub fn same[&s](source: &s [byte], a: int, alen: int, b: int, blen: int) -> [] bool {
+    if alen != blen {
+        return false;
+    }
+    var i = 0;
+    while i < alen {
+        if at(source, a + i) != at(source, b + i) {
+            return false;
+        }
+        i = i + 1;
+    }
+    return true;
+}
+
+// ---- the line ----
+
+// The byte at `i` of the line (0 past its end), and where it came from.
+pub fn ch[&t](t: &t [int], i: int) -> [] int {
+    if i < 0 || i >= get(t, h_len()) || i >= line_room() {
+        return 0;
+    }
+    return get(t, h_text() + i) & 255;
+}
+
+fn origin[&t](t: &t [int], i: int) -> [] int {
+    return get(t, h_text() + i) >> 8;
+}
+
+pub fn is_digit(c: int) -> [] bool {
+    return c >= '0' && c <= '9';
+}
+
+pub fn is_name_start(c: int) -> [] bool {
+    return c >= 'a' && c <= 'z' || c >= 'A' && c <= 'Z' || c == '_' || c == '.';
+}
+
+pub fn is_name(c: int) -> [] bool {
+    return is_name_start(c) || is_digit(c);
+}
+
+// Past the blanks: where the reader is then.
+pub fn blanks[&t](t: &!t [int]) -> [] int {
+    var p = get(t, h_at());
+    while ch(t, p) == ' ' || ch(t, p) == '\t' || ch(t, p) == '\r' {
+        p = p + 1;
+    }
+    put(t, h_at(), p);
+    return p;
+}
+
+// Where the name that begins at `from` ends.
+pub fn name_end[&t](t: &t [int], from: int) -> [] int {
+    var p = from;
+    while is_name(ch(t, p)) {
+        p = p + 1;
+    }
+    return p;
+}
+
+// Is the line from `from` to `to` the word `w`?
+pub fn word_is[&t, &w](t: &t [int], from: int, to: int, w: &w [byte]) -> [] bool {
+    if to - from != len(w) {
+        return false;
+    }
+    var i = 0;
+    while i < len(w) {
+        if ch(t, from + i) != int_of(w[i]) {
+            return false;
+        }
+        i = i + 1;
+    }
+    return true;
+}
+
+// Is the line from `from` to `to` the name of the source at `start`?
+pub fn word_same[&t, &s](t: &t [int], from: int, to: int, source: &s [byte], start: int, n: int) -> [] bool {
+    if to - from != n {
+        return false;
+    }
+    var i = 0;
+    while i < n {
+        if ch(t, from + i) != at(source, start + i) {
+            return false;
+        }
+        i = i + 1;
+    }
+    return true;
+}
+
+// Where in the source the name the line has from `from` to `to` is written. A name a macro glued together is written nowhere, and neither is `.` alone.
+pub fn name_start[&t](t: &!t [int], from: int, to: int) -> [] int {
+    let start = origin(t, from);
+    var i = from;
+    while i < to {
+        if origin(t, i) != start + (i - from) {
+            return refuse(t, why_macro());
+        }
+        i = i + 1;
+    }
+    if to <= from || to - from == 1 && ch(t, from) == '.' {
+        return refuse(t, why_syntax());
+    }
+    return start;
+}
+
+// The byte `c` if it is next, taken.
+pub fn eat[&t](t: &!t [int], c: int) -> [] bool {
+    let p = blanks(t);
+    if ch(t, p) == c && p < get(t, h_len()) {
+        put(t, h_at(), p + 1);
+        return true;
+    }
+    return false;
+}
+
+pub fn need[&t](t: &!t [int], c: int) -> [] int {
+    if !eat(t, c) {
+        return refuse(t, why_syntax());
+    }
+    return 0;
+}
+
+// The statement ends here.
+pub fn done[&t](t: &!t [int]) -> [] int {
+    if blanks(t) < get(t, h_len()) {
+        return refuse(t, why_syntax());
+    }
+    return 0;
+}
+
+// The word that is next, if it is `w`, taken.
+fn word_next[&t, &w](t: &!t [int], w: &w [byte]) -> [] bool {
+    let from = blanks(t);
+    let to = name_end(t, from);
+    if word_is(t, from, to, w) {
+        put(t, h_at(), to);
+        return true;
+    }
+    return false;
+}
+
+// ---- numbers ----
+
+// A number: decimal, or hexadecimal after `0x`. One that begins with 0 is octal to clang and is refused here, as is a letter right after the digits.
+fn number[&t](t: &!t [int]) -> [] int {
+    var p = get(t, h_at());
+    var value = 0;
+    if ch(t, p) == '0' && (ch(t, p + 1) == 'x' || ch(t, p + 1) == 'X') {
+        p = p + 2;
+        var digits = 0;
+        var any = false;
+        var going = true;
+        while going {
+            let c = ch(t, p);
+            var d = 0 - 1;
+            if is_digit(c) {
+                d = c - '0';
+            } else if c >= 'a' && c <= 'f' {
+                d = c - 'a' + 10;
+            } else if c >= 'A' && c <= 'F' {
+                d = c - 'A' + 10;
+            }
+            if d < 0 {
+                going = false;
+            } else {
+                any = true;
+                if digits > 0 || d > 0 {
+                    digits = digits + 1;
+                }
+                if digits > 16 {
+                    return refuse(t, why_number());
+                }
+                value = value << 4 | d;
+                p = p + 1;
+            }
+        }
+        if !any {
+            return refuse(t, why_number());
+        }
+    } else {
+        if ch(t, p) == '0' && is_digit(ch(t, p + 1)) {
+            return refuse(t, why_number());
+        }
+        while is_digit(ch(t, p)) {
+            let d = ch(t, p) - '0';
+            if value > (0x7fffffffffffffff - d) / 10 {
+                return refuse(t, why_number());
+            }
+            value = value * 10 + d;
+            p = p + 1;
+        }
+    }
+    if is_name(ch(t, p)) {
+        return refuse(t, why_number());
+    }
+    put(t, h_at(), p);
+    return value;
+}
+
+fn primary[&t](t: &!t [int]) -> [] int {
+    let p = blanks(t);
+    let c = ch(t, p);
+    if failed(t) {
+        return 0;
+    }
+    if c == '(' {
+        put(t, h_at(), p + 1);
+        let v = binary(t, 0);
+        need(t, ')');
+        return v;
+    }
+    if c == '-' {
+        put(t, h_at(), p + 1);
+        return wrapping_sub(0, primary(t));
+    }
+    if is_digit(c) {
+        return number(t);
+    }
+    return refuse(t, why_number());
+}
+
+// The operators, as clang ranks them: `+` and `-` (level 0), then `|`, then `<<`.
+fn binary[&t](t: &!t [int], level: int) -> [] int {
+    if level > 2 {
+        return primary(t);
+    }
+    var v = binary(t, level + 1);
+    var going = true;
+    while going && !failed(t) {
+        let p = blanks(t);
+        let c = ch(t, p);
+        if level == 0 && (c == '+' || c == '-') {
+            put(t, h_at(), p + 1);
+            let r = binary(t, 1);
+            if c == '+' {
+                v = wrapping_add(v, r);
+            } else {
+                v = wrapping_sub(v, r);
+            }
+        } else if level == 1 && c == '|' && ch(t, p + 1) != '|' {
+            put(t, h_at(), p + 1);
+            v = v | binary(t, 2);
+        } else if level == 2 && c == '<' && ch(t, p + 1) == '<' {
+            put(t, h_at(), p + 2);
+            let r = binary(t, 3);
+            if r < 0 || r > 63 {
+                return refuse(t, why_number());
+            }
+            v = v << r;
+        } else {
+            going = false;
+        }
+    }
+    return v;
+}
+
+pub fn expression[&t](t: &!t [int]) -> [] int {
+    return binary(t, 0);
+}
+
+// An immediate: an expression, after `#` or (as clang takes it) without.
+fn immediate[&t](t: &!t [int]) -> [] int {
+    let p = blanks(t);
+    if ch(t, p) == '#' {
+        put(t, h_at(), p + 1);
+    }
+    return binary(t, 0);
+}
+
+// ---- registers ----
+//
+// A register is its number, 32 added for one of 64 bits, 64 for the zero register and 128 for the stack pointer.
+
+fn num(r: int) -> [] int {
+    return r & 31;
+}
+
+fn wide(r: int) -> [] int {
+    return r >> 5 & 1;
+}
+
+// The register that is next, taken; -1, and nothing taken, if what is next is not one.
+fn try_register[&t](t: &!t [int]) -> [] int {
+    let from = blanks(t);
+    let to = name_end(t, from);
+    let n = to - from;
+    var r = 0 - 1;
+    let c = ch(t, from);
+    if word_is(t, from, to, "sp") {
+        r = 31 | 32 | 128;
+    } else if word_is(t, from, to, "xzr") {
+        r = 31 | 32 | 64;
+    } else if word_is(t, from, to, "wzr") {
+        r = 31 | 64;
+    } else if (c == 'x' || c == 'w') && (n == 2 || n == 3) && is_digit(ch(t, from + 1)) && (n == 2 || is_digit(ch(t, from + 2)) && ch(t, from + 1) != '0') {
+        var v = ch(t, from + 1) - '0';
+        if n == 3 {
+            v = v * 10 + ch(t, from + 2) - '0';
+        }
+        if v <= 30 {
+            r = v;
+            if c == 'x' {
+                r = v | 32;
+            }
+        }
+    }
+    if r >= 0 {
+        put(t, h_at(), to);
+    }
+    return r;
+}
+
+// A register is next. `allow` says what register 31 may be here: 1 the zero register, 2 the stack pointer.
+fn register[&t](t: &!t [int], allow: int) -> [] int {
+    let r = try_register(t);
+    if r < 0 {
+        refuse(t, why_register());
+        return 0;
+    }
+    if r & 64 != 0 && allow & 1 == 0 || r & 128 != 0 && allow & 2 == 0 {
+        refuse(t, why_operand());
+    }
+    return r;
+}
+
+// A register of 64 bits is next.
+fn register64[&t](t: &!t [int], allow: int) -> [] int {
+    let r = register(t, allow);
+    if wide(r) == 0 {
+        refuse(t, why_operand());
+    }
+    return r;
+}
+
+// Two registers of one instruction are of one width.
+fn alike[&t](t: &!t [int], a: int, b: int) -> [] int {
+    if wide(a) != wide(b) {
+        return refuse(t, why_operand());
+    }
+    return 0;
+}
+
+// ---- labels ----
+
+pub fn here[&t](t: &t [int]) -> [] int {
+    return rec(t, l_section(), get(t, h_cur()), 5);
+}
+
+// Are the bytes of this statement being written?
+pub fn writing[&t](t: &t [int]) -> [] bool {
+    return get(t, h_pass()) >= 0 && get(t, h_pass()) == get(t, h_cur());
+}
+
+// The label with a name of the source, or -1.
+pub fn find_label[&t, &s](t: &t [int], source: &s [byte], start: int, n: int) -> [] int {
+    var k = 0;
+    while k < count(t, l_label()) {
+        if same(source, rec(t, l_label(), k, 0), rec(t, l_label(), k, 1), start, n) {
+            return k;
+        }
+        k = k + 1;
+    }
+    return 0 - 1;
+}
+
+pub fn relocate[&t](t: &!t [int], kind: int, offset: int, start: int, n: int) -> [] int {
+    let k = add(t, l_reloc());
+    set(t, l_reloc(), k, 0, kind);
+    set(t, l_reloc(), k, 1, get(t, h_cur()));
+    set(t, l_reloc(), k, 2, offset);
+    set(t, l_reloc(), k, 3, start);
+    set(t, l_reloc(), k, 4, n);
+    return 0;
+}
+
+// The kinds of relocation, by what they are called in an ELF object for AArch64: `ABS64`, `CALL26`, `JUMP26`, `ADR_PREL_LO21`, `CONDBR19`, `LD_PREL_LO19`.
+pub fn r_abs64() -> [] int {
+    return 1;
+}
+
+pub fn r_call26() -> [] int {
+    return 2;
+}
+
+pub fn r_adr21() -> [] int {
+    return 3;
+}
+
+pub fn r_cond19() -> [] int {
+    return 4;
+}
+
+pub fn r_literal19() -> [] int {
+    return 5;
+}
+
+pub fn r_jump26() -> [] int {
+    return 6;
+}
+
+// The label an instruction names: `1b` and `1f` (the nearest `1:` before and after), or a name. A numbered label is of this section or refused. A name
+// defined in this section and not global is a place, as it is to clang; any other is left to whoever links.
+fn target[&t, &s](t: &!t [int], source: &s [byte]) -> [] int {
+    let from = blanks(t);
+    let c = ch(t, from);
+    let collecting = get(t, h_pass()) < 0;
+    put(t, h_target(), 2);
+    if is_digit(c) {
+        var p = from;
+        var v = 0;
+        while is_digit(ch(t, p)) && p - from < 9 {
+            v = v * 10 + ch(t, p) - '0';
+            p = p + 1;
+        }
+        let way = ch(t, p);
+        if way != 'b' && way != 'f' || is_name(ch(t, p + 1)) {
+            return refuse(t, why_syntax());
+        }
+        put(t, h_at(), p + 1);
+        if collecting {
+            return 0;
+        }
+        var k = get(t, h_seen());
+        var found = 0 - 1;
+        if way == 'b' {
+            k = k - 1;
+            while k >= 0 && found < 0 {
+                if rec(t, l_numbered(), k, 0) == v {
+                    found = k;
+                }
+                k = k - 1;
+            }
+        } else {
+            while k < count(t, l_numbered()) && found < 0 {
+                if rec(t, l_numbered(), k, 0) == v {
+                    found = k;
+                }
+                k = k + 1;
+            }
+        }
+        if found < 0 || rec(t, l_numbered(), found, 1) != get(t, h_cur()) {
+            return refuse(t, why_numbered());
+        }
+        put(t, h_target(), 0);
+        put(t, h_target() + 1, rec(t, l_numbered(), found, 2));
+        return 0;
+    }
+    if !is_name_start(c) {
+        return refuse(t, why_syntax());
+    }
+    let to = name_end(t, from);
+    let start = name_start(t, from, to);
+    put(t, h_at(), to);
+    if collecting || failed(t) {
+        return 0;
+    }
+    let k = find_label(t, source, start, to - from);
+    if k >= 0 && rec(t, l_label(), k, 2) == get(t, h_cur()) && rec(t, l_label(), k, 4) == 0 {
+        put(t, h_target(), 0);
+        put(t, h_target() + 1, rec(t, l_label(), k, 3));
+        return 0;
+    }
+    put(t, h_target(), 1);
+    put(t, h_target() + 2, start);
+    put(t, h_target() + 3, to - from);
+    return 0;
+}
+
+// How many bytes from this instruction to the label that is next. For a label left to whoever links it is 0, and the relocation of `kind` is made.
+fn distance[&t, &s](t: &!t [int], source: &s [byte], kind: int) -> [] int {
+    target(t, source);
+    if failed(t) {
+        return 0;
+    }
+    let found = get(t, h_target());
+    if found == 0 {
+        return get(t, h_target() + 1) - here(t);
+    }
+    if found == 1 && writing(t) {
+        relocate(t, kind, here(t), get(t, h_target() + 2), get(t, h_target() + 3));
+    }
+    return 0;
+}
+
+// A word that reaches for a label: -1 is a label too far.
+fn reached[&t](t: &!t [int], word: int) -> [] int {
+    if word < 0 {
+        return refuse(t, why_range());
+    }
+    return word;
+}
+
+// ---- the literal pool ----
+
+// Where in this section the literal is: a number (`named` 0, `value`) or the address of a name (`named` 1, `value` where it is written and `n` how long).
+// clang 18 keeps one entry for a value however many times and in whatever size it is asked for, so a number loaded as 32 bits and as 64 would share one
+// entry of the first size: that is refused, not copied.
+fn literal_at[&t, &s](t: &!t [int], source: &s [byte], size: int, named: int, value: int, n: int) -> [] int {
+    let section = get(t, h_cur());
+    var k = 0;
+    while k < count(t, l_pool()) {
+        if rec(t, l_pool(), k, 0) == section && rec(t, l_pool(), k, 2) == named {
+            var found = rec(t, l_pool(), k, 3) == value;
+            if named == 1 {
+                found = same(source, rec(t, l_pool(), k, 3), rec(t, l_pool(), k, 4), value, n);
+            }
+            if found {
+                if rec(t, l_pool(), k, 1) != size {
+                    return refuse(t, why_pool());
+                }
+                return rec(t, l_pool(), k, 5);
+            }
+        }
+        k = k + 1;
+    }
+    if get(t, h_pass()) >= 0 {
+        return refuse(t, why_room());
+    }
+    let made = add(t, l_pool());
+    set(t, l_pool(), made, 0, section);
+    set(t, l_pool(), made, 1, size);
+    set(t, l_pool(), made, 2, named);
+    set(t, l_pool(), made, 3, value);
+    set(t, l_pool(), made, 4, n);
+    return 0;
+}
+
+// `ldr r, =v`: a `movz` when one says the number, as clang makes it; else a load from the pool, of 8 bytes for an `x` register and 4 for a `w`.
+fn load_pool[&t, &s](t: &!t [int], source: &s [byte], rt: int) -> [] int {
+    let from = blanks(t);
+    let sf = wide(rt);
+    var offset = 0;
+    if is_name_start(ch(t, from)) {
+        if sf == 0 {
+            return refuse(t, why_operand());
+        }
+        let to = name_end(t, from);
+        let start = name_start(t, from, to);
+        put(t, h_at(), to);
+        if failed(t) {
+            return 0 - 1;
+        }
+        offset = literal_at(t, source, 8, 1, start, to - from);
+    } else {
+        let v = binary(t, 0);
+        if failed(t) {
+            return 0 - 1;
+        }
+        var u = v;
+        var shift = 0;
+        while (u < 0 || u > 0xffff) && u & 0xffff == 0 {
+            u = u >> 16 & (1 << 48) - 1;
+            shift = shift + 16;
+        }
+        if u >= 0 && u <= 0xffff && shift <= 16 + 32 * sf {
+            return a64.movw(sf, 2, num(rt), u, shift / 16);
+        }
+        if sf == 0 && (v < 0 - (1 << 31) || v >= 1 << 32) {
+            return refuse(t, why_encoding());
+        }
+        offset = literal_at(t, source, 4 + 4 * sf, 0, v, 0);
+    }
+    if failed(t) {
+        return 0 - 1;
+    }
+    if get(t, h_pass()) < 0 {
+        return a64.load_literal(sf, 0, num(rt), 0);
+    }
+    return reached(t, a64.load_literal(sf, 0, num(rt), (offset - here(t)) / 4));
+}
+
+// ---- the instructions ----
+
+// `mov` of a number: the `movz` that says it, else the `movn`, else the `orr` of the zero register and the number, in the order clang tries them.
+fn mov_number(sf: int, rd: int, v: int, zero: bool) -> [] int {
+    var u = v;
+    var all = 0 - 1;
+    if sf == 0 {
+        if v < 0 - (1 << 31) || v >= 1 << 32 {
+            return 0 - 1;
+        }
+        all = (1 << 32) - 1;
+        u = v & all;
+    }
+    var i = 0;
+    while i < 2 + 2 * sf {
+        if u & ~(0xffff << 16 * i) == 0 {
+            return a64.movw(sf, 2, rd, u >> 16 * i & 0xffff, i);
+        }
+        i = i + 1;
+    }
+    let inverse = ~u & all;
+    i = 0;
+    while i < 2 + 2 * sf {
+        if inverse & ~(0xffff << 16 * i) == 0 {
+            return a64.movw(sf, 0, rd, inverse >> 16 * i & 0xffff, i);
+        }
+        i = i + 1;
+    }
+    // The result of an `orr` with a number is the stack pointer where a `mov` says the zero register.
+    if zero {
+        return 0 - 1;
+    }
+    return a64.logic_imm(sf, 1, rd, 31, u);
+}
+
+fn op_mov[&t](t: &!t [int]) -> [] int {
+    let rd = register(t, 3);
+    need(t, ',');
+    let rm = try_register(t);
+    if rm >= 0 {
+        if (rd | rm) & 128 != 0 {
+            // To or from the stack pointer: an `add` of nothing.
+            if (rd | rm) & 64 != 0 || wide(rd) == 0 || wide(rm) == 0 {
+                return refuse(t, why_operand());
+            }
+            return a64.addsub_imm(1, 0, 0, num(rd), num(rm), 0, 0);
+        }
+        alike(t, rd, rm);
+        return a64.logic_shift(wide(rd), 1, 0, num(rd), 31, num(rm), 0, 0);
+    }
+    if rd & 128 != 0 {
+        return refuse(t, why_operand());
+    }
+    let v = immediate(t);
+    return mov_number(wide(rd), num(rd), v, rd & 64 != 0);
+}
+
+// `ldr`, `str` (`load` 1, 0) and the two of one byte (`single` 1). An offset the scaled form cannot say is the unscaled one (`ldur`), as clang makes it.
+fn op_memory[&t, &s](t: &!t [int], source: &s [byte], load: int, single: int) -> [] int {
+    let rt = register(t, 1);
+    need(t, ',');
+    var size = 2 + wide(rt);
+    if single == 1 {
+        if wide(rt) == 1 {
+            return refuse(t, why_operand());
+        }
+        size = 0;
+    }
+    let whole = load == 1 && single == 0;
+    if eat(t, '=') {
+        if !whole {
+            return refuse(t, why_syntax());
+        }
+        return load_pool(t, source, rt);
+    }
+    if eat(t, '[') {
+        let rn = register64(t, 2);
+        var v = 0;
+        var after = false;
+        if eat(t, ',') {
+            v = immediate(t);
+            need(t, ']');
+        } else {
+            need(t, ']');
+            if eat(t, ',') {
+                v = immediate(t);
+                after = true;
+            }
+        }
+        if failed(t) {
+            return 0 - 1;
+        }
+        if after {
+            return a64.load_store_offset(size, 0, load, 1, num(rt), num(rn), v);
+        }
+        let unit = 1 << size;
+        if v >= 0 && v % unit == 0 && v / unit < 4096 {
+            return a64.load_store(size, 0, load, num(rt), num(rn), v / unit);
+        }
+        return a64.load_store_offset(size, 0, load, 0, num(rt), num(rn), v);
+    }
+    if !whole {
+        return refuse(t, why_syntax());
+    }
+    let d = distance(t, source, r_literal19());
+    if d % 4 != 0 {
+        return refuse(t, why_range());
+    }
+    return reached(t, a64.load_literal(wide(rt), 0, num(rt), d / 4));
+}
+
+// After a register: `, lsl #n` (or `lsr`, `asr`, and `ror` where `rotate`), as the kind times 64 plus the amount; 0 when there is none.
+fn shifted[&t](t: &!t [int], rotate: bool) -> [] int {
+    if !eat(t, ',') {
+        return 0;
+    }
+    var kind = 0 - 1;
+    if word_next(t, "lsl") {
+        kind = 0;
+    } else if word_next(t, "lsr") {
+        kind = 1;
+    } else if word_next(t, "asr") {
+        kind = 2;
+    } else if rotate && word_next(t, "ror") {
+        kind = 3;
+    }
+    if kind < 0 {
+        refuse(t, why_syntax());
+        return 0;
+    }
+    let amount = immediate(t);
+    if amount < 0 || amount > 63 {
+        refuse(t, why_encoding());
+        return 0;
+    }
+    return kind << 6 | amount;
+}
+
+// `add` or `sub` of a number: a negative one is the other instruction, and one of more than twelve bits is shifted left twelve if that says it.
+fn addsub_number(sf: int, sub: int, s: int, rd: int, rn: int, v: int) -> [] int {
+    var op = sub;
+    var u = v;
+    if v < 0 {
+        if v < 0 - 0xffffff {
+            return 0 - 1;
+        }
+        op = 1 - sub;
+        u = 0 - v;
+    }
+    if u <= 0xfff {
+        return a64.addsub_imm(sf, op, s, rd, rn, u, 0);
+    }
+    if u & 0xfff == 0 && u >> 12 <= 0xfff {
+        return a64.addsub_imm(sf, op, s, rd, rn, u >> 12, 1);
+    }
+    return 0 - 1;
+}
+
+// `add`, `sub`, `subs`, and (`compare` 1) `cmp` and `cmn`, which are `subs` and `adds` with no result. With a number the stack pointer may be an operand,
+// and the result unless the flags are set; with a register (shifted or not) register 31 is the zero register, and the stack pointer is refused.
+fn op_addsub[&t](t: &!t [int], sub: int, s: int, compare: int) -> [] int {
+    var result = 31 | 64;
+    if compare == 0 {
+        result = register(t, 3);
+        need(t, ',');
+    }
+    let rn = register(t, 3);
+    need(t, ',');
+    if compare == 1 {
+        result = result | rn & 32;
+    }
+    alike(t, result, rn);
+    let rm = try_register(t);
+    if rm < 0 {
+        let v = immediate(t);
+        if rn & 64 != 0 || s == 0 && result & 64 != 0 || s == 1 && result & 128 != 0 {
+            return refuse(t, why_operand());
+        }
+        return addsub_number(wide(rn), sub, s, num(result), num(rn), v);
+    }
+    if (result | rn | rm) & 128 != 0 {
+        return refuse(t, why_operand());
+    }
+    alike(t, rn, rm);
+    let sh = shifted(t, false);
+    return a64.addsub_shift(wide(rn), sub, s, num(result), num(rn), num(rm), sh >> 6, sh & 63);
+}
+
+// `and` (`opc` 0), `orr` (1) and `bic` (0, `invert` 1): with a number `bic` is `and` with every bit of it changed.
+fn op_logic[&t](t: &!t [int], opc: int, invert: int) -> [] int {
+    let rd = register(t, 3);
+    need(t, ',');
+    let rn = register(t, 1);
+    need(t, ',');
+    alike(t, rd, rn);
+    let sf = wide(rd);
+    let rm = try_register(t);
+    if rm < 0 {
+        var v = immediate(t);
+        if rd & 64 != 0 {
+            return refuse(t, why_operand());
+        }
+        var all = 0 - 1;
+        if sf == 0 {
+            if v < 0 - (1 << 31) || v >= 1 << 32 {
+                return 0 - 1;
+            }
+            all = (1 << 32) - 1;
+        }
+        v = v & all;
+        if invert == 1 {
+            v = ~v & all;
+        }
+        return a64.logic_imm(sf, opc, num(rd), num(rn), v);
+    }
+    if (rd | rm) & 128 != 0 {
+        return refuse(t, why_operand());
+    }
+    alike(t, rn, rm);
+    let sh = shifted(t, true);
+    return a64.logic_shift(sf, opc, invert, num(rd), num(rn), num(rm), sh >> 6, sh & 63);
+}
+
+// `lsl` (`kind` 0) and `lsr` (1), by a number or by a register.
+fn op_shift[&t](t: &!t [int], kind: int) -> [] int {
+    let rd = register(t, 1);
+    need(t, ',');
+    let rn = register(t, 1);
+    need(t, ',');
+    alike(t, rd, rn);
+    let rm = try_register(t);
+    if rm < 0 {
+        let amount = immediate(t);
+        return a64.shift_imm(wide(rd), kind, num(rd), num(rn), amount);
+    }
+    if rm & 128 != 0 {
+        return refuse(t, why_operand());
+    }
+    alike(t, rn, rm);
+    return a64.dp2(wide(rd), 8 + kind, num(rd), num(rn), num(rm));
+}
+
+// `ubfx rd, rn, #lsb, #width`.
+fn op_ubfx[&t](t: &!t [int]) -> [] int {
+    let rd = register(t, 1);
+    need(t, ',');
+    let rn = register(t, 1);
+    need(t, ',');
+    alike(t, rd, rn);
+    let lsb = immediate(t);
+    need(t, ',');
+    let bits = immediate(t);
+    let size = 32 + 32 * wide(rd);
+    if lsb < 0 || lsb >= size || bits < 1 || bits > size - lsb {
+        return 0 - 1;
+    }
+    return a64.bitfield(wide(rd), 2, num(rd), num(rn), lsb, lsb + bits - 1);
+}
+
+fn op_clz[&t](t: &!t [int]) -> [] int {
+    let rd = register(t, 1);
+    need(t, ',');
+    let rn = register(t, 1);
+    alike(t, rd, rn);
+    return a64.dp1(wide(rd), 4, num(rd), num(rn));
+}
+
+// A branch's distance in instructions; a label that is not a whole number of them away cannot be reached.
+fn hop[&t, &s](t: &!t [int], source: &s [byte], kind: int) -> [] int {
+    let d = distance(t, source, kind);
+    if d % 4 != 0 {
+        refuse(t, why_range());
+        return 0;
+    }
+    return d / 4;
+}
+
+fn op_branch[&t, &s](t: &!t [int], source: &s [byte], link: int) -> [] int {
+    var kind = r_jump26();
+    if link == 1 {
+        kind = r_call26();
+    }
+    return reached(t, a64.branch(link, hop(t, source, kind)));
+}
+
+// `cbz` (`nonzero` 0) and `cbnz` (1).
+fn op_compare_branch[&t, &s](t: &!t [int], source: &s [byte], nonzero: int) -> [] int {
+    let rt = register(t, 1);
+    need(t, ',');
+    return reached(t, a64.compare_branch(wide(rt), nonzero, num(rt), hop(t, source, r_cond19())));
+}
+
+fn op_adr[&t, &s](t: &!t [int], source: &s [byte]) -> [] int {
+    let rd = register64(t, 1);
+    need(t, ',');
+    return reached(t, a64.adr(0, num(rd), distance(t, source, r_adr21())));
+}
+
+// The condition a `b.` is followed by, of those the subset has; -1 for any other.
+fn condition[&t](t: &t [int], from: int, to: int) -> [] int {
+    let names = "eq ne hs lo mi pl hi ls ge lt gt le cs cc ";
+    let codes = "abcdefijklmncd";
+    if to - from != 2 {
+        return 0 - 1;
+    }
+    var k = 0;
+    while k * 3 + 1 < len(names) && k < len(codes) {
+        if ch(t, from) == int_of(names[k * 3]) && ch(t, from + 1) == int_of(names[k * 3 + 1]) {
+            return int_of(codes[k]) - 'a';
+        }
+        k = k + 1;
+    }
+    return 0 - 1;
+}
+
+// The registers that are only read, and those that are only written: the lists of `compiler/bare.cho`, which `tests/commands/native_asm.sh` holds these
+// to. clang refuses a write of the first and a read of the second, and so does this.
+fn read_only() -> [] &static [byte] {
+    return " midr_el1 mpidr_el1 revidr_el1 aidr_el1 currentel ctr_el0 dczid_el0 ccsidr_el1 clidr_el1 isr_el1 rvbar_el1 cntpct_el0 cntvct_el0 mdccsr_el0 oslsr_el1 pmceid0_el0 pmceid1_el0 id_pfr0_el1 id_pfr1_el1 id_dfr0_el1 id_afr0_el1 id_mmfr0_el1 id_mmfr1_el1 id_mmfr2_el1 id_mmfr3_el1 id_isar0_el1 id_isar1_el1 id_isar2_el1 id_isar3_el1 id_isar4_el1 id_isar5_el1 mvfr0_el1 mvfr1_el1 mvfr2_el1 id_aa64pfr0_el1 id_aa64pfr1_el1 id_aa64dfr0_el1 id_aa64dfr1_el1 id_aa64afr0_el1 id_aa64afr1_el1 id_aa64isar0_el1 id_aa64isar1_el1 id_aa64mmfr0_el1 id_aa64mmfr1_el1 id_aa64mmfr2_el1 icc_iar0_el1 icc_iar1_el1 icc_hppir0_el1 icc_hppir1_el1 icc_rpr_el1 ";
+}
+
+fn write_only() -> [] &static [byte] {
+    return " oslar_el1 pmswinc_el0 icc_eoir0_el1 icc_eoir1_el1 icc_dir_el1 icc_sgi0r_el1 icc_sgi1r_el1 icc_asgi1r_el1 ";
+}
+
+// Is `name` in a list of names with a space before and after each?
+fn listed[&n](name: &n [byte], list: &static [byte]) -> [] bool {
+    var i = 0;
+    while i + len(name) + 1 < len(list) {
+        if int_of(list[i]) == ' ' && int_of(list[i + len(name) + 1]) == ' ' {
+            var k = 0;
+            while k < len(name) && int_of(list[i + 1 + k]) == int_of(name[k]) {
+                k = k + 1;
+            }
+            if k == len(name) {
+                return true;
+            }
+        }
+        i = i + 1;
+    }
+    return false;
+}
+
+// The system register that is next, by its name in any case, to be written (`write`) or read: its fifteen bits (`a64sys.cho`).
+fn system_name[&t](t: &!t [int], write: bool) -> [] int {
+    let from = blanks(t);
+    let to = name_end(t, from);
+    let n = to - from;
+    if n < 1 || n > 30 {
+        refuse(t, why_system());
+        return 0;
+    }
+    var bits = 0 - 1;
+    region scratch {
+        let name = alloc_slice[scratch](32, byte_of(0));
+        var i = 0;
+        while i < n {
+            var c = ch(t, from + i);
+            if c >= 'A' && c <= 'Z' {
+                c = c + 32;
+            }
+            name[i] = byte_of(c);
+            i = i + 1;
+        }
+        bits = a64sys.encoding(name[0..n]);
+        if write && listed(name[0..n], read_only()) || !write && listed(name[0..n], write_only()) {
+            bits = 0 - 1;
+        }
+    }
+    put(t, h_at(), to);
+    if bits < 0 {
+        refuse(t, why_system());
+        return 0;
+    }
+    return bits;
+}
+
+fn op_msr[&t](t: &!t [int]) -> [] int {
+    let bits = system_name(t, true);
+    need(t, ',');
+    let rt = register64(t, 1);
+    return a64.system_register(0, num(rt), bits);
+}
+
+fn op_mrs[&t](t: &!t [int]) -> [] int {
+    let rt = register64(t, 1);
+    need(t, ',');
+    return a64.system_register(1, num(rt), system_name(t, false));
+}
+
+// `dc isw`, `dc cisw` and `dc civac`, each of the address or the set and way in a register.
+fn op_dc[&t](t: &!t [int]) -> [] int {
+    var op1 = 0;
+    var crm = 0;
+    var op2 = 2;
+    if word_next(t, "isw") {
+        crm = 6;
+    } else if word_next(t, "cisw") {
+        crm = 14;
+    } else if word_next(t, "civac") {
+        op1 = 3;
+        crm = 14;
+        op2 = 1;
+    } else {
+        return refuse(t, why_system());
+    }
+    need(t, ',');
+    let rt = register64(t, 0);
+    return a64.sys(op1, 7, crm, op2, num(rt));
+}
+
+// The instruction whose mnemonic the line has from `from` to `to`, the reader being after it: its word, or -1 with the refusal made.
+pub fn instruction[&t, &s](t: &!t [int], source: &s [byte], from: int, to: int) -> [] int {
+    var w = 0 - 1;
+    if word_is(t, from, to, "mov") {
+        w = op_mov(t);
+    } else if word_is(t, from, to, "ldr") {
+        w = op_memory(t, source, 1, 0);
+    } else if word_is(t, from, to, "str") {
+        w = op_memory(t, source, 0, 0);
+    } else if word_is(t, from, to, "ldrb") {
+        w = op_memory(t, source, 1, 1);
+    } else if word_is(t, from, to, "strb") {
+        w = op_memory(t, source, 0, 1);
+    } else if word_is(t, from, to, "add") {
+        w = op_addsub(t, 0, 0, 0);
+    } else if word_is(t, from, to, "sub") {
+        w = op_addsub(t, 1, 0, 0);
+    } else if word_is(t, from, to, "subs") {
+        w = op_addsub(t, 1, 1, 0);
+    } else if word_is(t, from, to, "cmp") {
+        w = op_addsub(t, 1, 1, 1);
+    } else if word_is(t, from, to, "cmn") {
+        w = op_addsub(t, 0, 1, 1);
+    } else if word_is(t, from, to, "and") {
+        w = op_logic(t, 0, 0);
+    } else if word_is(t, from, to, "orr") {
+        w = op_logic(t, 1, 0);
+    } else if word_is(t, from, to, "bic") {
+        w = op_logic(t, 0, 1);
+    } else if word_is(t, from, to, "lsl") {
+        w = op_shift(t, 0);
+    } else if word_is(t, from, to, "lsr") {
+        w = op_shift(t, 1);
+    } else if word_is(t, from, to, "ubfx") {
+        w = op_ubfx(t);
+    } else if word_is(t, from, to, "clz") {
+        w = op_clz(t);
+    } else if word_is(t, from, to, "b") {
+        w = op_branch(t, source, 0);
+    } else if word_is(t, from, to, "bl") {
+        w = op_branch(t, source, 1);
+    } else if word_is(t, from, to, "br") {
+        w = a64.branch_reg(0, num(register64(t, 1)));
+    } else if word_is(t, from, to, "cbz") {
+        w = op_compare_branch(t, source, 0);
+    } else if word_is(t, from, to, "cbnz") {
+        w = op_compare_branch(t, source, 1);
+    } else if word_is(t, from, to, "adr") {
+        w = op_adr(t, source);
+    } else if word_is(t, from, to, "msr") {
+        w = op_msr(t);
+    } else if word_is(t, from, to, "mrs") {
+        w = op_mrs(t);
+    } else if word_is(t, from, to, "isb") {
+        w = a64.barrier(6, 15);
+    } else if word_is(t, from, to, "wfe") {
+        w = a64.hint(2);
+    } else if word_is(t, from, to, "eret") {
+        w = a64.eret();
+    } else if word_is(t, from, to, "dsb") {
+        if !word_next(t, "sy") {
+            return refuse(t, why_system());
+        }
+        w = a64.barrier(4, 15);
+    } else if word_is(t, from, to, "ic") {
+        if !word_next(t, "iallu") {
+            return refuse(t, why_system());
+        }
+        w = a64.sys(0, 7, 5, 0, 31);
+    } else if word_is(t, from, to, "tlbi") {
+        if !word_next(t, "vmalle1") {
+            return refuse(t, why_system());
+        }
+        w = a64.sys(0, 8, 7, 0, 31);
+    } else if word_is(t, from, to, "dc") {
+        w = op_dc(t);
+    } else if to - from == 4 && ch(t, from) == 'b' && ch(t, from + 1) == '.' && condition(t, from + 2, to) >= 0 {
+        w = reached(t, a64.branch_cond(condition(t, from + 2, to), hop(t, source, r_cond19())));
+    } else {
+        return refuse(t, why_mnemonic());
+    }
+    done(t);
+    if failed(t) {
+        return 0 - 1;
+    }
+    if w < 0 {
+        return refuse(t, why_encoding());
+    }
+    return w;
+}

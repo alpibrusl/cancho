@@ -12,6 +12,9 @@ import selfhost.llprint as lp;
 import selfhost.llout as out;
 import selfhost.a64fn;
 import selfhost.elf;
+import selfhost.layout as la;
+import selfhost.a64asm as asm;
+import selfhost.image;
 
 // What became of a module: the text to give clang (`roundtrip`) or the bytes of its object (`native`), and the refusal if there was one (`why` 0 for none; else the line of the
 // module and the reason, a code of `llout.why_text`, which has the reader's and the code generator's).
@@ -78,4 +81,96 @@ pub fn through[&h, &r](heap: &!h Heap, ir: &r [byte], backend: int, target: int)
     }
     unbox_slice(heap, table);
     return Judged { text: text, line: line, why: why };
+}
+
+// What became of a program for no system that was to be an image (`docs/native-backend.md` section 16): the file, or where it was refused. `stage` is 0
+// for a file; 1 for the module or its code (`line` of the module, `why` of `llout.why_text`); 2 for the layout (`line` of it, `why` of `layout.why_text`);
+// 3 for the boot page (`line` of it, `why` of `a64asm.why_text`); 4 for the image (`why` of `image.why_text`, and the name and the number `image.Made` has).
+pub res struct Imaged {
+    file: buffer.Buffer,
+    stage: int,
+    line: int,
+    why: int,
+    space: int,
+    from: int,
+    size: int,
+    number: int,
+}
+
+// The module `ir` with the boot page `page` (`boot` false for none), placed as the layout `plan` says: the flat image, or with `executable` an ELF
+// executable that holds it.
+pub fn bare_image[&h, &r, &q, &s](heap: &!h Heap, ir: &r [byte], plan: &q [byte], page: &s [byte], boot: bool, executable: bool) -> [heap] Imaged {
+    let table = box_slice(heap, lm.room(ir), 0);
+    var result = buffer.empty(heap, 0);
+    var stage = 0;
+    var line = 0;
+    var reason = 0;
+    var where_space = 0;
+    var where_from = 0;
+    var where_size = 0;
+    var amount = 0;
+    borrow mut table as &!tw in {
+        let m = contents(tw);
+        if lt.read(ir, m, 1) != 0 {
+            stage = 1;
+            line = lm.cell(m, lm.h_fail_line());
+            reason = lm.cell(m, lm.h_fail_why());
+            if reason == 0 {
+                reason = lm.why_room();
+            }
+        } else {
+            let code = box_slice(heap, out.room(m), 0);
+            let lines = box_slice(heap, la.room(plan), 0);
+            let labels = box_slice(heap, asm.room(page), 0);
+            var assembled = buffer.empty(heap, 4096);
+            borrow mut code as &!cw in {
+                borrow mut lines as &!lw in {
+                    borrow mut labels as &!aw in {
+                        let o = contents(cw);
+                        let l = contents(lw);
+                        let a = contents(aw);
+                        if a64fn.generate(ir, m, o) != 0 {
+                            stage = 1;
+                            line = lm.cell(o, out.h_fail_line());
+                            reason = lm.cell(o, out.h_fail_why());
+                            if reason == 0 {
+                                reason = out.why_room();
+                            }
+                        } else if la.read(plan, l) != 0 {
+                            stage = 2;
+                            line = lm.cell(l, la.h_fail_line());
+                            reason = lm.cell(l, la.h_fail_why());
+                        } else {
+                            assembled = asm.assemble(heap, page, a, assembled);
+                            if boot && asm.failed(a) {
+                                stage = 3;
+                                line = asm.fail_line(a);
+                                reason = asm.fail_why(a);
+                            } else {
+                                borrow assembled as &ab in {
+                                    let image.Made { file, why, space, from, size, number } = image.make(heap, ir, m, o, page, a, buffer.bytes(ab), boot, plan, l, executable);
+                                    buffer.drop(heap, result);
+                                    result = file;
+                                    if why != 0 {
+                                        stage = 4;
+                                        reason = why;
+                                        where_space = space;
+                                        where_from = from;
+                                        where_size = size;
+                                        amount = number;
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+            buffer.drop(heap, assembled);
+            unbox_slice(heap, code);
+            unbox_slice(heap, lines);
+            unbox_slice(heap, labels);
+        }
+    }
+    unbox_slice(heap, table);
+    return Imaged { file: result, stage: stage, line: line, why: reason, space: where_space, from: where_from, size: where_size, number: amount };
 }
