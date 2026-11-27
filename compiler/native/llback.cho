@@ -11,8 +11,9 @@ import selfhost.lltop as lt;
 import selfhost.llprint as lp;
 import selfhost.llout as out;
 import selfhost.a64fn;
+import selfhost.elf;
 
-// What became of a module: the text to give clang (empty unless it was written back), and the refusal if there was one (`why` 0 for none; else the line of the
+// What became of a module: the text to give clang (`roundtrip`) or the bytes of its object (`native`), and the refusal if there was one (`why` 0 for none; else the line of the
 // module and the reason, a code of `llout.why_text`, which has the reader's and the code generator's).
 pub res struct Judged {
     text: buffer.Buffer,
@@ -53,8 +54,7 @@ pub fn through[&h, &r](heap: &!h Heap, ir: &r [byte], backend: int, target: int)
         } else if target != 2 && target != 3 {
             why = out.why_machine();
         } else {
-            // The module is read: its code (`docs/native-backend.md` section 12). There is nothing yet to put the code in, so it is made and dropped, and
-            // what is said is whether it could be made.
+            // The module is read: its code (`docs/native-backend.md` section 12), and the object the code and the module's values are (section 13).
             let code = box_slice(heap, out.room(m), 0);
             borrow mut code as &!cw in {
                 let o = contents(cw);
@@ -63,6 +63,13 @@ pub fn through[&h, &r](heap: &!h Heap, ir: &r [byte], backend: int, target: int)
                     why = lm.cell(o, out.h_fail_why());
                     if why == 0 {
                         why = out.why_room();
+                    }
+                } else {
+                    let (file, bad) = elf.object(heap, ir, m, o);
+                    buffer.drop(heap, text);
+                    text = file;
+                    if bad != 0 {
+                        why = out.why_constant();
                     }
                 }
             }

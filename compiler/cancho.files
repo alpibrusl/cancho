@@ -72,6 +72,7 @@ native/a64fn.cho
 native/a64frame.cho
 native/a64gen.cho
 native/a64sys.cho
+native/elf.cho
 native/llback.cho
 native/llbody.cho
 native/lllayout.cho
