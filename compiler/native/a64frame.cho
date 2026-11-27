@@ -577,7 +577,8 @@ pub fn store_value[&t, &m, &o](text: &t [byte], m: &m [int], o: &!o [int], at: i
     return out.fail(o, out.why_constant());
 }
 
-fn hex(c: int) -> [] int {
+// What a hexadecimal digit is worth (the object writer reads the escapes of a text with it too).
+pub fn hex(c: int) -> [] int {
     if c >= 'A' && c <= 'F' {
         return c - 'A' + 10;
     }

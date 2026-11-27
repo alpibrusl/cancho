@@ -8,7 +8,8 @@ module selfhost.lllayout;
 
 import selfhost.llmod as lm;
 
-fn up(n: int, align: int) -> [] int {
+// `n` rounded up to a multiple of `align`.
+pub fn up(n: int, align: int) -> [] int {
     if align <= 1 {
         return n;
     }

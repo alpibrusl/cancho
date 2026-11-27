@@ -1,0 +1,131 @@
+edition 7;
+module gen_object;
+
+// gen_object.cho -- a module of LLVM text through the native backend's reader, code generator and object writer: the ELF relocatable object, on the standard
+// output (`docs/native-backend.md` section 13). The compiler does the same for a program (`cancho build --backend native --emit obj`); this takes the text,
+// so that a test can hold the writer to a module it keeps.
+//
+//     cancho build tests/native/gen_object.cho compiler/native/{llmod,llread,llbody,lltop,lllayout,llout,a64,a64sys,a64frame,a64call,a64gen,a64fn,elf}.cho --std -o EXE
+//     EXE MODULE.ll > MODULE.o
+//
+// On the standard error: `ok: words W functions F relocations R`, or `read:` or `generate:` with the line and the reason, or `object:`; status 1 for those.
+
+import std.buffer;
+import std.io as console;
+import selfhost.llmod as lm;
+import selfhost.llread as lr;
+import selfhost.lltop as lt;
+import selfhost.llout as out;
+import selfhost.a64fn as fnc;
+import selfhost.elf;
+
+fn read_all[&h, &f, &p](heap: &!h Heap, fs: &f Fs(""), path: &p [byte]) -> [heap, fs_read(""), file_read] buffer.Buffer {
+    var b = buffer.empty(heap, 4096);
+    match open_read(fs, path) {
+        Opened::Failed(reason) => {
+            return b;
+        }
+        Opened::Ok(opened) => {
+            var file = opened;
+            var chunk = buffer.empty(heap, 1048576);
+            borrow mut file as &!handle in {
+                var going = true;
+                while going {
+                    borrow mut chunk as &!c in {
+                        match file_read(handle, buffer.room(c)) {
+                            Read::Got(n) => {
+                                buffer.filled(c, n);
+                                b = buffer.append(heap, b, buffer.bytes(c));
+                                buffer.clear(c);
+                            }
+                            Read::End => {
+                                going = false;
+                            }
+                            Read::Failed(reason) => {
+                                going = false;
+                            }
+                        }
+                    }
+                }
+            }
+            buffer.drop(heap, chunk);
+            file_close(file);
+        }
+    }
+    return b;
+}
+
+fn main(world: World) -> [] int {
+    let Split { io, ffi, fs, heap, args, net, clock, signals, exec } = split(world);
+    release(ffi);
+    release(net);
+    release(clock);
+    release(signals);
+    release(exec);
+    var status = 0;
+    borrow mut heap as &!h in {
+        borrow mut io as &!i in {
+            borrow args as &a in {
+                borrow fs as &f in {
+                    let text = read_all(h, f, arg(a, 1));
+                    borrow text as &tb in {
+                        let t = buffer.bytes(tb);
+                        let table = box_slice(h, lm.room(t), 0);
+                        borrow mut table as &!tw in {
+                            let m = contents(tw);
+                            status = lt.read(t, m, 0);
+                            var said = buffer.empty(h, 256);
+                            if status != 0 {
+                                said = buffer.append(h, said, "read: line ");
+                                said = buffer.push_nat(h, said, m[lm.h_fail_line()]);
+                                said = buffer.append(h, said, ": ");
+                                said = buffer.append(h, said, lm.why_text(m[lm.h_fail_why()]));
+                            } else {
+                                let code = box_slice(h, out.room(m), 0);
+                                borrow mut code as &!cw in {
+                                    let o = contents(cw);
+                                    status = fnc.generate(t, m, o);
+                                    if status != 0 {
+                                        said = buffer.append(h, said, "generate: line ");
+                                        said = buffer.push_nat(h, said, o[out.h_fail_line()]);
+                                        said = buffer.append(h, said, ": ");
+                                        said = buffer.append(h, said, out.why_text(o[out.h_fail_why()]));
+                                    } else {
+                                        let (file, bad) = elf.object(h, t, m, o);
+                                        borrow file as &fb in {
+                                            buffer.write(i, fb);
+                                        }
+                                        buffer.drop(h, file);
+                                        if bad != 0 {
+                                            status = 1;
+                                            said = buffer.append(h, said, "object: a value with no form; ");
+                                        }
+                                        said = buffer.append(h, said, "ok: words ");
+                                        said = buffer.push_nat(h, said, out.here(o));
+                                        said = buffer.append(h, said, " functions ");
+                                        said = buffer.push_nat(h, said, out.functions(o));
+                                        said = buffer.append(h, said, " relocations ");
+                                        said = buffer.push_nat(h, said, out.relocations(o));
+                                    }
+                                }
+                                unbox_slice(h, code);
+                            }
+                            said = buffer.append(h, said, "\n");
+                            borrow said as &sb in {
+                                console.error_all(i, buffer.bytes(sb));
+                            }
+                            buffer.drop(h, said);
+                        }
+                        unbox_slice(h, table);
+                    }
+                    buffer.drop(h, text);
+                }
+            }
+        }
+    }
+    release(fs);
+    release(args);
+    release(heap);
+    release(io);
+    return status;
+}

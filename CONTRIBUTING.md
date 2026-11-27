@@ -17,12 +17,13 @@ scripts/gate.sh
 ```
 
 It builds a compiler from the committed seed (no Rust, only clang) and
-runs seven stages: `fmt` (`cancho fmt --check`), `files` (the file budget
+runs eight stages: `fmt` (`cancho fmt --check`), `files` (the file budget
 below), `links` (every relative link and `examples/`, `compiler/` path in the documents exists), `seed` (the committed seed matches its hash and builds), `walk`
 (`tests/run.cho` over `tests/accept`, `tests/reject` and `examples`),
 `tests` (the `cancho test` runs of `tests/cancho-tests.txt` and the
-scripts of `tests/commands`, which build and run real programs) and
-`reject`. `scripts/gate.sh --only STAGE` runs one. `docs/gate.md` says what
+scripts of `tests/commands`, which build and run real programs),
+`reject`, and `native` (the programs of `walk` and the runs of `tests` again, built by
+the compiler's own backend; it runs on Linux on AArch64 and says so elsewhere, `docs/native-backend.md` section 13). `scripts/gate.sh --only STAGE` runs one. `docs/gate.md` says what
 each stage replaced and how it was measured.
 
 That is the whole gate: there is no Rust left in the repository to check

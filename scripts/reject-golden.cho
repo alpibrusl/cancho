@@ -174,7 +174,7 @@ fn refusals_of[&h, &x, &c, &f, &b, &p, &n](heap: &!h Heap, exec: &x Exec(""), cl
         if asked {
             command = harness.word(heap, command, "--backend");
             borrow backend as &kb in {
-                command = harness.word(heap, command, buffer.bytes(kb));
+                command = harness.words(heap, command, buffer.bytes(kb));
             }
         }
         buffer.drop(heap, backend);

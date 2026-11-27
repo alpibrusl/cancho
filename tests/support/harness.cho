@@ -149,6 +149,21 @@ pub fn word[&h, &t](heap: &!h Heap, list: buffer.Buffer, text: &t [byte]) -> [he
     return buffer.push(heap, buffer.append(heap, list, text), byte_of(0));
 }
 
+// `list` and each word of `text`, which a space parts: a header that says more than one thing of a command (`//~ BACKEND native --host linux`).
+pub fn words[&h, &t](heap: &!h Heap, list: buffer.Buffer, text: &t [byte]) -> [heap] buffer.Buffer {
+    var out = list;
+    let fields = bytes.count_byte(text, 32) + 1;
+    var n = 1;
+    while n <= fields {
+        let one = bytes.field(text, 32, n);
+        if len(one) > 0 {
+            out = word(heap, out, one);
+        }
+        n = n + 1;
+    }
+    return out;
+}
+
 // `into` and what is in the file at `path` (nothing if it cannot be read).
 pub fn append_file[&h, &f, &p](heap: &!h Heap, fs: &f Fs(""), path: &p [byte], into: buffer.Buffer) -> [heap, fs_read(""), file_read] buffer.Buffer {
     let Contents { data, failed } = read_file(heap, fs, path);

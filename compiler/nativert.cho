@@ -1,0 +1,21 @@
+edition 7;
+module selfhost.nativert;
+
+// nativert.cho -- what a module carries when it is written for the native backend (`docs/native-backend.md` section 13): support the LLVM backend has as
+// vectors and as the processor's cipher instructions, written here with neither, because the native code generator has no vectors.
+
+// The bit of the feature cell (`st[55]`) that says the module is for the native backend.
+pub fn bit() -> [] int {
+    return 1048576;
+}
+
+// `byte_mask64` without the 16-byte compares: bit `i` of the answer is set when byte `i` of the 64 at `p` is `b`.
+pub fn helpers() -> [] &static [byte] {
+    return "define internal i64 @cancho_byte_mask64(ptr %p, i8 %b) {\nentry:\n  br label %loop\nloop:\n  %i = phi i64 [ 0, %entry ], [ %j, %loop ]\n  %m = phi i64 [ 0, %entry ], [ %n, %loop ]\n  %q = getelementptr i8, ptr %p, i64 %i\n  %c = load i8, ptr %q\n  %e = icmp eq i8 %c, %b\n  %z = zext i1 %e to i64\n  %s = shl i64 %z, %i\n  %n = or i64 %m, %s\n  %j = add i64 %i, 1\n  %d = icmp eq i64 %j, 64\n  br i1 %d, label %done, label %loop\ndone:\n  ret i64 %n\n}\n";
+}
+
+// The hardware AES, GHASH and SHA-256 of `runtime/crypto_*.ll`, as a processor that has none of them: the two questions answer no, so the library takes its
+// own paths, and the functions that would have used the instructions are traps nobody reaches.
+pub fn ciphers() -> [] &static [byte] {
+    return "define internal i8 @cancho_hw_aes_gcm() {\nentry:\n  ret i8 0\n}\ndefine internal i8 @cancho_hw_sha256() {\nentry:\n  ret i8 0\n}\ndefine internal void @cancho_aes_encrypt_block(ptr %rk, i64 %rounds, ptr %blk, ptr %out) {\nentry:\n  call void @cancho_trap()\n  unreachable\n}\ndefine internal void @cancho_aes_ctr32(ptr %rk, i64 %rounds, ptr %nonce, i64 %counter, ptr %in, ptr %out, i64 %len) {\nentry:\n  call void @cancho_trap()\n  unreachable\n}\ndefine internal void @cancho_ghash_update(ptr %h, ptr %y, ptr %data, i64 %n) {\nentry:\n  call void @cancho_trap()\n  unreachable\n}\ndefine internal void @cancho_ghash_powers(ptr %rk, i64 %rounds, ptr %table) {\nentry:\n  call void @cancho_trap()\n  unreachable\n}\ndefine internal void @cancho_gcm_tag(ptr %rk, i64 %rounds, ptr %tab, ptr %nonce, ptr %aad, i64 %aadlen, ptr %text, i64 %textlen, ptr %out) {\nentry:\n  call void @cancho_trap()\n  unreachable\n}\ndefine internal i64 @cancho_gcm_tag_diff(ptr %rk, i64 %rounds, ptr %tab, ptr %nonce, ptr %aad, i64 %aadlen, ptr %text, i64 %textlen, ptr %expected) {\nentry:\n  call void @cancho_trap()\n  unreachable\n}\ndefine internal void @cancho_sha256_blocks(ptr %state, ptr %data, i64 %n) {\nentry:\n  call void @cancho_trap()\n  unreachable\n}\ndefine internal void @cancho_sha256_block_words(ptr %state, ptr %block) {\nentry:\n  call void @cancho_trap()\n  unreachable\n}\n";
+}

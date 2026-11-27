@@ -68,9 +68,9 @@ same "$(head -1 "$work/lanes.txt")" "not in the subset: instruction extracteleme
 same "$?" 2 "the status for a file that is not there"
 end
 
-# The flag (docs/native-backend.md section 8). `native` is refused by a rule, for a program the front end accepts, and nothing is written. (What the reader
-# behind it reads and refuses is native_reader.sh's.)
-begin the_native_backend_is_refused_by_a_rule_and_writes_nothing
+# The flag (docs/native-backend.md section 8). What the native backend does not build it refuses by a rule, for a program the front end accepts, and then
+# nothing is written. (What its reader reads is native_reader.sh's, and what it writes native_elf.sh's.)
+begin the_native_backend_refuses_by_a_rule_and_then_writes_nothing
 cat > "$work/small.cho" << 'EOF'
 fn main(world: World) -> [] int {
     let Split { io, ffi, fs, heap, args } = split(world);
@@ -83,28 +83,19 @@ fn main(world: World) -> [] int {
 }
 EOF
 mkdir "$work/out"
-"$cancho" build "$work/small.cho" --backend native -o "$work/out/small" > "$work/native.txt" 2>&1
+# `--host linux` is Linux on x86-64, which the native backend has no code for (native_elf.sh has what it writes for the machines it has).
+"$cancho" build "$work/small.cho" --backend native --host linux -o "$work/out/small" > "$work/native.txt" 2>&1
 same "$?" 1 "the status of build"
 same "$(head -1 "$work/native.txt" | sed 's/^.*small\.cho: error: \(The backend that was asked for cannot build this program\).*/\1/')" "The backend that was asked for cannot build this program" "what build says"
-"$cancho" build "$work/small.cho" --backend native --target aarch64-none-elf --emit obj -o "$work/out/bare.o" > "$work/native-bare.txt" 2>&1
-same "$(sed -n 2p "$work/native-bare.txt")" '    the native backend has code for this program and no object to put it in yet: nothing was written, and `--backend llvm` builds this program' "and why, today, for a machine it has code for"
 same "$(ls "$work/out" | wc -l | tr -d ' ')" 0 "what build wrote"
-"$cancho" build "$work/small.cho" --backend native --emit ll -o "$work/out/small.ll" > /dev/null 2>&1
-same "$?" 1 "the status of build --emit ll"
-"$cancho" build "$work/small.cho" --backend native --target aarch64-none-elf --emit obj -o "$work/out/small.o" > /dev/null 2>&1
-same "$?" 1 "the status of build for no system"
-same "$(ls "$work/out" | wc -l | tr -d ' ')" 0 "what they wrote"
-"$cancho" check "$work/small.cho" --backend native --output json > "$work/native.json" 2> /dev/null
+"$cancho" build "$work/small.cho" --backend native --host linux --emit obj -o "$work/out/small.o" > /dev/null 2>&1
+same "$?" 1 "the status of build --emit obj"
+same "$(ls "$work/out" | wc -l | tr -d ' ')" 0 "what it wrote"
+"$cancho" check "$work/small.cho" --backend native --host linux --output json > "$work/native.json" 2> /dev/null
 same "$?" 1 "the status of check"
 same "$(grep -c '"rule": "unsupported-by-backend"' "$work/native.json")" 1 "check says it with the rule's tag"
 same "$(grep -c '"rule":' "$work/native.json")" 1 "and with no other"
 python3 -c 'import json,sys; json.load(open(sys.argv[1]))' "$work/native.json" 2> /dev/null || fail "the answer of check is not JSON"
-"$cancho" run "$work/small.cho" --backend native > /dev/null 2>&1
-same "$?" 1 "the status of run"
-printf 'fn test_nothing() -> [] int {\n    return 0;\n}\n' > "$work/small_test.cho"
-"$cancho" test "$work/small_test.cho" --backend native > "$work/test.txt" 2>&1
-same "$?" 1 "the status of test"
-same "$(grep -c 'The backend that was asked for cannot build this program' "$work/test.txt")" 1 "what test says"
 # A program the front end refuses is refused for its own reason: the backend is not reached.
 printf 'fn main() -> [] int { return true; }\n' > "$work/wrong.cho"
 "$cancho" check "$work/wrong.cho" --backend native --output json 2> /dev/null | grep -c '"rule": "type-mismatch"' > "$work/wrong.txt"

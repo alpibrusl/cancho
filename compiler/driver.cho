@@ -39,6 +39,7 @@ import selfhost.externcode;
 import selfhost.platform;
 import selfhost.instances;
 import selfhost.pass1;
+import selfhost.nativert;
 import selfhost.runtime;
 import selfhost.kinds;
 import selfhost.printing;
@@ -482,8 +483,15 @@ fn build_module[&s, &x](st: &!s [int], text: &x [byte]) -> [] int {
     // none (target 3, `docs/freestanding.md` section 4), whatever the program's library mentions: `--std` brings modules that open directories and sockets, and a
     // program that calls none of them must not carry their support.
     if st[61] != 3 && st[55] & 4 != 0 {
-        // A program that asks for the hardware AES has the functions for its target.
-        emit.str(st, runtime.crypto_text(st[61]));
+        // A program that asks for the hardware AES has the functions for its target; for the native backend, the ones that say there is none.
+        if st[55] & nativert.bit() != 0 {
+            emit.str(st, nativert.ciphers());
+        } else {
+            emit.str(st, runtime.crypto_text(st[61]));
+        }
+    }
+    if st[55] & nativert.bit() != 0 {
+        emit.str(st, nativert.helpers());
     }
     if st[61] != 3 && st[55] & 2 != 0 {
         // A program that opens a directory has the support for them, and the constants of its target.
@@ -890,6 +898,10 @@ pub fn run_many[&h, &i, &x](heap: &!h Heap, io: &!i Io, raw: &x [byte], mode: in
             } else if mode >= 3 && mode != 11 {
                 ast.layout_emit(st, tokens, files);
                 st[61] = target % 8;
+                if target / 64 % 2 == 1 {
+                    // For the native backend (`nativert.cho`): no vectors, and none of the processor's cipher instructions.
+                    st[55] = st[55] | nativert.bit();
+                }
             } else {
                 ast.layout(st, tokens, files);
             }
