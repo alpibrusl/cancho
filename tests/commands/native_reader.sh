@@ -72,10 +72,9 @@ same "$?" 4 "the status of test, one of two failing"
 same "$(grep -c '^test result: FAILED. 1 passed; 1 failed' "$work/test.out")" 1 "what test says"
 end
 
-# `--backend native` is the reader asked to take no vector, and then the code generator (native_gen.sh). A program whose module has no vector and is for a
-# machine there is code for is refused for the object writer there is not yet; one
-# that searches bytes (std.bytes.find is written with 16-byte compares, docs/byte-search.md) is refused at the line of the vector.
-begin the_native_backend_names_the_line_it_does_not_read
+# `--backend native` reads with vectors refused. The front end, asked for that backend, writes none (`compiler/nativert.cho`: the byte search of std.bytes is a
+# function of the module's own), so a program that searches bytes builds; a module that has one all the same is refused at its line (tests/commands/native_gen.sh).
+begin a_program_that_searches_bytes_has_no_vector_for_the_native_backend
 cat > "$work/finds.cho" << 'EOF'
 import std.bytes;
 
@@ -89,20 +88,12 @@ fn main(world: World) -> [] int {
     return bytes.find("hello, world", "world");
 }
 EOF
-"$cancho" build "$work/finds.cho" --std --backend native -o "$work/finds" > "$work/finds.txt" 2>&1
-same "$?" 1 "the status"
-line=$(sed -n 's/^    line \([0-9]*\) of the module (`--emit ll` writes it): a vector, which the native backend has no code for$/\1/p' "$work/finds.txt")
-[ -n "$line" ] || fail "no line is named: $(head -c 400 "$work/finds.txt")"
-"$cancho" build "$work/finds.cho" --std --emit ll -o "$work/finds.ll" > /dev/null 2>&1
-case "$(sed -n "${line:-1}p" "$work/finds.ll")" in
-    *"<"*" x "*">"*) ;;
-    *) fail "line $line of the module has no vector: $(sed -n "${line:-1}p" "$work/finds.ll" | head -c 200)" ;;
-esac
-same "$(ls "$work" | grep -c '^finds$')" 0 "nothing is written"
+"$cancho" build "$work/finds.cho" --std --emit ll --host linux-aarch64 -o "$work/finds.ll" > /dev/null 2>&1
+case "$(grep -c '<16 x i8>' "$work/finds.ll")" in 0) fail "the module for the LLVM backend has no vector: the next check shows nothing" ;; esac
+"$cancho" build "$work/finds.cho" --std --emit ll --backend native --host linux-aarch64 -o "$work/finds.native.ll" > "$work/finds.txt" 2>&1
+same "$?" 0 "the status for the native backend's module"
+same "$(grep -c '<[0-9]* x ' "$work/finds.native.ll")" 0 "vectors in it"
+same "$(grep -c '^define internal i64 @cancho_byte_mask64(ptr %p, i8 %b) {$' "$work/finds.native.ll")" 1 "the function that takes their place"
 "$cancho" build "$work/finds.cho" --std --backend roundtrip -o "$work/finds" > /dev/null 2>&1 && "$work/finds"
 same "$?" 7 "the same program through the round trip, which reads vectors, run"
-printf 'fn main(world: World) -> [] int {\n    let Split { io, ffi, fs, heap, args } = split(world);\n    release(io);\n    release(ffi);\n    release(fs);\n    release(heap);\n    release(args);\n    return 0;\n}\n' > "$work/plain.cho"
-"$cancho" build "$work/plain.cho" --backend native --target aarch64-none-elf --emit obj -o "$work/plain.o" > "$work/plain.native.txt" 2>&1
-same "$?" 1 "the status for a program with no vector"
-same "$(sed -n 2p "$work/plain.native.txt")" '    the native backend has code for this program and no object to put it in yet: nothing was written, and `--backend llvm` builds this program' "what it says of one it has code for"
 end

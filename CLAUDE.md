@@ -5,7 +5,7 @@ and [`AGENTS.md`](AGENTS.md) before writing cancho programs. The rules
 that matter most:
 
 - **The gate:** `scripts/gate.sh` (stages fmt, files, links, seed, walk,
-  tests, reject), passing, before anything is called done. It is the
+  tests, reject, native), passing, before anything is called done. It is the
   only gate: there is no Rust in the repository any more.
 - **Design before code**, in `docs/`, with claims measured. A claim that
   turns out false is corrected in place, in the document that made it.

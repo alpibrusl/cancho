@@ -104,16 +104,6 @@ fn info_of[&m](m: &m [int], slot: int) -> [] int {
     return (slot - lm.cell(m, lm.h_gh())) / 4 * 4;
 }
 
-fn hex(c: int) -> [] int {
-    if c >= 'A' && c <= 'F' {
-        return c - 'A' + 10;
-    }
-    if c >= 'a' && c <= 'f' {
-        return c - 'a' + 10;
-    }
-    return c - '0' & 15;
-}
-
 // Does the constant operand at `at` hold the address of a name anywhere in it?
 fn has_address[&m](m: &m [int], at: int, depth: int) -> [] bool {
     let kind = lm.cell(m, at + 1);
@@ -220,7 +210,7 @@ fn value[&h, &t, &m, &i](heap: &!h Heap, text: &t [byte], m: &m [int], info: &i 
             var c = lm.at(text, i);
             i = i + 1;
             if c == '\\' {
-                c = hex(lm.at(text, i)) * 16 + hex(lm.at(text, i + 1));
+                c = fr.hex(lm.at(text, i)) * 16 + fr.hex(lm.at(text, i + 1));
                 i = i + 2;
             }
             b = buffer.push(heap, b, byte_of(c & 255));
@@ -254,13 +244,6 @@ fn value[&h, &t, &m, &i](heap: &!h Heap, text: &t [byte], m: &m [int], info: &i 
         b = zeros(heap, b, size - (now - start));
     }
     return (b, r, bad);
-}
-
-fn up(n: int, align: int) -> [] int {
-    if align <= 1 {
-        return n;
-    }
-    return (n + align - 1) / align * align;
 }
 
 // How a name is bound: 0 it is not a symbol (a type's name, a function of LLVM's, a name declared and never used), 1 a symbol of this object alone, 2 one
@@ -419,7 +402,7 @@ pub fn object[&h, &t, &m, &o](heap: &!h Heap, text: &t [byte], m: &m [int], o: &
                 }
                 info[cell + 2] = size;
                 if is_zero(m, at + 8) || flags & 8 != 0 {
-                    bss = up(bss, align);
+                    bss = ly.up(bss, align);
                     info[cell] = s_bss();
                     info[cell + 1] = bss;
                     bss = bss + size;
@@ -496,14 +479,14 @@ pub fn object[&h, &t, &m, &o](heap: &!h Heap, text: &t [byte], m: &m [int], o: &
     let (rt, rt_size) = size_of_buffer(rela_text);
     let (rd, rd_size) = size_of_buffer(rela_data);
     let text_at = 64;
-    let ro_at = up(text_at + 4 * words, 16);
-    let da_at = up(ro_at + ro_size, 16);
-    let sy_at = up(da_at + da_size, 8);
+    let ro_at = ly.up(text_at + 4 * words, 16);
+    let da_at = ly.up(ro_at + ro_size, 16);
+    let sy_at = ly.up(da_at + da_size, 8);
     let st_at = sy_at + sy_size;
     let sh_at = st_at + st_size;
-    let rt_at = up(sh_at + len(names), 8);
+    let rt_at = ly.up(sh_at + len(names), 8);
     let rd_at = rt_at + rt_size;
-    let headers_at = up(rd_at + rd_size, 8);
+    let headers_at = ly.up(rd_at + rd_size, 8);
     // The identification: ELF, 64 bits, the low byte first; a relocatable file (1) for AArch64 (183).
     file = le(heap, file, 127, 1);
     file = buffer.append(heap, file, "ELF");

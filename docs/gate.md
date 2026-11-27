@@ -38,6 +38,10 @@ failure and printing which stage it was:
    Written down as stage **tests** (`tests/cancho-tests.txt`; each line names a run and the number of tests it must pass).
 5. **reject**: `scripts/reject-golden.cho check` (built with `tests/support/harness.cho`) against `tests/reject.golden` (rules; `--exact` is the Rust front end's wording and goes with it).
 
+6. **native** (epic #840, N4; `native-backend.md` section 13): the programs of stage 4 that are run, and the runs of `tests/cancho-tests.txt`, built with
+   `--backend native`, the compiler's own backend, and held to the same expectations. It runs where that backend has a machine (Linux on AArch64, a job of
+   its own in CI, `gate-native`); on another machine it says so and passes, so a person on a Mac is told nothing false and waits for nothing.
+
 There is no clippy stage: with no Rust there is no Rust lint. The cancho equivalent of "warnings are errors" is that `cancho check` refuses
 a program (every refusal has a rule tag), and stage 1 (`fmt --check`) holds the layout.
 

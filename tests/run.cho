@@ -14,8 +14,8 @@ module fixtures_run;
 // exit status is 1; otherwise `ok: N KIND fixtures`.
 //
 // The header is a comment the compiler ignores, a line each: `//~ STDIN`, `//~ STDOUT`, `//~ STDERR` (checked even when a fixture declares none),
-// `//~ EXIT` (default 0), `//~ ERROR`, `//~ RULE`, `//~ TARGET` (the triple `check` is asked about), `//~ BACKEND` (the backend it is asked about:
-// a refusal that is the backend's and not the program's, `docs/native-backend.md`).
+// `//~ EXIT` (default 0), `//~ ERROR`, `//~ RULE`, `//~ TARGET` (the triple `check` is asked about), `//~ BACKEND` (the backend it is asked about, and after it
+// any more words for `check`, as `native --host linux`: a refusal that is the backend's and not the program's, `docs/native-backend.md`).
 
 import std.buffer;
 import std.bytes;
@@ -249,7 +249,7 @@ fn run_check[&h, &x, &c, &b, &s, &t, &k](heap: &!h Heap, exec: &x Exec(""), cloc
     }
     if len(backend) > 0 {
         command = harness.word(heap, command, "--backend");
-        command = harness.word(heap, command, backend);
+        command = harness.words(heap, command, backend);
     }
     return harness.spawn_capture(heap, exec, clock, bin, command, "", "PATH=/usr/bin:/bin\0");
 }
