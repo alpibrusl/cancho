@@ -425,8 +425,8 @@ fn system_function[&s, &x](st: &!s [int], text: &x [byte], target: int, name: &s
 }
 
 // The function `found` of the module is held to its place in a system: its first parameters are what is lent (`lt`,
-// `lent` of them), in order; after them it has `shape`'s own (0 none, 1 a run of bytes, 2 a whole number and a run of
-// bytes); and it answers a whole number. It has no type parameter. What its row says, the block performs.
+// `lent` of them), in order; after them it has `shape`'s own, a digit for each from the left (1 a whole number, 2 a run
+// of bytes; 0 is none); and it answers a whole number. It has no type parameter. What its row says, the block performs.
 fn system_fits[&s, &x, &l](st: &!s [int], text: &x [byte], found: int, lt: &l [int], lent: int, shape: int, from: int, to: int) -> [] int {
     let dp = ast.get(st, found, 6);
     if pass1.count_params(st, dp, false) != 0 || !atoms.plain_function(st, text, found) {
@@ -444,10 +444,10 @@ fn system_fits[&s, &x, &l](st: &!s [int], text: &x [byte], found: int, lt: &l [i
         made = made + 1;
     }
     var own = 0;
-    if shape == 1 {
-        own = 1;
-    } else if shape == 2 {
-        own = 2;
+    var top = 1;
+    while shape / top > 0 {
+        own = own + 1;
+        top = top * 10;
     }
     if ast.get(st, found, 8) != lent + own {
         ast.fail(st, rules.r_arity_mismatch(), from, to);
@@ -455,16 +455,24 @@ fn system_fits[&s, &x, &l](st: &!s [int], text: &x [byte], found: int, lt: &l [i
     }
     var param = ast.get(st, found, 7);
     var i = 0;
+    // the place of the digit of the parameter being looked at
+    var digit = top / 10;
+    if digit < 1 {
+        digit = 1;
+    }
     while param >= 0 && ast.ok(st) {
         let pty = atoms.callee_type(st, text, ast.get(st, param, 5), dp, fresh, 0 - 1);
         if i < lent {
             scope.expect(st, text, pty, lt[i], from, to);
-        } else if shape == 2 && i == lent {
+        } else if i < lent + own && shape / digit % 10 == 1 {
             if types.resolve_type(st, pty) != 1 {
                 ast.fail(st, rules.r_type_mismatch(), from, to);
             }
         } else if !types.is_slice_ref(st, types.resolve_type(st, pty)) {
             ast.fail(st, rules.r_type_mismatch(), from, to);
+        }
+        if i >= lent && digit > 1 {
+            digit = digit / 10;
         }
         param = ast.next(st, param);
         i = i + 1;
@@ -573,10 +581,10 @@ fn system_stmt[&s, &x](st: &!s [int], text: &x [byte], id: int, ret: int) -> [] 
         let arg = system_function(st, text, target, "argument");
         let count = system_function(st, text, target, "arguments");
         if ast.ok(st) && out >= 0 {
-            system_fits(st, text, out, lt, lent, 1, from, to);
+            system_fits(st, text, out, lt, lent, 2, from, to);
         }
         if ast.ok(st) && err >= 0 {
-            system_fits(st, text, err, lt, lent, 1, from, to);
+            system_fits(st, text, err, lt, lent, 2, from, to);
         }
         if ast.ok(st) && key >= 0 {
             system_fits(st, text, key, lt, lent, 0, from, to);
@@ -585,13 +593,49 @@ fn system_stmt[&s, &x](st: &!s [int], text: &x [byte], id: int, ret: int) -> [] 
             system_fits(st, text, flush, lt, lent, 0, from, to);
         }
         if ast.ok(st) && arg >= 0 {
-            system_fits(st, text, arg, lt, lent, 2, from, to);
+            system_fits(st, text, arg, lt, lent, 12, from, to);
         }
         if ast.ok(st) && count >= 0 {
             system_fits(st, text, count, lt, lent, 0, from, to);
         }
+        // the files: the name of each function, and its own parameters
+        let folder = system_function(st, text, target, "folder");
+        let step = system_function(st, text, target, "step");
+        let open = system_function(st, text, target, "open");
+        let read = system_function(st, text, target, "read");
+        let read_at = system_function(st, text, target, "read_at");
+        let size = system_function(st, text, target, "size");
+        let close = system_function(st, text, target, "close");
+        if ast.ok(st) && folder >= 0 {
+            system_fits(st, text, folder, lt, lent, 2, from, to);
+        }
+        if ast.ok(st) && step >= 0 {
+            system_fits(st, text, step, lt, lent, 121, from, to);
+        }
+        if ast.ok(st) && open >= 0 {
+            system_fits(st, text, open, lt, lent, 21, from, to);
+        }
+        if ast.ok(st) && read >= 0 {
+            system_fits(st, text, read, lt, lent, 12, from, to);
+        }
+        if ast.ok(st) && read_at >= 0 {
+            system_fits(st, text, read_at, lt, lent, 112, from, to);
+        }
+        if ast.ok(st) && size >= 0 {
+            system_fits(st, text, size, lt, lent, 1, from, to);
+        }
+        if ast.ok(st) && close >= 0 {
+            system_fits(st, text, close, lt, lent, 1, from, to);
+        }
         if bare && ast.ok(st) {
             syscode.system_globals(st);
+            syscode.system_files(st, 6, folder, pushed);
+            syscode.system_files(st, 7, step, pushed);
+            syscode.system_files(st, 8, open, pushed);
+            syscode.system_files(st, 9, read, pushed);
+            syscode.system_files(st, 10, read_at, pushed);
+            syscode.system_files(st, 11, size, pushed);
+            syscode.system_files(st, 12, close, pushed);
             syscode.system_glue(st, 1, out, pushed);
             syscode.system_glue(st, 2, err, pushed);
             syscode.system_glue(st, 3, key, pushed);

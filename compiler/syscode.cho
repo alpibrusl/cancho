@@ -114,8 +114,8 @@ fn system_call[&s](st: &!s [int], callee: int, n: int, more: bool) -> [] int {
 }
 
 // The function of the runtime that operation `op` is, written among the constants: 1 `out`, 2 `err`, 3 `in`, 4 `flush`,
-// 5 `arg`. `callee` is the program's function for it, or -1 if its module has none: then the function traps.
-// The last `n` arguments pushed are what is lent.
+// 5 `arg`; and the files (`system_files` below). `callee` is the program's function for it, or -1 if its module has
+// none: then the function traps. The last `n` arguments pushed are what is lent.
 pub fn system_glue[&s](st: &!s [int], op: int, callee: int, n: int) -> [] int {
     let keep = st[49];
     st[49] = 3;
@@ -155,6 +155,69 @@ pub fn system_glue[&s](st: &!s [int], op: int, callee: int, n: int) -> [] int {
     if op == 1 {
         // `putchar` is one byte to the same function
         emit.str(st, "define i32 @putchar(i32 %c) {\nentry:\n  %b = alloca i8\n  %t = trunc i32 %c to i8\n  store i8 %t, ptr %b\n  %w = call i64 @cancho_write_bytes(ptr %b, i64 1)\n  ret i32 %c\n}\n");
+    }
+    st[49] = keep;
+    return 0;
+}
+
+// The three numbers a directory operation answers, from `%r`: whether it failed, the handle, and why (`-r`).
+fn system_triple[&s](st: &!s [int]) -> [] int {
+    return emit.str(st, "  %bad = icmp slt i64 %r, 0\n  %f = zext i1 %bad to i64\n  store i64 %f, ptr %out\n  %o1 = getelementptr inbounds i64, ptr %out, i64 1\n  store i64 %r, ptr %o1\n  %neg = sub i64 0, %r\n  %why = select i1 %bad, i64 %neg, i64 0\n  %o2 = getelementptr inbounds i64, ptr %out, i64 2\n  store i64 %why, ptr %o2\n  ret void\n}\n");
+}
+
+// The files and directories a lent system reads: 6 `folder` (a path to a directory), 7 `step` (a name under one: 0 a
+// directory, 1 a file to read), 8 `open` (a path to a file, and how), 9 `read`, 10 `read_at`, 11 `size`, 12 `close`.
+// Each of the program's functions answers a whole number: a handle or a count, or minus the reason it failed, which is
+// what the runtime's own answer. A path was held to the capability's prefix, and a name to being one component, before
+// the program's function is asked: those are the language's promises, not the system's.
+pub fn system_files[&s](st: &!s [int], op: int, callee: int, n: int) -> [] int {
+    let keep = st[49];
+    st[49] = 3;
+    if op == 6 {
+        emit.str(st, "define void @cancho_dir_open(ptr %src, i64 %len, ptr %prefix, i64 %plen, ptr %out) {\nentry:\n");
+    } else if op == 7 {
+        emit.str(st, "define void @cancho_dir_step(ptr %dir, ptr %name, i64 %len, i64 %which, ptr %out) {\nentry:\n");
+    } else if op == 8 {
+        emit.str(st, "define i64 @cancho_open(ptr %src, i64 %len, ptr %prefix, i64 %plen, i64 %mode) {\nentry:\n");
+    } else if op == 9 {
+        emit.str(st, "define i64 @cancho_fd_read(i64 %fd, ptr %p, i64 %n) {\nentry:\n");
+    } else if op == 10 {
+        emit.str(st, "define i64 @cancho_fd_pread(i64 %fd, ptr %p, i64 %n, i64 %at) {\nentry:\n");
+    } else if op == 11 {
+        emit.str(st, "define i64 @cancho_fd_size(i64 %fd) {\nentry:\n");
+    } else {
+        emit.str(st, "define i64 @cancho_fd_close(i64 %fd) {\nentry:\n");
+    }
+    if callee < 0 {
+        emit.str(st, "  call void @cancho_trap()\n  unreachable\n}\n");
+        st[49] = keep;
+        return 0;
+    }
+    system_open(st, n);
+    if op == 6 || op == 8 {
+        emit.str(st, "  %in = call i1 @cancho_path_covers(ptr %src, i64 %len, ptr %prefix, i64 %plen)\n  br i1 %in, label %go, label %none\ngo:\n");
+        system_call(st, callee, n, true);
+        if op == 6 {
+            emit.str(st, "ptr %src, i64 %len)\n");
+            system_triple(st);
+        } else {
+            emit.str(st, "ptr %src, i64 %len, i64 %mode)\n  ret i64 %r\n}\n");
+        }
+    } else if op == 7 {
+        // a name that is not one component is refused here, as the runtime refuses it: 22 is EINVAL
+        emit.str(st, "  %one = call i1 @cancho_sys_component(ptr %name, i64 %len)\n  br i1 %one, label %go, label %no\nno:\n  store i64 1, ptr %out\n  %n1 = getelementptr inbounds i64, ptr %out, i64 1\n  store i64 -1, ptr %n1\n  %n2 = getelementptr inbounds i64, ptr %out, i64 2\n  store i64 22, ptr %n2\n  ret void\ngo:\n  %h = load i64, ptr %dir\n");
+        system_call(st, callee, n, true);
+        emit.str(st, "i64 %h, ptr %name, i64 %len, i64 %which)\n");
+        system_triple(st);
+    } else if op == 9 {
+        system_call(st, callee, n, true);
+        emit.str(st, "i64 %fd, ptr %p, i64 %n)\n  ret i64 %r\n}\n");
+    } else if op == 10 {
+        system_call(st, callee, n, true);
+        emit.str(st, "i64 %fd, i64 %at, ptr %p, i64 %n)\n  ret i64 %r\n}\n");
+    } else {
+        system_call(st, callee, n, true);
+        emit.str(st, "i64 %fd)\n  ret i64 %r\n}\n");
     }
     st[49] = keep;
     return 0;

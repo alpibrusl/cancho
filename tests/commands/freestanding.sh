@@ -94,6 +94,32 @@ case "$(cat "$work/nosystem.txt")" in
 esac
 end
 
+# The same for files that are read (docs/bare-system.md, step 3): a program that opens a directory, opens a file under it and reads it builds for no system when
+# the module answers `folder`, `step`, `open`, `read`, `read_at`, `size` and `close`; a path is held to its capability, and a name to being one component, by
+# functions of the runtime before the module is asked.
+begin a_lent_system_reads_files
+if "$cancho" build tests/probes/bare_system_files.cho tests/probes/bare_system_fs.cho --target aarch64-none-elf --emit ll -o "$work/files.ll" > "$work/files.txt" 2>&1; then
+    same "$(calls_undefined "$work/files.ll")" "" "what the module calls and does not define"
+    same "$(grep -c '^define void @cancho_dir_open(\|^define void @cancho_dir_step(\|^define i64 @cancho_open(\|^define i64 @cancho_fd_read(\|^define i64 @cancho_fd_pread(\|^define i64 @cancho_fd_size(\|^define i64 @cancho_fd_close(' "$work/files.ll")" 7 "the seven functions the file builtins call are the module's own"
+    same "$(grep -c 'call i1 @cancho_path_covers(' "$work/files.ll")" 2 "a path is held to its capability before the module is asked, for a directory and for a file"
+    same "$(grep -c 'call i1 @cancho_sys_component(' "$work/files.ll")" 1 "and a name to being one component"
+else
+    fail "a program that reads files from a lent system, for no system, said: $(head -c 300 "$work/files.txt")"
+fi
+# a module with no `step`: the function is there and traps, so the program still builds
+grep -v '^$' tests/probes/bare_system_fs.cho | sed 's/^pub fn step\[/pub fn stepped[/' > "$work/nostep.cho"
+if "$cancho" build tests/probes/bare_system_files.cho "$work/nostep.cho" --target aarch64-none-elf --emit ll -o "$work/nostep.ll" > "$work/nostep.txt" 2>&1; then
+    same "$(awk '/^define void @cancho_dir_step\(/ { on = 1 } on && /cancho_trap/ { print "traps"; exit } on && /^}/ { exit }' "$work/nostep.ll")" "traps" "an operation the module does not answer"
+else
+    fail "with no \`step\` the build said: $(head -c 300 "$work/nostep.txt")"
+fi
+# a function that does not fit its place is refused where the block is written
+sed 's/^pub fn size\[&u\](at: &!u \[int\], file: int)/pub fn size[\&u, \&p](at: \&!u [int], file: \&p [byte])/' tests/probes/bare_system_fs.cho > "$work/badsize.cho"
+same "$(grep -c 'file: &p \[byte\]' "$work/badsize.cho")" 1 "the function was changed"
+"$cancho" build tests/probes/bare_system_files.cho "$work/badsize.cho" --target aarch64-none-elf --emit ll -o "$work/badsize.ll" > "$work/badsize.txt" 2>&1
+same "$?" 1 "the status with a function that does not fit"
+end
+
 begin an_object_for_no_system_is_an_elf_for_aarch64
 if "$cancho" build tests/probes/freestanding.cho --std --target aarch64-none-elf --emit obj -o "$work/bare.o" > "$work/obj.txt" 2>&1; then
     # The four bytes of the magic, then (at 18) the machine: 183, AArch64, little-endian.
