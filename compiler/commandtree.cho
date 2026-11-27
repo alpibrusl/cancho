@@ -49,7 +49,7 @@ fn usage_0[&h](heap: &!h Heap, out: buffer.Buffer) -> [heap] buffer.Buffer {
 fn usage_1[&h](heap: &!h Heap, out: buffer.Buffer) -> [heap] buffer.Buffer {
     var b = out;
     b = buffer.append(heap, b, "    --output json   `check` and `authority` as data rather than prose\n");
-    b = buffer.append(heap, b, "    --backend llvm|native  the backend that generates code: `llvm` (the default, docs/llvm-backend.md) or `native`, cancho's own, which is not built yet and refuses every program by `unsupported-by-backend` (docs/native-backend.md).\n");
+    b = buffer.append(heap, b, "    --backend llvm|native  the backend that generates code: `llvm` (the default, docs/llvm-backend.md) or `native`, cancho's own, with no clang and no LLVM, for AArch64 on Linux and with no system; what it does not build it refuses by `unsupported-by-backend` (docs/native-backend.md).\n");
     b = buffer.append(heap, b, "                    A program it cannot compile is refused with an ordinary located error, not a crash.\n");
     b = buffer.append(heap, b, "    --target <triple>\n");
     b = buffer.append(heap, b, "                    the triple of the machine this binary runs on, or `aarch64-none-elf` (`build --emit obj|ll`\n                    and `check`: a program with no system under it, docs/freestanding.md); `build`, `check` and `run`\n");
