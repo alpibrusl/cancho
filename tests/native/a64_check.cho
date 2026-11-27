@@ -1,0 +1,241 @@
+edition 7;
+module a64_check;
+
+// a64_check.cho -- every vector of tests/native/a64.vectors against the encoder (`docs/native-backend.md` section 11). A vector is a form of
+// `compiler/native/a64.cho`, its operands, and the word clang's assembler made of the same instruction (`tests/native/a64_vectors.py` wrote the file); here the
+// form is called with the operands and must answer that word. A system register that is named is also looked up in `a64sys.cho`'s table.
+//
+//     cancho build tests/native/a64_check.cho tests/native/a64_forms.cho compiler/native/a64.cho compiler/native/a64sys.cho --std -o EXE && EXE tests/native/a64.vectors
+//
+// Prints `vectors N forms F registers R wrong W` and, for the first ten that are wrong, the line and what the encoder answered. Exit 1 if any is wrong, or if
+// a form of the file is not one this program knows, 2 if the file cannot be read.
+
+import std.buffer;
+import std.bytes;
+import std.io as console;
+import selfhost.a64sys;
+import a64_forms as forms;
+
+fn hex_digit(c: int) -> [] int {
+    if c >= '0' && c <= '9' {
+        return c - '0';
+    }
+    if c >= 'a' && c <= 'f' {
+        return c - 'a' + 10;
+    }
+    return 0 - 1;
+}
+
+// The name of the register a line's assembly reads or writes (`mrs x9, NAME` or `msr NAME, x9`), if it is written as a name and not as its numbers.
+fn register_name[&l](line: &l [byte]) -> [] &l [byte] {
+    var at = bytes.find(line, "; mrs x9, ");
+    var from = at + 10;
+    if at < 0 {
+        at = bytes.find(line, "; msr ");
+        from = at + 6;
+    }
+    if at < 0 {
+        return line[0..0];
+    }
+    var to = from;
+    while to < len(line) && int_of(line[to]) != ',' && int_of(line[to]) != ' ' {
+        to = to + 1;
+    }
+    if to > from && int_of(line[from]) == 'S' {
+        return line[0..0];
+    }
+    return line[from..to];
+}
+
+// Every line of `text` checked; what is wrong is said (ten at most). The status.
+fn check[&h, &i, &t](heap: &!h Heap, io: &!i Io, text: &t [byte]) -> [heap, io_write, err_write] int {
+    var vectors = 0;
+    var wrong = 0;
+    var registers = 0;
+    var seen = 0;
+    var status = 0;
+    region scratch {
+        let o = alloc_slice[scratch](16, 0);
+        let per_form = alloc_slice[scratch](64, 0);
+        var from = 0;
+        var i = 0;
+        while i <= len(text) {
+            if i == len(text) || int_of(text[i]) == '\n' {
+                let line = text[from..i];
+                if len(line) > 0 {
+                    // The form, the operands, the word.
+                    var p = 0;
+                    while p < len(line) && int_of(line[p]) != ' ' {
+                        p = p + 1;
+                    }
+                    let form = forms.form_of(line[0..p]);
+                    var n = 0;
+                    var word = 0;
+                    var reading = true;
+                    while reading && p < len(line) {
+                        p = p + 1;
+                        var q = p;
+                        while q < len(line) && int_of(line[q]) != ' ' {
+                            q = q + 1;
+                        }
+                        if q < len(line) && int_of(line[q + 1]) == ';' {
+                            var k = p;
+                            while k < q {
+                                word = word * 16 + hex_digit(int_of(line[k]));
+                                k = k + 1;
+                            }
+                            reading = false;
+                        } else if n < 16 {
+                            var value = 0;
+                            var negative = false;
+                            var k = p;
+                            if int_of(line[k]) == '-' {
+                                negative = true;
+                                k = k + 1;
+                            }
+                            while k < q {
+                                value = value * 10 - (int_of(line[k]) - '0');
+                                k = k + 1;
+                            }
+                            if !negative {
+                                value = 0 - value;
+                            }
+                            o[n] = value;
+                            n = n + 1;
+                        }
+                        p = q;
+                    }
+                    let got = forms.encode(form, o, n);
+                    var bad = got != word || reading;
+                    let name = register_name(line);
+                    if len(name) > 0 {
+                        registers = registers + 1;
+                        if a64sys.encoding(name) != o[2] {
+                            bad = true;
+                        }
+                    }
+                    vectors = vectors + 1;
+                    if form > 0 {
+                        per_form[form] = per_form[form] + 1;
+                    }
+                    if bad {
+                        wrong = wrong + 1;
+                        if wrong <= 10 {
+                            var said = buffer.append(heap, buffer.empty(heap, 256), "wrong: ");
+                            said = buffer.append(heap, said, line);
+                            said = buffer.append(heap, said, " -> ");
+                            if got < 0 {
+                                said = buffer.append(heap, said, "refused");
+                            } else {
+                                said = buffer.push_nat(heap, said, got);
+                            }
+                            said = buffer.append(heap, said, "\n");
+                            borrow said as &sb in {
+                                console.error_all(io, buffer.bytes(sb));
+                            }
+                            buffer.drop(heap, said);
+                        }
+                    }
+                }
+                from = i + 1;
+            }
+            i = i + 1;
+        }
+        var f = 1;
+        while f < 64 {
+            if per_form[f] > 0 {
+                seen = seen + 1;
+            }
+            f = f + 1;
+        }
+    }
+    var out = buffer.append(heap, buffer.empty(heap, 128), "vectors ");
+    out = buffer.push_nat(heap, out, vectors);
+    out = buffer.append(heap, out, " forms ");
+    out = buffer.push_nat(heap, out, seen);
+    out = buffer.append(heap, out, " registers ");
+    out = buffer.push_nat(heap, out, registers);
+    out = buffer.append(heap, out, " of a table of ");
+    out = buffer.push_nat(heap, out, a64sys.count());
+    out = buffer.append(heap, out, " wrong ");
+    out = buffer.push_nat(heap, out, wrong);
+    out = buffer.append(heap, out, "\n");
+    borrow out as &ob in {
+        buffer.write(io, ob);
+    }
+    buffer.drop(heap, out);
+    if wrong > 0 {
+        status = 1;
+    }
+    return status;
+}
+
+fn read_all[&h, &f, &p](heap: &!h Heap, fs: &f Fs(""), path: &p [byte]) -> [heap, fs_read(""), file_read] (buffer.Buffer, int) {
+    var out = buffer.empty(heap, 4096);
+    var failed = 0;
+    match open_read(fs, path) {
+        Opened::Failed(reason) => {
+            failed = 1;
+        }
+        Opened::Ok(opened) => {
+            var file = opened;
+            var chunk = buffer.empty(heap, 65536);
+            borrow mut file as &!handle in {
+                var going = true;
+                while going {
+                    borrow mut chunk as &!c in {
+                        match file_read(handle, buffer.room(c)) {
+                            Read::Got(n) => {
+                                buffer.filled(c, n);
+                                out = buffer.append(heap, out, buffer.bytes(c));
+                                buffer.clear(c);
+                            }
+                            Read::End => {
+                                going = false;
+                            }
+                            Read::Failed(reason) => {
+                                going = false;
+                                failed = 1;
+                            }
+                        }
+                    }
+                }
+            }
+            buffer.drop(heap, chunk);
+            file_close(file);
+        }
+    }
+    return (out, failed);
+}
+
+fn main(world: World) -> [] int {
+    let Split { io, ffi, fs, heap, args, net, clock, signals, exec } = split(world);
+    release(ffi);
+    release(net);
+    release(clock);
+    release(signals);
+    release(exec);
+    var status = 2;
+    borrow mut heap as &!h in {
+        borrow mut io as &!i in {
+            borrow args as &a in {
+                borrow fs as &f in {
+                    if arg_count(a) == 2 {
+                        let (text, failed) = read_all(h, f, arg(a, 1));
+                        if failed == 0 {
+                            borrow text as &tb in {
+                                status = check(h, i, buffer.bytes(tb));
+                            }
+                        }
+                        buffer.drop(h, text);
+                    }
+                }
+            }
+        }
+    }
+    release(fs);
+    release(args);
+    release(heap);
+    release(io);
+    return status;
+}

@@ -1,0 +1,170 @@
+edition 7;
+module a64_forms;
+
+// a64_forms.cho -- the forms of `compiler/native/a64.cho` by name and by number, and one way to call any of them with a list of operands: what the check of the
+// vectors (`a64_check.cho`) and the suite (`a64_test.cho`) share. A form added to the encoder is added here, and the count below with it.
+
+import std.bytes;
+import selfhost.a64;
+
+pub fn count() -> [] int {
+    return 40;
+}
+
+// How many operands form `form` takes.
+pub fn arity(form: int) -> [] int {
+    let each = " 5 3 7 8 8 8 5 6 5 5 5 5 4 6 4 7 2 2 4 4 2 1 2 0 1 2 3 5 6 7 8 8 4 6 4 5 4 4 5 5 ";
+    if form < 1 || form > count() {
+        return 0 - 1;
+    }
+    return int_of(each[2 * form - 1]) - '0';
+}
+
+// The forms, by number: a space before each and after the last.
+pub fn names() -> [] &static [byte] {
+    return " movw adr addsub_imm addsub_shift addsub_ext logic_shift logic_imm bitfield shift_imm extend extr dp2 dp1 madd mulh csel branch branch_cond compare_branch bit_branch branch_reg udf exception eret hint barrier system_register sys load_store load_store_offset load_store_reg load_store_pair load_literal exclusive ordered fp2 fp1 fcmp fcsel fp_int ";
+}
+
+// The number of the form `word` in `forms`, from 1, or 0.
+pub fn form_of[&w](word: &w [byte]) -> [] int {
+    let list = names();
+    var n = 1;
+    var i = 1;
+    while i < len(list) {
+        var end = i;
+        while end < len(list) && int_of(list[end]) != ' ' {
+            end = end + 1;
+        }
+        if bytes.equal(list[i..end], word) {
+            return n;
+        }
+        n = n + 1;
+        i = end + 1;
+    }
+    return 0;
+}
+
+// The form `form` called with the operands `o` (`n` of them): the word, -1 for a refusal, -2 for a form or a count of operands that is not known.
+pub fn encode[&o](form: int, o: &o [int], n: int) -> [] int {
+    if form == 1 && n == 5 {
+        return a64.movw(o[0], o[1], o[2], o[3], o[4]);
+    }
+    if form == 2 && n == 3 {
+        return a64.adr(o[0], o[1], o[2]);
+    }
+    if form == 3 && n == 7 {
+        return a64.addsub_imm(o[0], o[1], o[2], o[3], o[4], o[5], o[6]);
+    }
+    if form == 4 && n == 8 {
+        return a64.addsub_shift(o[0], o[1], o[2], o[3], o[4], o[5], o[6], o[7]);
+    }
+    if form == 5 && n == 8 {
+        return a64.addsub_ext(o[0], o[1], o[2], o[3], o[4], o[5], o[6], o[7]);
+    }
+    if form == 6 && n == 8 {
+        return a64.logic_shift(o[0], o[1], o[2], o[3], o[4], o[5], o[6], o[7]);
+    }
+    if form == 7 && n == 5 {
+        return a64.logic_imm(o[0], o[1], o[2], o[3], o[4]);
+    }
+    if form == 8 && n == 6 {
+        return a64.bitfield(o[0], o[1], o[2], o[3], o[4], o[5]);
+    }
+    if form == 9 && n == 5 {
+        return a64.shift_imm(o[0], o[1], o[2], o[3], o[4]);
+    }
+    if form == 10 && n == 5 {
+        return a64.extend(o[0], o[1], o[2], o[3], o[4]);
+    }
+    if form == 11 && n == 5 {
+        return a64.extr(o[0], o[1], o[2], o[3], o[4]);
+    }
+    if form == 12 && n == 5 {
+        return a64.dp2(o[0], o[1], o[2], o[3], o[4]);
+    }
+    if form == 13 && n == 4 {
+        return a64.dp1(o[0], o[1], o[2], o[3]);
+    }
+    if form == 14 && n == 6 {
+        return a64.madd(o[0], o[1], o[2], o[3], o[4], o[5]);
+    }
+    if form == 15 && n == 4 {
+        return a64.mulh(o[0], o[1], o[2], o[3]);
+    }
+    if form == 16 && n == 7 {
+        return a64.csel(o[0], o[1], o[2], o[3], o[4], o[5], o[6]);
+    }
+    if form == 17 && n == 2 {
+        return a64.branch(o[0], o[1]);
+    }
+    if form == 18 && n == 2 {
+        return a64.branch_cond(o[0], o[1]);
+    }
+    if form == 19 && n == 4 {
+        return a64.compare_branch(o[0], o[1], o[2], o[3]);
+    }
+    if form == 20 && n == 4 {
+        return a64.bit_branch(o[0], o[1], o[2], o[3]);
+    }
+    if form == 21 && n == 2 {
+        return a64.branch_reg(o[0], o[1]);
+    }
+    if form == 22 && n == 1 {
+        return a64.udf(o[0]);
+    }
+    if form == 23 && n == 2 {
+        return a64.exception(o[0], o[1]);
+    }
+    if form == 24 && n == 0 {
+        return a64.eret();
+    }
+    if form == 25 && n == 1 {
+        return a64.hint(o[0]);
+    }
+    if form == 26 && n == 2 {
+        return a64.barrier(o[0], o[1]);
+    }
+    if form == 27 && n == 3 {
+        return a64.system_register(o[0], o[1], o[2]);
+    }
+    if form == 28 && n == 5 {
+        return a64.sys(o[0], o[1], o[2], o[3], o[4]);
+    }
+    if form == 29 && n == 6 {
+        return a64.load_store(o[0], o[1], o[2], o[3], o[4], o[5]);
+    }
+    if form == 30 && n == 7 {
+        return a64.load_store_offset(o[0], o[1], o[2], o[3], o[4], o[5], o[6]);
+    }
+    if form == 31 && n == 8 {
+        return a64.load_store_reg(o[0], o[1], o[2], o[3], o[4], o[5], o[6], o[7]);
+    }
+    if form == 32 && n == 8 {
+        return a64.load_store_pair(o[0], o[1], o[2], o[3], o[4], o[5], o[6], o[7]);
+    }
+    if form == 33 && n == 4 {
+        return a64.load_literal(o[0], o[1], o[2], o[3]);
+    }
+    if form == 34 && n == 6 {
+        return a64.exclusive(o[0], o[1], o[2], o[3], o[4], o[5]);
+    }
+    if form == 35 && n == 4 {
+        return a64.ordered(o[0], o[1], o[2], o[3]);
+    }
+    if form == 36 && n == 5 {
+        return a64.fp2(o[0], o[1], o[2], o[3], o[4]);
+    }
+    if form == 37 && n == 4 {
+        return a64.fp1(o[0], o[1], o[2], o[3]);
+    }
+    if form == 38 && n == 4 {
+        return a64.fcmp(o[0], o[1], o[2], o[3]);
+    }
+    if form == 39 && n == 5 {
+        return a64.fcsel(o[0], o[1], o[2], o[3], o[4]);
+    }
+    if form == 40 && n == 5 {
+        return a64.fp_int(o[0], o[1], o[2], o[3], o[4]);
+    }
+    return 0 - 2;
+}
