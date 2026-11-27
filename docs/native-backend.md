@@ -763,9 +763,15 @@ heap's two ends and nothing else, with `malloc`, `free` and `main` defined in it
 of the C library and no name of the runtime or of LLVM. The test failed on N4's first objects, which named twelve functions of
 LLVM's as symbols.
 
-**Stage `native` of the gate now runs the command tests** too (`tests/commands/*.cho`, 55 programs): each test's own program is
-built as always and is handed a compiler that asks for the native backend, so every program the test builds and runs is this
-backend's. `script_tests` is left out: its scripts are transcripts of the command line and name the backend themselves.
+**Stage `native` of the gate now runs command tests** too: the thirty of `tests/native/commands.txt`, which are the ones that
+use the runtime hardest (files, directories, sockets, processes, terminals, the ciphers, certificates, TLS). Each test's own
+program is built as always and is handed a compiler that asks for the native backend, so every program the test builds and
+runs is this backend's; each is named before it runs and has twenty minutes.
+
+This section first said all 55 command tests, and the stage ran them all. **The first run of that on a real machine lost the
+machine**: 71 minutes in, the runner stopped answering and left no log, so which test did it is not known. Several command
+tests push memory to a limit on purpose, and unoptimised code is some 24 times slower (section 15.1). The list is what is left
+when those are taken out; the others wait to be run one at a time where a person can watch.
 
 ### 14.1 What was measured
 
@@ -780,12 +786,12 @@ says how). Of the 55 command tests:
 | `region_cache` | the test counts `malloc` with a library loaded before the program (`LD_PRELOAD`), built for the machine it runs on; under the emulator that library is loaded into the emulator |
 | `tls_scripts` | 19 of its 20 scenarios pass. The last opens 64 TLS connections on one thread with 30 s to finish; emulated, unoptimised code finishes 33 to 40 of them and the rest say `timeout` |
 
-None of the five is a wrong answer from a program; each is the emulator or the clock. Whether they pass on a real machine is
-what the CI job says, and a failure there is this section's to record.
+None of the five is a wrong answer from a program; each is the emulator or the clock.
 
 ### 14.2 Not done
 
-- The command tests on a real AArch64 machine, until CI has run them.
+- **Twenty-five command tests on a real AArch64 machine** (above): `memory`, `region_cache`, `region_limit`, `global_state`,
+  `traps` and the rest that `tests/native/commands.txt` does not name.
 - Vector instructions, and the ciphers fast: N9 to N11 help the second, nothing here does.
 
 ---
@@ -812,12 +818,21 @@ linked by `aarch64-linux-gnu-gcc`. The figures of a real machine are the CI job'
 | The size of the compiler | clang-built 4,262,248 bytes; natively built 10,066,960: 2.4 times |
 | The text for each program of `tests/accept` and `examples`, written by the clang-built compiler on x86-64 and by the natively built one under qemu (`--emit ll --host linux-aarch64`) | **150 the same file, none different**; two more are refused by both alike (they are not programs alone) |
 
+**On a real machine** (the CI job's first run: a GitHub runner, Linux on AArch64, at the commit that adds this section):
+
+| what | result |
+|---|---|
+| Stage 2 against stage 3, both built by the native backend | **the same file** (10,067,768 bytes); the clang-built stage 1 is 4,263,072 |
+| Stage 2: the clang-built compiler builds the compiler with the native backend, sources to linked program | 9 s |
+| Stage 3: the natively built compiler does the same | 3 min 33 s: **about 24 times slower**. Emulation flattered it: qemu costs optimised code more than it costs this code |
+| Stage `walk` of the gate with the natively built compiler | passes: 437 programs refused, 133 built and run, 16 examples. 52 minutes, where the clang-built compiler takes a few |
+
 The slowdown is the price of section 12's "every value in memory", with no instruction chosen for speed and none removed;
 N9 to N11 are where it is paid back, and this number is what they are measured against.
 
 ### 15.2 Not done
 
-- **None of this on a real machine** before the CI job's first run, and the whole gate (not only `walk`) with the natively
-  built compiler as the one under test: the job runs `walk`, which is every fixture built, run and refused.
+- The whole gate (not only `walk`) with the natively built compiler as the one under test: the job runs `walk`, which is
+  every fixture built, run and refused, and that alone is 52 minutes. Until N9 the job is the slowest of CI.
 - The seed is still built by clang (decision O3).
 

@@ -136,16 +136,16 @@ if wanted native; then
       echo "$result" | grep -q "test result: ok. $passed passed; 0 failed" || { echo "$result" >&2; echo "gate: $name: expected $passed passed" >&2; rm -rf "$scratch"; fail native; }
       stage "  $name: $passed passed"
     done < "$scratch/list"
-    # The command tests, which are what uses the runtime hardest (files, directories, sockets, processes, terminals, TLS): each test's own program is built as
-    # always, and is given the wrapper, so every program it builds and runs is the native backend's. `script_tests` is left out: its scripts are transcripts of
-    # the command line, and they name the backend they ask for themselves (docs/native-backend.md section 14).
+    # The command tests that use the runtime hardest (tests/native/commands.txt says which, and why not all): each test's own program is built as always, and
+    # is given the wrapper, so every program it builds and runs is the native backend's. Each is named before it runs and has twenty minutes: a test that
+    # takes the machine down, or never ends, is then known by its name.
     count=0
-    for source in tests/commands/*.cho; do
-      [ -e "$source" ] || continue
-      name=$(basename "$source" .cho)
-      [ "$name" = script_tests ] && continue
+    for name in $(grep -v '^#' tests/native/commands.txt); do
+      source=tests/commands/$name.cho
+      [ -e "$source" ] || { echo "gate: tests/native/commands.txt names $name, and there is no $source" >&2; rm -rf "$scratch"; fail native; }
+      stage "  $name ($(date -u +%H:%M:%S))"
       "$cancho" build "$source" tests/support/harness.cho --std -o "$scratch/$name" || { rm -rf "$scratch"; fail native; }
-      "$scratch/$name" "$scratch/cancho" --cache "$scratch/command-cache" || { echo "gate: $name failed, its programs built by the native backend" >&2; rm -rf "$scratch"; fail native; }
+      timeout 1200 "$scratch/$name" "$scratch/cancho" --cache "$scratch/command-cache" || { echo "gate: $name failed or did not end in twenty minutes, its programs built by the native backend" >&2; rm -rf "$scratch"; fail native; }
       count=$((count + 1))
     done
     stage "  $count command tests"
