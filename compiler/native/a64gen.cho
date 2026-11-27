@@ -1,0 +1,881 @@
+edition 7;
+module selfhost.a64gen;
+
+// a64gen.cho -- one instruction of the module into AArch64 instructions (`docs/native-backend.md` section 12.3): every value in a slot of the frame, loaded
+// into scratch registers, worked on, and stored. Nothing is kept in a register between two instructions of the module, so each is lowered alone, and what
+// one does to the registers is no other's concern. `a64fn.cho` puts the instructions of a function together; this file is what each of them is.
+
+import selfhost.llmod as lm;
+import selfhost.llread as lr;
+import selfhost.llbody as lb;
+import selfhost.lllayout as ly;
+import selfhost.llout as out;
+import selfhost.a64;
+import selfhost.a64sys;
+import selfhost.a64frame as fr;
+import selfhost.a64call as cc;
+
+// The cells of an instruction's record: its number, flags, the local it defines, the type of its result, its number of the instruction's own, how many
+// operands, and operand `k` (four cells).
+fn op_of[&m](m: &m [int], rec: int) -> [] int {
+    return lm.cell(m, rec + 2);
+}
+
+fn flags_of[&m](m: &m [int], rec: int) -> [] int {
+    return lm.cell(m, rec + 3);
+}
+
+fn result_of[&m](m: &m [int], rec: int) -> [] int {
+    return lm.cell(m, rec + 4);
+}
+
+fn type_of[&m](m: &m [int], rec: int) -> [] int {
+    return lm.cell(m, rec + 6);
+}
+
+fn aux_of[&m](m: &m [int], rec: int) -> [] int {
+    return lm.cell(m, rec + 7);
+}
+
+fn count_of[&m](m: &m [int], rec: int) -> [] int {
+    return lm.cell(m, rec + 9);
+}
+
+fn opnd[&m](m: &m [int], rec: int, k: int) -> [] int {
+    return rec + lb.instr_head() + 4 * k;
+}
+
+// The result of the instruction at `rec`, in the general register `r`, stored in its slot as a value of type `ty`.
+fn put[&m, &o](m: &m [int], o: &!o [int], rec: int, ty: int, r: int) -> [] int {
+    let id = result_of(m, rec);
+    if id < 0 {
+        return 0;
+    }
+    let size = fr.word_size(m, ty);
+    if size < 0 || out.slot(o, id) < 0 {
+        return out.fail(o, out.why_operand());
+    }
+    return fr.access(o, size, 0, 0, r, fr.sp(), out.slot(o, id));
+}
+
+fn put_fp[&m, &o](m: &m [int], o: &!o [int], rec: int, ty: int, r: int) -> [] int {
+    let id = result_of(m, rec);
+    if id < 0 {
+        return 0;
+    }
+    if fr.float_kind(m, ty) < 0 || out.slot(o, id) < 0 {
+        return out.fail(o, out.why_operand());
+    }
+    return fr.access(o, 2 + fr.float_kind(m, ty), 1, 0, r, fr.sp(), out.slot(o, id));
+}
+
+// Where the result of the instruction at `rec` lives, from the stack pointer: its slot, or the scratch bytes if nothing names it.
+fn result_place[&m, &o](m: &m [int], o: &o [int], rec: int) -> [] int {
+    let id = result_of(m, rec);
+    if id >= 0 && out.slot(o, id) >= 0 {
+        return out.slot(o, id);
+    }
+    return o[cc.h_scratch()];
+}
+
+// `w<r> = 1` if the condition holds, else 0.
+fn cset[&o](o: &!o [int], r: int, cond: int) -> [] int {
+    out.emit(o, a64.csel(0, 0, 1, r, 31, 31, cond ^ 1));
+    return 0;
+}
+
+// `mov rd, rm`.
+fn mov[&o](o: &!o [int], rd: int, rm: int) -> [] int {
+    out.emit(o, a64.logic_shift(1, 1, 0, rd, 31, rm, 0, 0));
+    return 0;
+}
+
+// ---- arithmetic ----
+
+// The integer operations 1 to 12, on values of at most 64 bits: both operands extended to 64 bits (by sign for the three that read it), one instruction of
+// 64 bits, and the result stored at its own width, which cuts it.
+fn binary[&m, &o](m: &m [int], o: &!o [int], rec: int) -> [] int {
+    let op = op_of(m, rec);
+    let ty = type_of(m, rec);
+    if fr.is_wide(m, ty) {
+        return wide(m, o, rec);
+    }
+    if fr.word_size(m, ty) < 0 {
+        return out.fail(o, out.why_operand());
+    }
+    let signed = op == 4 || op == 5 || op == 11;
+    fr.operand(m, o, opnd(m, rec, 0), 9, signed);
+    fr.operand(m, o, opnd(m, rec, 1), 10, signed);
+    if op == 1 {
+        out.emit(o, a64.addsub_shift(1, 0, 0, 9, 9, 10, 0, 0));
+    } else if op == 2 {
+        out.emit(o, a64.addsub_shift(1, 1, 0, 9, 9, 10, 0, 0));
+    } else if op == 3 {
+        out.emit(o, a64.madd(1, 0, 9, 9, 10, 31));
+    } else if op == 4 {
+        out.emit(o, a64.dp2(1, 3, 9, 9, 10));
+    } else if op == 5 {
+        out.emit(o, a64.dp2(1, 3, 11, 9, 10));
+        out.emit(o, a64.madd(1, 1, 9, 11, 10, 9));
+    } else if op == 6 {
+        out.emit(o, a64.dp2(1, 2, 9, 9, 10));
+    } else if op == 7 {
+        out.emit(o, a64.logic_shift(1, 0, 0, 9, 9, 10, 0, 0));
+    } else if op == 8 {
+        out.emit(o, a64.logic_shift(1, 1, 0, 9, 9, 10, 0, 0));
+    } else if op == 9 {
+        out.emit(o, a64.logic_shift(1, 2, 0, 9, 9, 10, 0, 0));
+    } else if op == 10 {
+        out.emit(o, a64.dp2(1, 8, 9, 9, 10));
+    } else if op == 11 {
+        out.emit(o, a64.dp2(1, 10, 9, 9, 10));
+    } else {
+        out.emit(o, a64.dp2(1, 9, 9, 9, 10));
+    }
+    return put(m, o, rec, ty, 9);
+}
+
+// An integer of 128 bits is two words in memory, the low one first. What the compiler writes of them is the multiply of two that were 64 bits, and the shift
+// that takes the high half out: `mul` and `lshr` by a constant of 64 or more. Anything else is refused.
+fn wide[&m, &o](m: &m [int], o: &!o [int], rec: int) -> [] int {
+    let op = op_of(m, rec);
+    let ty = type_of(m, rec);
+    let a = opnd(m, rec, 0);
+    let b = opnd(m, rec, 1);
+    let scratch = o[cc.h_scratch()];
+    let place = result_place(m, o, rec);
+    if op == 3 && lm.cell(m, a + 1) == lr.o_local() && lm.cell(m, b + 1) == lr.o_local() {
+        let sa = out.slot(o, lm.cell(m, a + 2));
+        let sb = out.slot(o, lm.cell(m, b + 2));
+        if sa < 0 || sb < 0 {
+            return out.fail(o, out.why_operand());
+        }
+        fr.access(o, 3, 0, 1, 9, fr.sp(), sa);
+        fr.access(o, 3, 0, 1, 10, fr.sp(), sa + 8);
+        fr.access(o, 3, 0, 1, 11, fr.sp(), sb);
+        fr.access(o, 3, 0, 1, 12, fr.sp(), sb + 8);
+        // low = a.low * b.low; high = the high half of that, and the two cross products.
+        out.emit(o, a64.mulh(1, 13, 9, 11));
+        out.emit(o, a64.madd(1, 0, 13, 9, 12, 13));
+        out.emit(o, a64.madd(1, 0, 13, 10, 11, 13));
+        out.emit(o, a64.madd(1, 0, 9, 9, 11, 31));
+        fr.access(o, 3, 0, 0, 9, fr.sp(), place);
+        return fr.access(o, 3, 0, 0, 13, fr.sp(), place + 8);
+    }
+    if op == 12 && lm.cell(m, a + 1) == lr.o_local() && lm.cell(m, b + 1) == lr.o_int() && lm.cell(m, b + 2) >= 64 && lm.cell(m, b + 2) < 128 {
+        let sa = out.slot(o, lm.cell(m, a + 2));
+        if sa < 0 {
+            return out.fail(o, out.why_operand());
+        }
+        fr.access(o, 3, 0, 1, 9, fr.sp(), sa + 8);
+        if lm.cell(m, b + 2) > 64 {
+            out.emit(o, a64.shift_imm(1, 1, 9, 9, lm.cell(m, b + 2) - 64));
+        }
+        fr.access(o, 3, 0, 0, 9, fr.sp(), place);
+        return fr.access(o, 3, 0, 0, 31, fr.sp(), place + 8);
+    }
+    if scratch < 0 || ty < 0 {
+        return out.fail(o, out.why_wide());
+    }
+    return out.fail(o, out.why_wide());
+}
+
+// The floating-point operations 13 to 16, and `fneg`.
+fn binary_fp[&m, &o](m: &m [int], o: &!o [int], rec: int) -> [] int {
+    let op = op_of(m, rec);
+    let ty = type_of(m, rec);
+    let double = fr.float_kind(m, ty);
+    if double < 0 {
+        return out.fail(o, out.why_operand());
+    }
+    fr.operand_fp(m, o, opnd(m, rec, 0), 16);
+    if op == lr.op_fneg() {
+        out.emit(o, a64.fp1(double, 2, 16, 16));
+        return put_fp(m, o, rec, ty, 16);
+    }
+    fr.operand_fp(m, o, opnd(m, rec, 1), 17);
+    // fadd, fsub, fmul, fdiv are 13 to 16; the encoder's numbers are fmul 0, fdiv 1, fadd 2, fsub 3.
+    var which = 2;
+    if op == 14 {
+        which = 3;
+    } else if op == 15 {
+        which = 0;
+    } else if op == 16 {
+        which = 1;
+    }
+    out.emit(o, a64.fp2(double, which, 16, 16, 17));
+    return put_fp(m, o, rec, ty, 16);
+}
+
+// The condition of each predicate of `icmp`, by its number: eq ne ugt uge ult ule sgt sge slt sle are eq ne hi hs lo ls gt ge lt le.
+fn int_condition(predicate: int) -> [] int {
+    if predicate == 2 {
+        return 1;
+    }
+    if predicate == 3 {
+        return 8;
+    }
+    if predicate == 4 {
+        return 2;
+    }
+    if predicate == 5 {
+        return 3;
+    }
+    if predicate == 6 {
+        return 9;
+    }
+    if predicate == 7 {
+        return 12;
+    }
+    if predicate == 8 {
+        return 10;
+    }
+    if predicate == 9 {
+        return 11;
+    }
+    if predicate == 10 {
+        return 13;
+    }
+    return 0;
+}
+
+// `icmp`: both operands extended (by sign for the four signed predicates), a compare of 64 bits, and the condition as 0 or 1.
+fn compare[&m, &o](m: &m [int], o: &!o [int], rec: int) -> [] int {
+    let of = lm.cell(m, opnd(m, rec, 0));
+    if fr.word_size(m, of) < 0 {
+        // A vector, an integer of 128 bits, a value in parts.
+        if lm.type_kind(m, lm.resolved(m, of)) == lm.k_vector() {
+            return out.fail(o, out.why_vector());
+        }
+        return out.fail(o, out.why_operand());
+    }
+    let predicate = aux_of(m, rec);
+    let signed = predicate >= 7;
+    fr.operand(m, o, opnd(m, rec, 0), 9, signed);
+    fr.operand(m, o, opnd(m, rec, 1), 10, signed);
+    out.emit(o, a64.addsub_shift(1, 1, 1, 31, 9, 10, 0, 0));
+    cset(o, 9, int_condition(predicate));
+    return put(m, o, rec, lm.ty_i1(), 9);
+}
+
+// `fcmp`. After a compare of floating-point values the flags say less, equal, greater or unordered; each predicate is one condition of them, but the two
+// that are true for "less or greater" and for "equal or unordered", which are two conditions joined. The predicates, by number: oeq ogt oge olt ole one ord
+// ueq ugt uge ult ule une uno.
+fn compare_fp[&m, &o](m: &m [int], o: &!o [int], rec: int) -> [] int {
+    let double = fr.float_kind(m, lm.cell(m, opnd(m, rec, 0)));
+    if double < 0 {
+        return out.fail(o, out.why_operand());
+    }
+    let predicate = aux_of(m, rec);
+    fr.operand_fp(m, o, opnd(m, rec, 0), 16);
+    fr.operand_fp(m, o, opnd(m, rec, 1), 17);
+    out.emit(o, a64.fcmp(double, 16, 17, 0));
+    var cond = 0;
+    var second = 0 - 1;
+    if predicate == 2 {
+        cond = 12;
+    } else if predicate == 3 {
+        cond = 10;
+    } else if predicate == 4 {
+        cond = 4;
+    } else if predicate == 5 {
+        cond = 9;
+    } else if predicate == 6 {
+        cond = 4;
+        second = 12;
+    } else if predicate == 7 {
+        cond = 7;
+    } else if predicate == 8 {
+        cond = 0;
+        second = 6;
+    } else if predicate == 9 {
+        cond = 8;
+    } else if predicate == 10 {
+        cond = 5;
+    } else if predicate == 11 {
+        cond = 11;
+    } else if predicate == 12 {
+        cond = 13;
+    } else if predicate == 13 {
+        cond = 1;
+    } else if predicate == 14 {
+        cond = 6;
+    }
+    cset(o, 9, cond);
+    if second >= 0 {
+        cset(o, 10, second);
+        out.emit(o, a64.logic_shift(0, 1, 0, 9, 9, 10, 0, 0));
+    }
+    return put(m, o, rec, lm.ty_i1(), 9);
+}
+
+// The conversions 22 to 31.
+fn convert[&t, &m, &o](text: &t [byte], m: &m [int], o: &!o [int], rec: int) -> [] int {
+    let op = op_of(m, rec);
+    let to = type_of(m, rec);
+    let from = lm.cell(m, opnd(m, rec, 0));
+    if op == 25 || op == 26 {
+        // fptrunc, fpext: to the other precision.
+        fr.operand_fp(m, o, opnd(m, rec, 0), 16);
+        if fr.float_kind(m, from) < 0 || fr.float_kind(m, to) != 1 - fr.float_kind(m, from) {
+            return out.fail(o, out.why_operand());
+        }
+        out.emit(o, a64.fp1(fr.float_kind(m, from), 4, 16, 16));
+        return put_fp(m, o, rec, to, 16);
+    }
+    if op == 27 {
+        // fptosi: toward zero, to 64 bits, stored at the width asked for.
+        fr.operand_fp(m, o, opnd(m, rec, 0), 16);
+        out.emit(o, a64.fp_int(1, fr.float_kind(m, from), 2, 9, 16));
+        return put(m, o, rec, to, 9);
+    }
+    if op == 28 {
+        // sitofp: the integer sign-extended to 64 bits first.
+        fr.operand(m, o, opnd(m, rec, 0), 9, true);
+        if fr.float_kind(m, to) < 0 {
+            return out.fail(o, out.why_operand());
+        }
+        out.emit(o, a64.fp_int(1, fr.float_kind(m, to), 0, 16, 9));
+        return put_fp(m, o, rec, to, 16);
+    }
+    if op == 29 && (fr.word_size(m, from) < 0 || fr.word_size(m, to) < 0) {
+        // bitcast between an integer and a floating-point value of its size: the same bytes.
+        if ly.size_of(m, from) != ly.size_of(m, to) || result_of(m, rec) < 0 {
+            return out.fail(o, out.why_operand());
+        }
+        fr.add_offset(o, 14, fr.sp(), result_place(m, o, rec));
+        return fr.store_value(text, m, o, opnd(m, rec, 0), from, 0, 0);
+    }
+    if fr.is_wide(m, to) {
+        // zext to 128 bits: the value and a zero above it.
+        if op != 23 || fr.word_size(m, from) < 0 {
+            return out.fail(o, out.why_wide());
+        }
+        fr.operand(m, o, opnd(m, rec, 0), 9, false);
+        fr.access(o, 3, 0, 0, 9, fr.sp(), result_place(m, o, rec));
+        return fr.access(o, 3, 0, 0, 31, fr.sp(), result_place(m, o, rec) + 8);
+    }
+    if fr.is_wide(m, from) {
+        // trunc from 128 bits: its low word.
+        let a = opnd(m, rec, 0);
+        if op != 22 || lm.cell(m, a + 1) != lr.o_local() || out.slot(o, lm.cell(m, a + 2)) < 0 {
+            return out.fail(o, out.why_wide());
+        }
+        fr.access(o, 3, 0, 1, 9, fr.sp(), out.slot(o, lm.cell(m, a + 2)));
+        return put(m, o, rec, to, 9);
+    }
+    // trunc, zext, sext, inttoptr, ptrtoint, and bitcast of an integer: the value extended as the conversion says, stored at the new width.
+    fr.operand(m, o, opnd(m, rec, 0), 9, op == 24);
+    if op == 24 && fr.int_bits(m, from) == 1 {
+        // An `i1` is kept as 0 or 1: sign-extended it is 0 or -1.
+        out.emit(o, a64.addsub_shift(1, 1, 0, 9, 31, 9, 0, 0));
+    }
+    if fr.int_bits(m, to) == 1 {
+        out.emit(o, a64.logic_imm(1, 0, 9, 9, 1));
+    }
+    return put(m, o, rec, to, 9);
+}
+
+// `select`: the condition's low bit chooses.
+fn select[&t, &m, &o](text: &t [byte], m: &m [int], o: &!o [int], rec: int) -> [] int {
+    let ty = type_of(m, rec);
+    fr.operand(m, o, opnd(m, rec, 0), 11, false);
+    out.emit(o, a64.logic_imm(0, 3, 31, 11, 1));
+    if fr.word_size(m, ty) >= 0 {
+        fr.operand(m, o, opnd(m, rec, 1), 9, false);
+        fr.operand(m, o, opnd(m, rec, 2), 10, false);
+        // The loads above set no flags, but an address past the immediates is worked out with an add that does not either.
+        out.emit(o, a64.csel(1, 0, 0, 9, 9, 10, 1));
+        return put(m, o, rec, ty, 9);
+    }
+    if fr.float_kind(m, ty) >= 0 {
+        fr.operand_fp(m, o, opnd(m, rec, 1), 16);
+        fr.operand_fp(m, o, opnd(m, rec, 2), 17);
+        out.emit(o, a64.fcsel(fr.float_kind(m, ty), 16, 16, 17, 1));
+        return put_fp(m, o, rec, ty, 16);
+    }
+    // A value in parts: one of two copies, the condition tested again where it is jumped on.
+    let branch = out.emit(o, 0);
+    fr.add_offset(o, 14, fr.sp(), result_place(m, o, rec));
+    fr.store_value(text, m, o, opnd(m, rec, 1), ty, 0, 0);
+    let skip = out.emit(o, 0);
+    out.patch(o, branch, a64.bit_branch(0, 11, 0, out.here(o) - branch));
+    fr.add_offset(o, 14, fr.sp(), result_place(m, o, rec));
+    fr.store_value(text, m, o, opnd(m, rec, 2), ty, 0, 0);
+    out.patch(o, skip, a64.branch(0, out.here(o) - skip));
+    return 0;
+}
+
+// ---- memory ----
+
+// `load`.
+fn load[&m, &o](m: &m [int], o: &!o [int], rec: int) -> [] int {
+    let ty = type_of(m, rec);
+    let ordering = flags_of(m, rec) >> lr.ordering_shift() & 7;
+    fr.operand(m, o, opnd(m, rec, 0), 13, false);
+    let size = fr.word_size(m, ty);
+    if size >= 0 {
+        if ordering >= 3 {
+            out.emit(o, a64.ordered(size, 1, 9, 13));
+        } else {
+            out.emit(o, a64.load_store(size, 0, 1, 9, 13, 0));
+        }
+        if fr.int_bits(m, ty) == 1 {
+            out.emit(o, a64.logic_imm(1, 0, 9, 9, 1));
+        }
+        return put(m, o, rec, ty, 9);
+    }
+    if fr.float_kind(m, ty) >= 0 {
+        out.emit(o, a64.load_store(2 + fr.float_kind(m, ty), 1, 1, 16, 13, 0));
+        return put_fp(m, o, rec, ty, 16);
+    }
+    if lm.type_kind(m, lm.resolved(m, ty)) == lm.k_vector() {
+        return out.fail(o, out.why_vector());
+    }
+    fr.add_offset(o, 14, fr.sp(), result_place(m, o, rec));
+    return fr.copy(o, ly.size_of(m, ty), ly.align_of(m, ty));
+}
+
+// `store`.
+fn store[&t, &m, &o](text: &t [byte], m: &m [int], o: &!o [int], rec: int) -> [] int {
+    let value = opnd(m, rec, 0);
+    let ty = lm.cell(m, value);
+    let ordering = flags_of(m, rec) >> lr.ordering_shift() & 7;
+    let size = fr.word_size(m, ty);
+    if size >= 0 && ordering >= 3 {
+        fr.operand(m, o, value, 9, false);
+        fr.operand(m, o, opnd(m, rec, 1), 14, false);
+        out.emit(o, a64.ordered(size, 0, 9, 14));
+        return 0;
+    }
+    if fr.is_aggregate(m, ty) && lm.cell(m, value + 1) == lr.o_local() {
+        // A value in parts from its slot: a copy in pieces the place it goes to is known to be aligned for.
+        let slot = out.slot(o, lm.cell(m, value + 2));
+        if slot < 0 {
+            return out.fail(o, out.why_operand());
+        }
+        fr.operand(m, o, opnd(m, rec, 1), 14, false);
+        fr.add_offset(o, 13, fr.sp(), slot);
+        return fr.copy(o, ly.size_of(m, ty), ly.align_of(m, ty));
+    }
+    fr.operand(m, o, opnd(m, rec, 1), 14, false);
+    return fr.store_value(text, m, o, value, ty, 0, 0);
+}
+
+// `getelementptr`: the pointer, plus each index times the size of what it counts. The indices that are numbers are added up as the program is built.
+fn element[&m, &o](m: &m [int], o: &!o [int], rec: int) -> [] int {
+    let n = count_of(m, rec);
+    var ty = lm.cell(m, opnd(m, rec, 0));
+    fr.operand(m, o, opnd(m, rec, 1), 9, false);
+    var fixed = 0;
+    var k = 2;
+    while k < n && !out.failed(o) {
+        let index = opnd(m, rec, k);
+        let known = fr.constant(m, index, 0);
+        let t = lm.resolved(m, ty);
+        var each = ly.size_of(m, ty);
+        if k > 2 {
+            if lm.type_kind(m, t) == lm.k_struct() {
+                // A field: its index is a number, and what is added is where the field is.
+                if !known.good || known.slot >= 0 || ly.offset_of(m, t, known.offset) < 0 {
+                    return out.fail(o, out.why_operand());
+                }
+                fixed = fixed + ly.offset_of(m, t, known.offset);
+                ty = ly.part_of(m, t, known.offset);
+                each = 0 - 1;
+            } else if lm.type_kind(m, t) == lm.k_array() {
+                ty = ly.part_of(m, t, 0);
+                each = ly.size_of(m, ty);
+            } else {
+                return out.fail(o, out.why_operand());
+            }
+        }
+        if each >= 0 {
+            if known.good && known.slot < 0 {
+                fixed = wrapping_add(fixed, wrapping_mul(known.offset, each));
+            } else {
+                fr.operand(m, o, index, 10, true);
+                fr.mov_imm(o, 11, each);
+                out.emit(o, a64.madd(1, 0, 9, 10, 11, 9));
+            }
+        }
+        k = k + 1;
+    }
+    if fixed > 0 && fixed < 1 << 24 {
+        fr.add_offset(o, 9, 9, fixed);
+    } else if fixed != 0 {
+        fr.mov_imm(o, 10, fixed);
+        out.emit(o, a64.addsub_shift(1, 0, 0, 9, 9, 10, 0, 0));
+    }
+    return put(m, o, rec, lm.ty_ptr(), 9);
+}
+
+// Where the indices of an `extractvalue` or `insertvalue` (operands `from` on) lead in a value of type `ty`: the offset, and the type there.
+fn part[&m, &o](m: &m [int], o: &!o [int], rec: int, ty: int, from: int) -> [] (int, int) {
+    var at = 0;
+    var t = lm.resolved(m, ty);
+    var k = from;
+    while k < count_of(m, rec) {
+        let index = lm.cell(m, opnd(m, rec, k) + 2);
+        let offset = ly.offset_of(m, t, index);
+        if offset < 0 {
+            out.fail(o, out.why_operand());
+            return (0, t);
+        }
+        at = at + offset;
+        t = lm.resolved(m, ly.part_of(m, t, index));
+        k = k + 1;
+    }
+    return (at, t);
+}
+
+// `extractvalue`: the bytes of a part.
+fn extract[&t, &m, &o](text: &t [byte], m: &m [int], o: &!o [int], rec: int) -> [] int {
+    let whole = lm.cell(m, opnd(m, rec, 0));
+    let (offset, ty) = part(m, o, rec, whole, 1);
+    let source = fr.in_frame(text, m, o, opnd(m, rec, 0), whole, o[cc.h_scratch()]);
+    if result_of(m, rec) < 0 || out.failed(o) {
+        return 0;
+    }
+    fr.add_offset(o, 13, fr.sp(), source + offset);
+    fr.add_offset(o, 14, fr.sp(), result_place(m, o, rec));
+    return fr.copy(o, ly.size_of(m, ty), 8);
+}
+
+// `insertvalue`: the whole value, and then the part written over it.
+fn insert[&t, &m, &o](text: &t [byte], m: &m [int], o: &!o [int], rec: int) -> [] int {
+    let whole = lm.cell(m, opnd(m, rec, 0));
+    let (offset, ty) = part(m, o, rec, whole, 2);
+    if result_of(m, rec) < 0 || out.failed(o) {
+        return 0;
+    }
+    fr.add_offset(o, 14, fr.sp(), result_place(m, o, rec));
+    fr.store_value(text, m, o, opnd(m, rec, 0), whole, 0, 0);
+    fr.add_offset(o, 14, fr.sp(), result_place(m, o, rec));
+    return fr.store_value(text, m, o, opnd(m, rec, 1), ty, offset, 0);
+}
+
+// `atomicrmw`: the pair that fails if another processor wrote between its halves, tried until it does not. The old value is the result.
+fn atomic_update[&m, &o](m: &m [int], o: &!o [int], rec: int) -> [] int {
+    let ty = type_of(m, rec);
+    let size = fr.word_size(m, ty);
+    let which = flags_of(m, rec) >> lr.rmw_shift() & 15;
+    if size < 0 {
+        return out.fail(o, out.why_operand());
+    }
+    fr.operand(m, o, opnd(m, rec, 0), 13, false);
+    fr.operand(m, o, opnd(m, rec, 1), 10, false);
+    let top = out.here(o);
+    out.emit(o, a64.exclusive(size, 1, 1, 31, 9, 13));
+    if which == 1 {
+        mov(o, 11, 10);
+    } else if which == 2 {
+        out.emit(o, a64.addsub_shift(1, 0, 0, 11, 9, 10, 0, 0));
+    } else if which == 3 {
+        out.emit(o, a64.addsub_shift(1, 1, 0, 11, 9, 10, 0, 0));
+    } else if which == 4 {
+        out.emit(o, a64.logic_shift(1, 0, 0, 11, 9, 10, 0, 0));
+    } else if which == 6 {
+        out.emit(o, a64.logic_shift(1, 1, 0, 11, 9, 10, 0, 0));
+    } else if which == 7 {
+        out.emit(o, a64.logic_shift(1, 2, 0, 11, 9, 10, 0, 0));
+    } else {
+        return out.fail(o, out.why_operand());
+    }
+    out.emit(o, a64.exclusive(size, 0, 1, 12, 11, 13));
+    out.emit(o, a64.compare_branch(0, 1, 12, top - out.here(o)));
+    return put(m, o, rec, ty, 9);
+}
+
+// `cmpxchg`: the same pair; the store is tried only if what is there is what was expected. The result is what was there, and 1 if the store was made.
+fn atomic_exchange[&m, &o](m: &m [int], o: &!o [int], rec: int) -> [] int {
+    let of = lm.cell(m, opnd(m, rec, 1));
+    let size = fr.word_size(m, of);
+    if size < 0 {
+        return out.fail(o, out.why_operand());
+    }
+    fr.operand(m, o, opnd(m, rec, 0), 13, false);
+    fr.operand(m, o, opnd(m, rec, 1), 10, false);
+    fr.operand(m, o, opnd(m, rec, 2), 11, false);
+    let top = out.here(o);
+    out.emit(o, a64.exclusive(size, 1, 1, 31, 9, 13));
+    out.emit(o, a64.addsub_shift(1, 1, 1, 31, 9, 10, 0, 0));
+    // Not what was expected: to the end, with the flags saying so.
+    out.emit(o, a64.branch_cond(1, 3));
+    out.emit(o, a64.exclusive(size, 0, 1, 12, 11, 13));
+    out.emit(o, a64.compare_branch(0, 1, 12, top - out.here(o)));
+    // Here the flags are those of the compare: equal if the store was made (`stlxr` and `cbnz` set none).
+    cset(o, 12, 0);
+    if result_of(m, rec) < 0 {
+        return 0;
+    }
+    let place = result_place(m, o, rec);
+    fr.access(o, size, 0, 0, 9, fr.sp(), place);
+    return fr.access(o, 0, 0, 0, 12, fr.sp(), place + ly.offset_of(m, type_of(m, rec), 1));
+}
+
+// ---- calls ----
+
+// Is `text[from..to]` the string `word`?
+fn is[&t, &w](text: &t [byte], from: int, to: int, word: &w [byte]) -> [] bool {
+    return lm.spells(text, from, to, word);
+}
+
+// A function of LLVM's own, by its name (after `@llvm.`): the instructions it is. The ones the compiler writes; any other is refused.
+fn intrinsic[&t, &m, &o](text: &t [byte], m: &m [int], o: &!o [int], rec: int, from: int, to: int) -> [] int {
+    let ty = type_of(m, rec);
+    let place = result_place(m, o, rec);
+    if to - from == 22 && lm.spells(text, from + 4, to, ".with.overflow.i64") {
+        // sadd ssub smul uadd usub umul: the result, and 1 if it did not fit.
+        fr.operand(m, o, opnd(m, rec, 1), 9, false);
+        fr.operand(m, o, opnd(m, rec, 2), 10, false);
+        let unsigned = lm.at(text, from) == 'u';
+        let what = lm.at(text, from + 1);
+        if what == 'a' || what == 's' {
+            var sub = 0;
+            if what == 's' {
+                sub = 1;
+            }
+            out.emit(o, a64.addsub_shift(1, sub, 1, 11, 9, 10, 0, 0));
+            if !unsigned {
+                cset(o, 12, 6);
+            } else if sub == 0 {
+                cset(o, 12, 2);
+            } else {
+                cset(o, 12, 3);
+            }
+        } else if what == 'm' {
+            out.emit(o, a64.madd(1, 0, 11, 9, 10, 31));
+            if unsigned {
+                out.emit(o, a64.mulh(1, 12, 9, 10));
+                out.emit(o, a64.addsub_imm(1, 1, 1, 31, 12, 0, 0));
+            } else {
+                // It fits when the high half is the sign of the low half, sixty-four times over.
+                out.emit(o, a64.mulh(0, 12, 9, 10));
+                out.emit(o, a64.addsub_shift(1, 1, 1, 31, 12, 11, 2, 63));
+            }
+            cset(o, 12, 1);
+        } else {
+            return out.fail(o, out.why_intrinsic());
+        }
+        fr.access(o, 3, 0, 0, 11, fr.sp(), place);
+        return fr.access(o, 0, 0, 0, 12, fr.sp(), place + 8);
+    }
+    if is(text, from, to, "memset.p0.i64") {
+        // Byte by byte: the place, the byte, how many.
+        fr.operand(m, o, opnd(m, rec, 1), 13, false);
+        fr.operand(m, o, opnd(m, rec, 2), 10, false);
+        fr.operand(m, o, opnd(m, rec, 3), 12, false);
+        out.emit(o, a64.compare_branch(1, 0, 12, 4));
+        out.emit(o, a64.load_store_offset(0, 0, 0, 1, 10, 13, 1));
+        out.emit(o, a64.addsub_imm(1, 1, 1, 12, 12, 1, 0));
+        out.emit(o, a64.branch_cond(1, 0 - 2));
+        return 0;
+    }
+    if is(text, from, to, "sqrt.f64") || is(text, from, to, "sqrt.f32") {
+        fr.operand_fp(m, o, opnd(m, rec, 1), 16);
+        out.emit(o, a64.fp1(fr.float_kind(m, ty), 3, 16, 16));
+        return put_fp(m, o, rec, ty, 16);
+    }
+    if is(text, from, to, "ctlz.i64") || is(text, from, to, "cttz.i64") {
+        fr.operand(m, o, opnd(m, rec, 1), 9, false);
+        if lm.at(text, from + 2) == 't' {
+            out.emit(o, a64.dp1(1, 0, 9, 9));
+        }
+        out.emit(o, a64.dp1(1, 4, 9, 9));
+        return put(m, o, rec, ty, 9);
+    }
+    if is(text, from, to, "ctpop.i64") {
+        // The count of ones without the instruction NEON has for it: pairs, then fours, then bytes, then the bytes added by a multiply.
+        fr.operand(m, o, opnd(m, rec, 1), 9, false);
+        fr.mov_imm(o, 10, 0x55555555 << 32 | 0x55555555);
+        out.emit(o, a64.logic_shift(1, 0, 0, 11, 10, 9, 1, 1));
+        out.emit(o, a64.addsub_shift(1, 1, 0, 9, 9, 11, 0, 0));
+        fr.mov_imm(o, 10, 0x33333333 << 32 | 0x33333333);
+        out.emit(o, a64.logic_shift(1, 0, 0, 11, 10, 9, 1, 2));
+        out.emit(o, a64.logic_shift(1, 0, 0, 9, 9, 10, 0, 0));
+        out.emit(o, a64.addsub_shift(1, 0, 0, 9, 9, 11, 0, 0));
+        out.emit(o, a64.addsub_shift(1, 0, 0, 9, 9, 9, 1, 4));
+        fr.mov_imm(o, 10, 0x0f0f0f0f << 32 | 0x0f0f0f0f);
+        out.emit(o, a64.logic_shift(1, 0, 0, 9, 9, 10, 0, 0));
+        fr.mov_imm(o, 10, 0x01010101 << 32 | 0x01010101);
+        out.emit(o, a64.madd(1, 0, 9, 9, 10, 31));
+        out.emit(o, a64.shift_imm(1, 1, 9, 9, 56));
+        return put(m, o, rec, ty, 9);
+    }
+    if is(text, from, to, "trap") {
+        out.emit(o, a64.udf(0xc11f));
+        return 0;
+    }
+    return out.fail(o, out.why_intrinsic());
+}
+
+// Inline assembly: the strings the compiler writes, and no other (`compiler/wordcode.cho`, `compiler/driver.cho`). `from` is the opening quote of the text and
+// `to` is past the closing quote of the constraints.
+fn assembly[&t, &m, &o](text: &t [byte], m: &m [int], o: &!o [int], rec: int, from: int, to: int) -> [] int {
+    let ty = type_of(m, rec);
+    if is(text, from, to, "\"udf #0xc11f\", \"\"") {
+        out.emit(o, a64.udf(0xc11f));
+        return 0;
+    }
+    if is(text, from, to, "\"\", \"=r,0\"") {
+        // The value barrier: the value, through a place the optimiser cannot see into. There is no optimiser here.
+        fr.operand(m, o, opnd(m, rec, 1), 9, false);
+        return put(m, o, rec, ty, 9);
+    }
+    if is(text, from, to, "\"wfi\", \"\"") {
+        out.emit(o, a64.hint(3));
+        return 0;
+    }
+    if is(text, from, to, "\"isb\", \"\"") {
+        out.emit(o, a64.barrier(6, 15));
+        return 0;
+    }
+    if is(text, from, to, "\"tlbi vmalle1\\0Adsb nsh\\0Aisb\", \"\"") {
+        out.emit(o, a64.sys(0, 8, 7, 0, 31));
+        out.emit(o, a64.barrier(4, 7));
+        out.emit(o, a64.barrier(6, 15));
+        return 0;
+    }
+    if to - from > 16 && lm.spells(text, from, from + 9, "\"mrs $0, ") && lm.spells(text, to - 7, to, "\", \"=r\"") {
+        let register = a64sys.encoding(text[from + 9..to - 7]);
+        if register < 0 {
+            return out.fail(o, out.why_asm());
+        }
+        out.emit(o, a64.system_register(1, 9, register));
+        return put(m, o, rec, ty, 9);
+    }
+    if to - from > 21 && lm.spells(text, from, from + 5, "\"msr ") && lm.spells(text, to - 16, to, ", $0\\0Aisb\", \"r\"") {
+        let register = a64sys.encoding(text[from + 5..to - 16]);
+        if register < 0 {
+            return out.fail(o, out.why_asm());
+        }
+        fr.operand(m, o, opnd(m, rec, 1), 9, false);
+        out.emit(o, a64.system_register(0, 9, register));
+        out.emit(o, a64.barrier(6, 15));
+        return 0;
+    }
+    return out.fail(o, out.why_asm());
+}
+
+// `call`: the arguments to where the callee expects them, the call, and the result from where it left it.
+fn call[&t, &m, &o](text: &t [byte], m: &m [int], o: &!o [int], rec: int) -> [] int {
+    let callee = opnd(m, rec, 0);
+    let kind = lm.cell(m, callee + 1);
+    let ty = type_of(m, rec);
+    let n = count_of(m, rec);
+    let scratch = o[cc.h_scratch()];
+    if kind == lr.o_asm() {
+        return assembly(text, m, o, rec, lm.cell(m, callee + 2), lm.cell(m, callee + 3));
+    }
+    if kind == lr.o_global() {
+        let name = lm.cell(m, callee + 3);
+        if lm.spells(text, name, name + 6, "@llvm.") {
+            return intrinsic(text, m, o, rec, name + 6, lm.name_end(text, name));
+        }
+    }
+    cc.reset(o);
+    var k = 1;
+    while k < n && !out.failed(o) {
+        let a = opnd(m, rec, k);
+        if lm.cell(m, a + 1) != lr.o_align() {
+            let of = lm.cell(m, a);
+            let place = fr.in_frame(text, m, o, a, of, scratch);
+            fr.add_offset(o, 14, fr.sp(), place);
+            cc.walk(m, o, of, 0, cc.w_argument(), 0);
+        }
+        k = k + 1;
+    }
+    let memory = cc.in_memory(m, ty);
+    if memory {
+        fr.add_offset(o, 8, fr.sp(), result_place(m, o, rec));
+    }
+    if kind == lr.o_global() {
+        out.relocate(o, out.r_call(), out.here(o), lm.cell(m, callee + 2), 0);
+        out.emit(o, a64.branch(1, 0));
+    } else if kind == lr.o_local() {
+        fr.load_local(m, o, lm.ty_ptr(), 16, lm.cell(m, callee + 2), false);
+        out.emit(o, a64.branch_reg(1, 16));
+    } else {
+        return out.fail(o, out.why_operand());
+    }
+    if memory || result_of(m, rec) < 0 || ly.size_of(m, ty) == 0 {
+        return 0;
+    }
+    cc.reset(o);
+    fr.add_offset(o, 14, fr.sp(), result_place(m, o, rec));
+    return cc.walk(m, o, ty, 0, cc.w_result_in(), 0);
+}
+
+// The stack a call's arguments take, in bytes (for the frame), and nothing written.
+pub fn call_stack[&m, &o](m: &m [int], o: &!o [int], rec: int) -> [] int {
+    let callee = opnd(m, rec, 0);
+    if op_of(m, rec) != lr.op_call() || lm.cell(m, callee + 1) == lr.o_asm() {
+        return 0;
+    }
+    cc.reset(o);
+    var k = 1;
+    while k < count_of(m, rec) {
+        let a = opnd(m, rec, k);
+        if lm.cell(m, a + 1) != lr.o_align() {
+            cc.walk(m, o, lm.cell(m, a), 0, cc.w_count(), 0);
+        }
+        k = k + 1;
+    }
+    return o[cc.h_stack()];
+}
+
+// One instruction that is not the end of a block: `phi` is the blocks' (`a64fn.cho`), and so are `ret`, `br`, `switch` and `alloca`'s frame.
+pub fn lower[&t, &m, &o](text: &t [byte], m: &m [int], o: &!o [int], rec: int) -> [] int {
+    let op = op_of(m, rec);
+    if op >= 1 && op <= 12 {
+        return binary(m, o, rec);
+    }
+    if op >= 13 && op <= 17 {
+        return binary_fp(m, o, rec);
+    }
+    if op == lr.op_icmp() {
+        return compare(m, o, rec);
+    }
+    if op == lr.op_fcmp() {
+        return compare_fp(m, o, rec);
+    }
+    if op == lr.op_select() {
+        return select(text, m, o, rec);
+    }
+    if op >= 22 && op <= 31 {
+        return convert(text, m, o, rec);
+    }
+    if op == lr.op_load() {
+        return load(m, o, rec);
+    }
+    if op == lr.op_store() {
+        return store(text, m, o, rec);
+    }
+    if op == lr.op_gep() {
+        return element(m, o, rec);
+    }
+    if op == lr.op_extractvalue() {
+        return extract(text, m, o, rec);
+    }
+    if op == lr.op_insertvalue() {
+        return insert(text, m, o, rec);
+    }
+    if op == lr.op_call() {
+        return call(text, m, o, rec);
+    }
+    if op == lr.op_atomicrmw() {
+        return atomic_update(m, o, rec);
+    }
+    if op == lr.op_cmpxchg() {
+        return atomic_exchange(m, o, rec);
+    }
+    if op == lr.op_unreachable() {
+        out.emit(o, a64.udf(0));
+        return 0;
+    }
+    if op >= 45 {
+        return out.fail(o, out.why_vector());
+    }
+    return out.fail(o, out.why_operand());
+}

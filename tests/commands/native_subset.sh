@@ -86,7 +86,8 @@ mkdir "$work/out"
 "$cancho" build "$work/small.cho" --backend native -o "$work/out/small" > "$work/native.txt" 2>&1
 same "$?" 1 "the status of build"
 same "$(head -1 "$work/native.txt" | sed 's/^.*small\.cho: error: \(The backend that was asked for cannot build this program\).*/\1/')" "The backend that was asked for cannot build this program" "what build says"
-same "$(sed -n 2p "$work/native.txt")" '    the native backend reads this program'"'"'s module and has no code generator yet: nothing was written, and `--backend llvm` builds this program' "and why, today"
+"$cancho" build "$work/small.cho" --backend native --target aarch64-none-elf --emit obj -o "$work/out/bare.o" > "$work/native-bare.txt" 2>&1
+same "$(sed -n 2p "$work/native-bare.txt")" '    the native backend has code for this program and no object to put it in yet: nothing was written, and `--backend llvm` builds this program' "and why, today, for a machine it has code for"
 same "$(ls "$work/out" | wc -l | tr -d ' ')" 0 "what build wrote"
 "$cancho" build "$work/small.cho" --backend native --emit ll -o "$work/out/small.ll" > /dev/null 2>&1
 same "$?" 1 "the status of build --emit ll"

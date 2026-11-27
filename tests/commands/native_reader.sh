@@ -72,7 +72,8 @@ same "$?" 4 "the status of test, one of two failing"
 same "$(grep -c '^test result: FAILED. 1 passed; 1 failed' "$work/test.out")" 1 "what test says"
 end
 
-# `--backend native` is the reader asked to take no vector. A program whose module has none is read, and refused for the code generator there is not yet; one
+# `--backend native` is the reader asked to take no vector, and then the code generator (native_gen.sh). A program whose module has no vector and is for a
+# machine there is code for is refused for the object writer there is not yet; one
 # that searches bytes (std.bytes.find is written with 16-byte compares, docs/byte-search.md) is refused at the line of the vector.
 begin the_native_backend_names_the_line_it_does_not_read
 cat > "$work/finds.cho" << 'EOF'
@@ -101,7 +102,7 @@ same "$(ls "$work" | grep -c '^finds$')" 0 "nothing is written"
 "$cancho" build "$work/finds.cho" --std --backend roundtrip -o "$work/finds" > /dev/null 2>&1 && "$work/finds"
 same "$?" 7 "the same program through the round trip, which reads vectors, run"
 printf 'fn main(world: World) -> [] int {\n    let Split { io, ffi, fs, heap, args } = split(world);\n    release(io);\n    release(ffi);\n    release(fs);\n    release(heap);\n    release(args);\n    return 0;\n}\n' > "$work/plain.cho"
-"$cancho" build "$work/plain.cho" --backend native -o "$work/plain" > "$work/plain.native.txt" 2>&1
+"$cancho" build "$work/plain.cho" --backend native --target aarch64-none-elf --emit obj -o "$work/plain.o" > "$work/plain.native.txt" 2>&1
 same "$?" 1 "the status for a program with no vector"
-same "$(sed -n 2p "$work/plain.native.txt")" '    the native backend reads this program'"'"'s module and has no code generator yet: nothing was written, and `--backend llvm` builds this program' "what it says of one it reads"
+same "$(sed -n 2p "$work/plain.native.txt")" '    the native backend has code for this program and no object to put it in yet: nothing was written, and `--backend llvm` builds this program' "what it says of one it has code for"
 end

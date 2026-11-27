@@ -1,0 +1,61 @@
+# lowering.txt -- what the first code generator does with each instruction and each function of LLVM's own that tests/native/subset.txt lets the compiler write
+# (docs/native-backend.md section 12.3): `lowered`, or `refused` with the reason it gives. tests/commands/native_gen.sh fails when a form is in one file and
+# not in the other, so a form cannot be added to what the compiler may write without a decision here.
+instruction add lowered
+instruction alloca lowered
+instruction and lowered
+instruction ashr lowered
+instruction atomicrmw lowered
+instruction bitcast lowered
+instruction br lowered
+instruction call lowered
+instruction cmpxchg lowered
+instruction extractvalue lowered
+instruction fadd lowered
+instruction fcmp lowered
+instruction fdiv lowered
+instruction fmul lowered
+instruction fneg lowered
+instruction fpext lowered
+instruction fptosi lowered
+instruction fptrunc lowered
+instruction fsub lowered
+instruction getelementptr lowered
+instruction icmp lowered
+instruction insertelement refused a vector
+instruction insertvalue lowered
+instruction inttoptr lowered
+instruction load lowered
+instruction lshr lowered
+instruction mul lowered
+instruction or lowered
+instruction phi lowered
+instruction ptrtoint lowered
+instruction ret lowered
+instruction sdiv lowered
+instruction select lowered
+instruction sext lowered
+instruction shl lowered
+instruction shufflevector refused a vector
+instruction sitofp lowered
+instruction srem lowered
+instruction store lowered
+instruction sub lowered
+instruction switch lowered
+instruction trunc lowered
+instruction udiv lowered
+instruction unreachable lowered
+instruction xor lowered
+instruction zext lowered
+intrinsic llvm.ctlz.i64 lowered
+intrinsic llvm.ctpop.i64 lowered
+intrinsic llvm.cttz.i64 lowered
+intrinsic llvm.memset.p0.i64 lowered
+intrinsic llvm.sadd.with.overflow.i64 lowered
+intrinsic llvm.smul.with.overflow.i64 lowered
+intrinsic llvm.sqrt.f32 lowered
+intrinsic llvm.sqrt.f64 lowered
+intrinsic llvm.ssub.with.overflow.i64 lowered
+intrinsic llvm.uadd.with.overflow.i64 lowered
+intrinsic llvm.umul.with.overflow.i64 lowered
+intrinsic llvm.usub.with.overflow.i64 lowered

@@ -20,3 +20,6 @@ lex_route | 6 | --std tests/lex/route_test.cho
 native_reader | 11 | --std compiler/native/llmod.cho compiler/native/llread.cho compiler/native/llbody.cho compiler/native/lltop.cho compiler/native/llprint.cho tests/native/reader_test.cho
 # The AArch64 encoder (docs/native-backend.md section 11): every logical immediate both ways, operands out of range refused, and no operands reach a trap.
 native_a64 | 6 | --std compiler/native/a64.cho compiler/native/a64sys.cho tests/native/a64_forms.cho tests/native/a64_test.cho
+# The native backend's data layout against clang's, and its first code generator on what needs no machine (docs/native-backend.md sections 4 and 12).
+native_layout | 2 | --std compiler/native/llmod.cho compiler/native/llread.cho compiler/native/llbody.cho compiler/native/lltop.cho compiler/native/lllayout.cho tests/native/layout_test.cho
+native_gen | 3 | --std compiler/native/llmod.cho compiler/native/llread.cho compiler/native/llbody.cho compiler/native/lltop.cho compiler/native/lllayout.cho compiler/native/llout.cho compiler/native/a64.cho compiler/native/a64sys.cho compiler/native/a64frame.cho compiler/native/a64call.cho compiler/native/a64gen.cho compiler/native/a64fn.cho tests/native/gen_test.cho

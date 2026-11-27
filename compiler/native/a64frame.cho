@@ -1,0 +1,603 @@
+edition 7;
+module selfhost.a64frame;
+
+// a64frame.cho -- the small sequences of AArch64 instructions the code generator is made of (`docs/native-backend.md` section 12): a constant into a
+// register, an address in the frame, an access at any offset, a copy of bytes, and a value of the module (a local, a constant, a name) into a register or
+// into memory. Every value lives in a slot of the frame, at an offset from the stack pointer; these are how it gets out of one and into another.
+//
+// The registers: `x9` to `x15` hold what one instruction of the module works on and are free between two; `x16` is the address of a name and of what is
+// called; `x17` is an address in the frame the immediates do not reach, and a constant on its way to a floating-point register; `d16` and `d17` are the
+// floating-point operands. None is kept across a call, so nothing is saved but the frame pointer and the return address.
+
+import selfhost.llmod as lm;
+import selfhost.llread as lr;
+import selfhost.lllayout as ly;
+import selfhost.llout as out;
+import selfhost.a64;
+
+pub fn sp() -> [] int {
+    return 31;
+}
+
+// A constant into the register `rd`: `movz` or `movn` for the first sixteen bits that are not all zeros or all ones, and a `movk` for each of the others.
+pub fn mov_imm[&o](o: &!o [int], rd: int, value: int) -> [] int {
+    var ones = 0;
+    var zeros = 0;
+    var k = 0;
+    while k < 4 {
+        let chunk = value >> 16 * k & 0xffff;
+        if chunk == 0xffff {
+            ones = ones + 1;
+        }
+        if chunk == 0 {
+            zeros = zeros + 1;
+        }
+        k = k + 1;
+    }
+    var skip = 0;
+    var first = 2;
+    if ones > zeros {
+        skip = 0xffff;
+        first = 0;
+    }
+    var started = false;
+    k = 0;
+    while k < 4 {
+        let chunk = value >> 16 * k & 0xffff;
+        if chunk != skip {
+            if !started {
+                if first == 0 {
+                    out.emit(o, a64.movw(1, 0, rd, chunk ^ 0xffff, k));
+                } else {
+                    out.emit(o, a64.movw(1, 2, rd, chunk, k));
+                }
+                started = true;
+            } else {
+                out.emit(o, a64.movw(1, 3, rd, chunk, k));
+            }
+        }
+        k = k + 1;
+    }
+    if !started {
+        // Every chunk is the one skipped: the value is 0 or -1.
+        out.emit(o, a64.movw(1, first, rd, 0, 0));
+    }
+    return 0;
+}
+
+// `rd = base + offset`, where `base` is a register or the stack pointer and the offset is not negative.
+pub fn add_offset[&o](o: &!o [int], rd: int, base: int, offset: int) -> [] int {
+    if offset < 0 || offset > 1 << 40 {
+        return out.fail(o, out.why_frame());
+    }
+    if offset < 4096 {
+        out.emit(o, a64.addsub_imm(1, 0, 0, rd, base, offset, 0));
+        return 0;
+    }
+    if offset < 1 << 24 {
+        out.emit(o, a64.addsub_imm(1, 0, 0, rd, base, offset >> 12, 1));
+        if offset & 4095 != 0 {
+            out.emit(o, a64.addsub_imm(1, 0, 0, rd, rd, offset & 4095, 0));
+        }
+        return 0;
+    }
+    // Past sixteen megabytes: the constant in the scratch register, and an add of the form that takes the stack pointer.
+    mov_imm(o, 17, offset);
+    out.emit(o, a64.addsub_ext(1, 0, 0, rd, base, 17, 3, 0));
+    return 0;
+}
+
+// One access of `1 << size` bytes at `base + offset`: `opc` 0 a store of `rt`, 1 a load, 2 a load sign-extended to 64 bits; `v` 1 for a floating-point
+// register. An offset the instruction does not reach goes through `x17`.
+pub fn access[&o](o: &!o [int], size: int, v: int, opc: int, rt: int, base: int, offset: int) -> [] int {
+    if offset >= 0 && offset & (1 << size) - 1 == 0 && offset >> size < 4096 {
+        out.emit(o, a64.load_store(size, v, opc, rt, base, offset >> size));
+        return 0;
+    }
+    if offset >= 0 - 256 && offset < 256 {
+        out.emit(o, a64.load_store_offset(size, v, opc, 0, rt, base, offset));
+        return 0;
+    }
+    add_offset(o, 17, base, offset);
+    out.emit(o, a64.load_store(size, v, opc, rt, 17, 0));
+    return 0;
+}
+
+// ---- what a type is to the code generator ----
+
+// A value a general register holds: the size of its access (0 to 3 for 1 to 8 bytes), or -1 for a type that is none (floating point, wider, in parts).
+pub fn word_size[&m](m: &m [int], ty: int) -> [] int {
+    let t = lm.resolved(m, ty);
+    let kind = lm.type_kind(m, t);
+    if kind == lm.k_ptr() {
+        return 3;
+    }
+    if kind != lm.k_int() {
+        return 0 - 1;
+    }
+    let bits = lm.type_count(m, t);
+    if bits <= 8 {
+        return 0;
+    }
+    if bits <= 16 {
+        return 1;
+    }
+    if bits <= 32 {
+        return 2;
+    }
+    if bits <= 64 {
+        return 3;
+    }
+    return 0 - 1;
+}
+
+// The bits of an integer type (64 for a pointer), or 0.
+pub fn int_bits[&m](m: &m [int], ty: int) -> [] int {
+    let t = lm.resolved(m, ty);
+    if lm.type_kind(m, t) == lm.k_ptr() {
+        return 64;
+    }
+    if lm.type_kind(m, t) == lm.k_int() {
+        return lm.type_count(m, t);
+    }
+    return 0;
+}
+
+// 1 for `double`, 0 for `float`, -1 for a type that is neither.
+pub fn float_kind[&m](m: &m [int], ty: int) -> [] int {
+    let kind = lm.type_kind(m, lm.resolved(m, ty));
+    if kind == lm.k_double() {
+        return 1;
+    }
+    if kind == lm.k_float() {
+        return 0;
+    }
+    return 0 - 1;
+}
+
+pub fn is_wide[&m](m: &m [int], ty: int) -> [] bool {
+    let t = lm.resolved(m, ty);
+    return lm.type_kind(m, t) == lm.k_int() && lm.type_count(m, t) > 64;
+}
+
+// A value that is its bytes in memory and never in a register: a struct or an array.
+pub fn is_aggregate[&m](m: &m [int], ty: int) -> [] bool {
+    let kind = lm.type_kind(m, lm.resolved(m, ty));
+    return kind == lm.k_struct() || kind == lm.k_array();
+}
+
+// ---- copies ----
+
+// `size` bytes from the address in `x13` to the address in `x14`, in pieces of `unit` bytes at most (the alignment both are known to have): unrolled when
+// small, a loop when not. `x12` and `x15` are used; `x13` and `x14` are left past the bytes only by the loop.
+pub fn copy[&o](o: &!o [int], size: int, unit: int) -> [] int {
+    if size <= 0 {
+        return 0;
+    }
+    var step = 3;
+    if unit < 8 {
+        step = 2;
+    }
+    if unit < 4 {
+        step = 1;
+    }
+    if unit < 2 {
+        step = 0;
+    }
+    if size > 128 {
+        let whole = size >> step << step;
+        mov_imm(o, 12, whole);
+        let top = out.here(o);
+        out.emit(o, a64.load_store_offset(step, 0, 1, 1, 15, 13, 1 << step));
+        out.emit(o, a64.load_store_offset(step, 0, 0, 1, 15, 14, 1 << step));
+        out.emit(o, a64.addsub_imm(1, 1, 1, 12, 12, 1 << step, 0));
+        out.emit(o, a64.branch_cond(1, top - out.here(o)));
+        // What is left is less than a piece.
+        var at = 0;
+        var rest = size - whole;
+        var s = step;
+        while rest > 0 {
+            while 1 << s > rest {
+                s = s - 1;
+            }
+            out.emit(o, a64.load_store_offset(s, 0, 1, 0, 15, 13, at));
+            out.emit(o, a64.load_store_offset(s, 0, 0, 0, 15, 14, at));
+            at = at + (1 << s);
+            rest = rest - (1 << s);
+        }
+        return 0;
+    }
+    var at = 0;
+    var s = step;
+    while at < size {
+        while 1 << s > size - at {
+            s = s - 1;
+        }
+        access(o, s, 0, 1, 15, 13, at);
+        access(o, s, 0, 0, 15, 14, at);
+        at = at + (1 << s);
+    }
+    return 0;
+}
+
+// `size` bytes at the address in `x14` made zero, in pieces of `unit` bytes at most. `x12` is used, and `x14` moved by the loop.
+pub fn zero[&o](o: &!o [int], size: int, unit: int) -> [] int {
+    if size <= 0 {
+        return 0;
+    }
+    var step = 3;
+    if unit < 8 {
+        step = 2;
+    }
+    if unit < 4 {
+        step = 1;
+    }
+    if unit < 2 {
+        step = 0;
+    }
+    if size > 128 {
+        let whole = size >> step << step;
+        mov_imm(o, 12, whole);
+        let top = out.here(o);
+        out.emit(o, a64.load_store_offset(step, 0, 0, 1, 31, 14, 1 << step));
+        out.emit(o, a64.addsub_imm(1, 1, 1, 12, 12, 1 << step, 0));
+        out.emit(o, a64.branch_cond(1, top - out.here(o)));
+        var at = 0;
+        var rest = size - whole;
+        var s = step;
+        while rest > 0 {
+            while 1 << s > rest {
+                s = s - 1;
+            }
+            out.emit(o, a64.load_store_offset(s, 0, 0, 0, 31, 14, at));
+            at = at + (1 << s);
+            rest = rest - (1 << s);
+        }
+        return 0;
+    }
+    var at = 0;
+    var s = step;
+    while at < size {
+        while 1 << s > size - at {
+            s = s - 1;
+        }
+        access(o, s, 0, 0, 31, 14, at);
+        at = at + (1 << s);
+    }
+    return 0;
+}
+
+// ---- names ----
+
+// Is the name in `slot` one this module gives a body or a value to? Another object's (a declaration, an `external` global) is reached through the table of
+// addresses the linker makes.
+pub fn defined_here[&m](m: &m [int], slot: int) -> [] bool {
+    let record = lm.cell(m, slot + 2);
+    let kind = lm.cell(m, record);
+    if kind == lr.r_func() {
+        return true;
+    }
+    if kind == lr.r_global() {
+        return lm.cell(m, record + 4) & 4 == 0;
+    }
+    return false;
+}
+
+// The address of the name in `slot`, plus `addend`, into `rd`.
+pub fn address_of[&m, &o](m: &m [int], o: &!o [int], rd: int, slot: int, addend: int) -> [] int {
+    if lm.cell(m, slot + 2) == 0 {
+        // A name with no line of its own: a function of LLVM's, which has no address.
+        return out.fail(o, out.why_intrinsic());
+    }
+    if defined_here(m, slot) {
+        out.relocate(o, out.r_page(), out.here(o), slot, addend);
+        out.emit(o, a64.adr(1, rd, 0));
+        out.relocate(o, out.r_lo12(), out.here(o), slot, addend);
+        out.emit(o, a64.addsub_imm(1, 0, 0, rd, rd, 0, 0));
+        return 0;
+    }
+    out.relocate(o, out.r_got_page(), out.here(o), slot, 0);
+    out.emit(o, a64.adr(1, rd, 0));
+    out.relocate(o, out.r_got_lo12(), out.here(o), slot, 0);
+    out.emit(o, a64.load_store(3, 0, 1, rd, rd, 0));
+    if addend != 0 {
+        if addend > 0 {
+            add_offset(o, rd, rd, addend);
+        } else {
+            mov_imm(o, 17, addend);
+            out.emit(o, a64.addsub_shift(1, 0, 0, rd, rd, 17, 0, 0));
+        }
+    }
+    return 0;
+}
+
+// ---- constants ----
+
+// What a constant operand comes to when it is an address or a number: a name's slot (-1 for none) and a number added to it. `good` is false for an operand
+// that is neither (a local, a constant with parts that are not these).
+pub struct Address {
+    slot: int,
+    offset: int,
+    good: bool,
+}
+
+fn no_address() -> [] Address {
+    return Address { slot: 0 - 1, offset: 0, good: false };
+}
+
+// The operand at `at` (four cells of the module) as an address or a number.
+pub fn constant[&m](m: &m [int], at: int, depth: int) -> [] Address {
+    let kind = lm.cell(m, at + 1);
+    let a = lm.cell(m, at + 2);
+    if kind == lr.o_int() {
+        return Address { slot: 0 - 1, offset: a, good: true };
+    }
+    if kind == lr.o_word() {
+        if a == 5 {
+            return Address { slot: 0 - 1, offset: 1, good: true };
+        }
+        return Address { slot: 0 - 1, offset: 0, good: true };
+    }
+    if kind == lr.o_global() {
+        return Address { slot: a, offset: 0, good: true };
+    }
+    if kind != lr.o_const() || lm.cell(m, a + 2) != lr.c_expr() || depth > lm.deepest() {
+        return no_address();
+    }
+    // A constant expression: a conversion is its operand; `getelementptr` is its base and the offsets its indices come to.
+    let op = lm.cell(m, a + 5);
+    let n = lm.cell(m, a + 4);
+    let parts = a + lr.const_head();
+    if op != lr.op_gep() {
+        return constant(m, parts, depth + 1);
+    }
+    let base = constant(m, parts + 4, depth + 1);
+    if !base.good {
+        return no_address();
+    }
+    var ty = lm.cell(m, parts);
+    var offset = base.offset;
+    var k = 2;
+    while k < n {
+        let index = constant(m, parts + 4 * k, depth + 1);
+        if !index.good || index.slot >= 0 {
+            return no_address();
+        }
+        if k == 2 {
+            offset = wrapping_add(offset, wrapping_mul(index.offset, ly.size_of(m, ty)));
+        } else {
+            let t = lm.resolved(m, ty);
+            if lm.type_kind(m, t) == lm.k_struct() {
+                let field = ly.offset_of(m, t, index.offset);
+                if field < 0 {
+                    return no_address();
+                }
+                offset = wrapping_add(offset, field);
+                ty = ly.part_of(m, t, index.offset);
+            } else if lm.type_kind(m, t) == lm.k_array() {
+                ty = ly.part_of(m, t, 0);
+                offset = wrapping_add(offset, wrapping_mul(index.offset, ly.size_of(m, ty)));
+            } else {
+                return no_address();
+            }
+        }
+        k = k + 1;
+    }
+    return Address { slot: base.slot, offset: offset, good: true };
+}
+
+// ---- values into registers ----
+
+// The local `id`, of type `ty`, from its slot into the general register `rd`: zero-extended, or sign-extended to 64 bits (`signed`).
+pub fn load_local[&m, &o](m: &m [int], o: &!o [int], ty: int, rd: int, id: int, signed: bool) -> [] int {
+    let size = word_size(m, ty);
+    let slot = out.slot(o, id);
+    if size < 0 || slot < 0 {
+        return out.fail(o, out.why_operand());
+    }
+    if signed && size < 3 {
+        return access(o, size, 0, 2, rd, sp(), slot);
+    }
+    return access(o, size, 0, 1, rd, sp(), slot);
+}
+
+// The operand at `at`, a value a general register holds, into `rd`: zero-extended from its type's width, or sign-extended (`signed`).
+pub fn operand[&m, &o](m: &m [int], o: &!o [int], at: int, rd: int, signed: bool) -> [] int {
+    let ty = lm.cell(m, at);
+    let kind = lm.cell(m, at + 1);
+    let a = lm.cell(m, at + 2);
+    if kind == lr.o_local() {
+        return load_local(m, o, ty, rd, a, signed);
+    }
+    if kind == lr.o_big() || kind == lr.o_float() {
+        return out.fail(o, out.why_operand());
+    }
+    let value = constant(m, at, 0);
+    if !value.good {
+        return out.fail(o, out.why_constant());
+    }
+    if value.slot >= 0 {
+        return address_of(m, o, rd, value.slot, value.offset);
+    }
+    // A number, cut to its type's width as a load would cut it.
+    var n = value.offset;
+    let bits = int_bits(m, ty);
+    if bits > 0 && bits < 64 {
+        n = n & (1 << bits) - 1;
+        if signed && n >> bits - 1 & 1 == 1 {
+            n = n | 0 - (1 << bits);
+        }
+    }
+    return mov_imm(o, rd, n);
+}
+
+// The floating-point operand at `at` into the register `d` or `s` number `rd`.
+pub fn operand_fp[&m, &o](m: &m [int], o: &!o [int], at: int, rd: int) -> [] int {
+    let ty = lm.cell(m, at);
+    let kind = lm.cell(m, at + 1);
+    let a = lm.cell(m, at + 2);
+    let double = float_kind(m, ty);
+    if double < 0 {
+        return out.fail(o, out.why_operand());
+    }
+    if kind == lr.o_local() {
+        let slot = out.slot(o, a);
+        if slot < 0 {
+            return out.fail(o, out.why_operand());
+        }
+        return access(o, 2 + double, 1, 1, rd, sp(), slot);
+    }
+    var bits = 0;
+    if kind == lr.o_float() {
+        bits = a;
+    } else if kind != lr.o_word() {
+        return out.fail(o, out.why_constant());
+    }
+    // LLVM writes a constant of either precision as the sixteen digits of the double: a single is that double, converted (exactly).
+    mov_imm(o, 17, bits);
+    out.emit(o, a64.fp_int(1, 1, 5, rd, 17));
+    if double == 0 {
+        out.emit(o, a64.fp1(1, 4, rd, rd));
+    }
+    return 0;
+}
+
+// ---- values into memory ----
+
+// The operand at `at`, of type `ty`, written at `x14 + offset`: whatever it is, a number, an address, a local, or a constant with parts. `x14` is kept.
+pub fn store_value[&t, &m, &o](text: &t [byte], m: &m [int], o: &!o [int], at: int, ty: int, offset: int, depth: int) -> [] int {
+    let kind = lm.cell(m, at + 1);
+    let a = lm.cell(m, at + 2);
+    let size = ly.size_of(m, ty);
+    if size == 0 || depth > lm.deepest() {
+        return 0;
+    }
+    if lm.type_kind(m, lm.resolved(m, ty)) == lm.k_vector() {
+        return out.fail(o, out.why_vector());
+    }
+    if word_size(m, ty) >= 0 {
+        operand(m, o, at, 9, false);
+        return access(o, word_size(m, ty), 0, 0, 9, 14, offset);
+    }
+    if float_kind(m, ty) >= 0 {
+        operand_fp(m, o, at, 16);
+        return access(o, 2 + float_kind(m, ty), 1, 0, 16, 14, offset);
+    }
+    if kind == lr.o_local() {
+        // Its bytes, from its slot. The copy moves neither address when it is short, and a long one is of a whole value at offset 0 of a place the caller
+        // does not need again.
+        let slot = out.slot(o, a);
+        if slot < 0 {
+            return out.fail(o, out.why_operand());
+        }
+        add_offset(o, 13, sp(), slot);
+        if size > 128 || offset != 0 {
+            out.emit(o, a64.logic_shift(1, 1, 0, 11, 31, 14, 0, 0));
+            add_offset(o, 14, 14, offset);
+            copy(o, size, 8);
+            out.emit(o, a64.logic_shift(1, 1, 0, 14, 31, 11, 0, 0));
+            return 0;
+        }
+        return copy(o, size, 8);
+    }
+    if is_wide(m, ty) {
+        // An integer of 128 bits that is a number: its low half, and its sign in the high half.
+        if kind != lr.o_int() && kind != lr.o_word() {
+            return out.fail(o, out.why_wide());
+        }
+        var n = a;
+        if kind == lr.o_word() {
+            n = 0;
+        }
+        mov_imm(o, 9, n);
+        access(o, 3, 0, 0, 9, 14, offset);
+        mov_imm(o, 9, n >> 63);
+        return access(o, 3, 0, 0, 9, 14, offset + 8);
+    }
+    if kind == lr.o_word() {
+        // `zeroinitializer`, and `undef` and `poison`, which may be anything and are zero here.
+        out.emit(o, a64.logic_shift(1, 1, 0, 11, 31, 14, 0, 0));
+        add_offset(o, 14, 14, offset);
+        zero(o, size, ly.align_of(m, ty));
+        out.emit(o, a64.logic_shift(1, 1, 0, 14, 31, 11, 0, 0));
+        return 0;
+    }
+    if kind != lr.o_const() {
+        return out.fail(o, out.why_constant());
+    }
+    let which = lm.cell(m, a + 2);
+    let n = lm.cell(m, a + 4);
+    let parts = a + lr.const_head();
+    let t = lm.resolved(m, ty);
+    if which == lr.c_struct() || which == lr.c_array() {
+        var k = 0;
+        while k < n && !out.failed(o) {
+            let part = ly.offset_of(m, t, k);
+            if part < 0 {
+                return out.fail(o, out.why_constant());
+            }
+            store_value(text, m, o, parts + 4 * k, lm.cell(m, parts + 4 * k), offset + part, depth + 1);
+            k = k + 1;
+        }
+        return 0;
+    }
+    if which == lr.c_ints() {
+        let element = lm.cell(m, a + 3);
+        let each = ly.size_of(m, element);
+        let s = word_size(m, element);
+        if s < 0 {
+            return out.fail(o, out.why_constant());
+        }
+        var k = 0;
+        while k < n && !out.failed(o) {
+            mov_imm(o, 9, lm.cell(m, parts + k));
+            access(o, s, 0, 0, 9, 14, offset + k * each);
+            k = k + 1;
+        }
+        return 0;
+    }
+    if which == lr.c_cstring() {
+        // `c"..."`: its bytes, a `\` and two hexadecimal digits being one.
+        var i = lm.cell(m, a + 5) + 2;
+        let end = lm.cell(m, a + 6) - 1;
+        var k = 0;
+        while i < end && !out.failed(o) {
+            var c = lm.at(text, i);
+            i = i + 1;
+            if c == '\\' {
+                c = hex(lm.at(text, i)) * 16 + hex(lm.at(text, i + 1));
+                i = i + 2;
+            }
+            mov_imm(o, 9, c & 255);
+            access(o, 0, 0, 0, 9, 14, offset + k);
+            k = k + 1;
+        }
+        return 0;
+    }
+    return out.fail(o, out.why_constant());
+}
+
+fn hex(c: int) -> [] int {
+    if c >= 'A' && c <= 'F' {
+        return c - 'A' + 10;
+    }
+    if c >= 'a' && c <= 'f' {
+        return c - 'a' + 10;
+    }
+    return c - '0' & 15;
+}
+
+// The operand at `at`, of type `ty`, as bytes in the frame: where they are from the stack pointer. A local is where it lives; anything else is written to the
+// scratch bytes at `scratch` first.
+pub fn in_frame[&t, &m, &o](text: &t [byte], m: &m [int], o: &!o [int], at: int, ty: int, scratch: int) -> [] int {
+    if lm.cell(m, at + 1) == lr.o_local() {
+        let slot = out.slot(o, lm.cell(m, at + 2));
+        if slot < 0 {
+            out.fail(o, out.why_operand());
+        }
+        return slot;
+    }
+    add_offset(o, 14, sp(), scratch);
+    store_value(text, m, o, at, ty, 0, 0);
+    return scratch;
+}

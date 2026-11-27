@@ -172,8 +172,8 @@ pub fn make_binary[&h, &i, &a, &f, &x, &r, &o, &c](heap: &!h Heap, io: &!i Io, a
 
 // The module `ir` judged by the backend `backend` (not the LLVM one) for `check`: 0 if it takes it, else the refusal said and 1. The native backend takes
 // none yet: it has no code generator.
-pub fn judge[&h, &i, &r, &p](heap: &!h Heap, io: &!i Io, ir: &r [byte], backend: int, path: &p [byte], json: bool) -> [heap, io_write, err_write] int {
-    let llback.Judged { text, line, why } = llback.through(heap, ir, backend);
+pub fn judge[&h, &i, &r, &p](heap: &!h Heap, io: &!i Io, ir: &r [byte], backend: int, target: int, path: &p [byte], json: bool) -> [heap, io_write, err_write] int {
+    let llback.Judged { text, line, why } = llback.through(heap, ir, backend, target);
     buffer.drop(heap, text);
     if why != 0 || backend == llback.native() {
         return clibase.refuse_backend(heap, io, path, json, line, why);
@@ -196,11 +196,11 @@ fn emit_module[&h, &i, &a, &f, &x, &r, &o, &c](heap: &!h Heap, io: &!i Io, args:
 
 // `emit_module` through the backend `backend`: 0 the LLVM backend, the module as it is; `llback.roundtrip`, the module the native backend's reader read, written
 // back; `llback.native`, refused (1), as is a module the reader does not take. `path` is the program's first file, for what is said.
-pub fn make_through[&h, &i, &a, &f, &x, &r, &o, &c, &p](heap: &!h Heap, io: &!i Io, args: &a Args, fs: &f Fs(""), exec: &x Exec(""), ir: &r [byte], out: &o [byte], clang: &c [byte], obj: bool, bare: bool, ll: bool, backend: int, path: &p [byte]) -> [heap, io_write, err_write, args, fs_read(""), fs_write(""), file_read, file_write, exec("")] int {
+pub fn make_through[&h, &i, &a, &f, &x, &r, &o, &c, &p](heap: &!h Heap, io: &!i Io, args: &a Args, fs: &f Fs(""), exec: &x Exec(""), ir: &r [byte], out: &o [byte], clang: &c [byte], obj: bool, bare: bool, ll: bool, backend: int, target: int, path: &p [byte]) -> [heap, io_write, err_write, args, fs_read(""), fs_write(""), file_read, file_write, exec("")] int {
     if backend == 0 {
         return emit_module(heap, io, args, fs, exec, ir, out, clang, obj, bare, ll);
     }
-    let llback.Judged { text, line, why } = llback.through(heap, ir, backend);
+    let llback.Judged { text, line, why } = llback.through(heap, ir, backend, target);
     var status = 0;
     if why != 0 || backend == llback.native() {
         status = clibase.refuse_backend(heap, io, path, false, line, why);
@@ -644,7 +644,7 @@ pub fn program_command[&h, &i, &a, &f, &x, &c](heap: &!h Heap, io: &!i Io, args:
                         borrow names as &nm in {
                             if backend != 0 && b.status == 0 && !build {
                                 // `check`: the program is one the front end accepts; whether the backend asked for takes its module is said by the rule.
-                                status = judge(heap, io, buffer.bytes(b.ir), backend, clibase.name_at(buffer.bytes(nm), 0), json);
+                                status = judge(heap, io, buffer.bytes(b.ir), backend, host, clibase.name_at(buffer.bytes(nm), 0), json);
                             }
                             if status == 0 {
                                 status = clibase.report_check(heap, io, buffer.bytes(nm), buffer.bytes(lt), contents(lb), json && authority == 0, b.status, b.rule, b.from, b.to, buffer.bytes(b.more));
@@ -662,7 +662,7 @@ pub fn program_command[&h, &i, &a, &f, &x, &c](heap: &!h Heap, io: &!i Io, args:
                     }
                     borrow target as &tp in {
                         borrow names as &nm in {
-                            status = make_through(heap, io, args, fs, exec, buffer.bytes(b.ir), buffer.bytes(tp), clang, obj, host == 3, ll, backend, clibase.name_at(buffer.bytes(nm), 0));
+                            status = make_through(heap, io, args, fs, exec, buffer.bytes(b.ir), buffer.bytes(tp), clang, obj, host == 3, ll, backend, host, clibase.name_at(buffer.bytes(nm), 0));
                         }
                         if status == 0 && run {
                             var input = buffer.empty(heap, 0);

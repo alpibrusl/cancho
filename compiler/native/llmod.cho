@@ -995,6 +995,14 @@ pub fn type_part[&m](m: &m [int], ty: int, k: int) -> [] int {
     return cell(m, ty_at(m, ty) + 2 + k);
 }
 
+// The type a named type names, and any other type as it is.
+pub fn resolved[&m](m: &m [int], ty: int) -> [] int {
+    if type_kind(m, ty) == k_named() {
+        return cell(m, type_part(m, ty, 0) + 2) - 1;
+    }
+    return ty;
+}
+
 // The type of kind `kind` with the number `count` and the `parts` cells at `from` (in the table: the operand stack is where a type is put together): its
 // number, found or made; -1 with a refusal when there is no room.
 pub fn intern[&m](m: &!m [int], kind: int, count: int, from: int, parts: int) -> [] int {

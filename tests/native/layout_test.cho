@@ -1,0 +1,108 @@
+// layout_test.cho -- the native backend's data layout (`compiler/native/lllayout.cho`, `docs/native-backend.md` section 4) against clang's: for each type of
+// the module below, the size, the alignment and the offset of every field that clang gives it. The two tables are written by `tests/native/layout_vectors.py`,
+// which asks clang for three targets and insists they agree; this test needs no clang.
+//
+//     cancho test --std compiler/native/llmod.cho compiler/native/llread.cho compiler/native/llbody.cho compiler/native/lltop.cho compiler/native/lllayout.cho tests/native/layout_test.cho
+
+import std.test;
+import selfhost.llmod as lm;
+import selfhost.llread as lr;
+import selfhost.lltop as lt;
+import selfhost.lllayout as ly;
+
+// A global of each type, a line each.
+fn globals() -> [] &static [byte] {
+    return "@g0 = external global i1\n@g1 = external global i8\n@g2 = external global i16\n@g3 = external global i32\n@g4 = external global i64\n@g5 = external global i128\n@g6 = external global float\n@g7 = external global double\n@g8 = external global ptr\n@g9 = external global {}\n@g10 = external global { i8, i64 }\n@g11 = external global { i64, i1 }\n@g12 = external global { ptr, i64 }\n@g13 = external global { i32, i8 }\n@g14 = external global [3 x { i32, i8 }]\n@g15 = external global { i8, { i8, i32 }, i8 }\n@g16 = external global { i8, i16, i8 }\n@g17 = external global { i1, double }\n@g18 = external global { i8, i128 }\n@g19 = external global [5 x i8]\n@g20 = external global [0 x i64]\n@g21 = external global { { ptr, i64 }, i64 }\n@g22 = external global { i64, { { ptr, i64 }, i64 }, i8 }\n@g23 = external global { i8, [3 x i16], i8, float, i8, double }\n@g24 = external global [2 x [3 x { i8, i32 }]]\n@g25 = external global { {}, i64, {} }\n@g26 = external global { i32, i32, i32, i32, i32 }\n@g27 = external global { i64, i64, i64, i64, i64 }\n@g28 = external global { float, i8, float }\n@g29 = external global { i1, i1, i1, ptr, i1 }\n@g30 = external global [7 x { i16, i8 }]\n@g31 = external global { [3 x i8], i32, [5 x i8], i64 }\n@g32 = external global { i8, { i8, { i8, { i8, i64 } } } }\n@g33 = external global { ptr, { i64, i1 }, [2 x ptr] }\n@g34 = external global <16 x i8>\n@g35 = external global <2 x i64>\n@g36 = external global <4 x i32>\n@g37 = external global <16 x i1>\n@g38 = external global { i8, <2 x i64> }\n";
+}
+
+// For each type, in order: its size, its alignment, then the offset of each of its fields if it is a struct; a `;` ends a type.
+fn expected() -> [] &static [byte] {
+    return " 1 1 ; 1 1 ; 2 2 ; 4 4 ; 8 8 ; 16 16 ; 4 4 ; 8 8 ; 8 8 ; 0 1 ; 16 8 0 8 ; 16 8 0 8 ; 16 8 0 8 ; 8 4 0 4 ; 24 4 ; 16 4 0 4 12 ; 6 2 0 2 4 ; 16 8 0 8 ; 32 16 0 16 ; 5 1 ; 0 8 ; 24 8 0 16 ; 40 8 0 8 32 ; 32 8 0 2 8 12 16 24 ; 48 4 ; 8 8 0 0 8 ; 20 4 0 4 8 12 16 ; 40 8 0 8 16 24 32 ; 12 4 0 4 8 ; 24 8 0 1 2 8 16 ; 28 2 ; 24 8 0 4 8 16 ; 40 8 0 8 ; 40 8 0 8 24 ; 16 16 ; 16 16 ; 16 16 ; 2 2 ; 32 16 0 16 ;";
+}
+
+// The number at `at` in `text` (after spaces), and where it ends: -1 if a `;` or the end is there.
+fn number[&t](text: &t [byte], at: int) -> [] (int, int) {
+    var i = at;
+    while i < len(text) && int_of(text[i]) == ' ' {
+        i = i + 1;
+    }
+    if i >= len(text) || int_of(text[i]) == ';' {
+        return (0 - 1, i);
+    }
+    var n = 0;
+    while i < len(text) && int_of(text[i]) >= '0' && int_of(text[i]) <= '9' {
+        n = n * 10 + (int_of(text[i]) - '0');
+        i = i + 1;
+    }
+    return (n, i);
+}
+
+fn test_every_type_has_the_size_alignment_and_offsets_clang_gives_it[&h](heap: &!h Heap) -> [heap] int {
+    let text = globals();
+    let want = expected();
+    let table = box_slice(heap, lm.room(text), 0);
+    var types = 0;
+    borrow mut table as &!tw in {
+        let m = contents(tw);
+        test.assert_eq(lt.read(text, m, 0), 0);
+        var at = m[lm.h_rec()];
+        var w = 0;
+        while at < m[lm.h_top()] {
+            if m[at] == lr.r_global() {
+                let ty = m[at + 5];
+                let (size, after_size) = number(want, w);
+                let (align, after_align) = number(want, after_size);
+                test.assert_eq(ly.size_of(m, ty), size);
+                test.assert_eq(ly.align_of(m, ty), align);
+                w = after_align;
+                var field = 0;
+                var going = true;
+                while going {
+                    let (offset, next) = number(want, w);
+                    if offset < 0 {
+                        going = false;
+                        w = next + 1;
+                    } else {
+                        test.assert_eq(ly.offset_of(m, ty, field), offset);
+                        field = field + 1;
+                        w = next;
+                    }
+                }
+                if lm.type_kind(m, ty) == lm.k_struct() {
+                    test.assert_eq(field, lm.type_count(m, ty));
+                    test.assert_eq(ly.offset_of(m, ty, field), 0 - 1);
+                }
+                types = types + 1;
+            }
+            at = at + m[at + 1];
+        }
+    }
+    unbox_slice(heap, table);
+    // The tables are not empty: the generator has run.
+    test.assert(types >= 30);
+    return 0;
+}
+
+// A type with no size has none, and nothing here traps on one.
+fn test_a_type_with_no_size_has_size_zero[&h](heap: &!h Heap) -> [heap] int {
+    let text = "declare void @f(i64, ...)\n";
+    let table = box_slice(heap, lm.room(text), 0);
+    borrow mut table as &!tw in {
+        let m = contents(tw);
+        test.assert_eq(lt.read(text, m, 0), 0);
+        test.assert_eq(ly.size_of(m, lm.ty_void()), 0);
+        test.assert_eq(ly.size_of(m, lm.ty_label()), 0);
+        test.assert_eq(ly.align_of(m, lm.ty_void()), 1);
+        test.assert_eq(ly.size_of(m, 0 - 1), 0);
+        test.assert_eq(ly.size_of(m, 1000000), 0);
+        test.assert_eq(ly.offset_of(m, lm.ty_i64(), 0), 0 - 1);
+        test.assert_eq(ly.part_of(m, lm.ty_i64(), 0), 0 - 1);
+        var ty = 0;
+        while ty < m[lm.h_ntypes()] {
+            test.assert(ly.size_of(m, ty) >= 0);
+            ty = ty + 1;
+        }
+    }
+    unbox_slice(heap, table);
+    return 0;
+}
