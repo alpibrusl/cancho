@@ -78,3 +78,66 @@ pub fn close[&u](at: &!u [int], handle: int) -> [] int {
     at[1] = at[1] - 1;
     return 0;
 }
+
+// What `/` holds, in order: `note`, a file (kind 1), and `sub`, a directory (kind 2). Handle 3 is the listing and
+// `at[2]`, where there is one, how far it has been read. `next` answers a name's length and 65536 times its kind.
+pub fn list[&u](at: &!u [int], dir: int) -> [] int {
+    if dir != 1 || len(at) < 3 {
+        return 0 - 9;
+    }
+    at[2] = 0;
+    at[1] = at[1] + 1;
+    return 3;
+}
+
+fn put[&t](into: &!t [byte], word: &static [byte]) -> [] int {
+    if len(word) > len(into) {
+        return 0 - 36;
+    }
+    var i = 0;
+    while i < len(word) {
+        into[i] = word[i];
+        i = i + 1;
+    }
+    return len(word);
+}
+
+pub fn next[&u, &t](at: &!u [int], listing: int, into: &!t [byte]) -> [] int {
+    if listing != 3 {
+        return 0 - 9;
+    }
+    at[2] = at[2] + 1;
+    if at[2] == 1 {
+        return 65536 + put(into, "note");
+    }
+    if at[2] == 2 {
+        return 2 * 65536 + put(into, "sub");
+    }
+    return 0;
+}
+
+// `which`: 0 the kind, 1 the size, 2 when it was changed.
+pub fn stat[&u, &p](at: &!u [int], dir: int, name: &p [byte], which: int) -> [] int {
+    if dir != 1 {
+        return 0 - 9;
+    }
+    if same(name, "note") {
+        if which == 0 {
+            return 1;
+        }
+        if which == 1 {
+            return 6;
+        }
+        return 1700000000;
+    }
+    if same(name, "sub") {
+        if which == 0 {
+            return 2;
+        }
+        if which == 1 {
+            return 0;
+        }
+        return 1700000001;
+    }
+    return 0 - 2;
+}

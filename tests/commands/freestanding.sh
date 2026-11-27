@@ -102,7 +102,7 @@ if "$cancho" build tests/probes/bare_system_files.cho tests/probes/bare_system_f
     same "$(calls_undefined "$work/files.ll")" "" "what the module calls and does not define"
     same "$(grep -c '^define void @cancho_dir_open(\|^define void @cancho_dir_step(\|^define i64 @cancho_open(\|^define i64 @cancho_fd_read(\|^define i64 @cancho_fd_pread(\|^define i64 @cancho_fd_size(\|^define i64 @cancho_fd_close(' "$work/files.ll")" 7 "the seven functions the file builtins call are the module's own"
     same "$(grep -c 'call i1 @cancho_path_covers(' "$work/files.ll")" 2 "a path is held to its capability before the module is asked, for a directory and for a file"
-    same "$(grep -c 'call i1 @cancho_sys_component(' "$work/files.ll")" 1 "and a name to being one component"
+    same "$(awk '/^define void @cancho_dir_step\(/ { on = 1 } on && /call i1 @cancho_sys_component\(/ { print "held"; exit } on && /^}/ { exit }' "$work/files.ll")" "held" "and a name to being one component"
 else
     fail "a program that reads files from a lent system, for no system, said: $(head -c 300 "$work/files.txt")"
 fi
@@ -118,6 +118,19 @@ sed 's/^pub fn size\[&u\](at: &!u \[int\], file: int)/pub fn size[\&u, \&p](at: 
 same "$(grep -c 'file: &p \[byte\]' "$work/badsize.cho")" 1 "the function was changed"
 "$cancho" build tests/probes/bare_system_files.cho "$work/badsize.cho" --target aarch64-none-elf --emit ll -o "$work/badsize.ll" > "$work/badsize.txt" 2>&1
 same "$?" 1 "the status with a function that does not fit"
+end
+
+# And for what a directory holds (docs/bare-system.md, step 4): `dir_list`, `dir_next`, `dir_list_close` and `dir_stat` are the module's `list`, `next`,
+# `close` and `stat`; a name given to `dir_stat` is held to being one component first.
+begin a_lent_system_lists_a_directory
+if "$cancho" build tests/probes/bare_system_list.cho tests/probes/bare_system_fs.cho --target aarch64-none-elf --emit ll -o "$work/list.ll" > "$work/list.txt" 2>&1; then
+    same "$(calls_undefined "$work/list.ll")" "" "what the module calls and does not define"
+    same "$(grep -c '^define void @cancho_dir_list(\|^define void @cancho_dir_next(\|^define i64 @cancho_dir_list_close(\|^define void @cancho_dir_stat(' "$work/list.ll")" 4 "the four functions the listing builtins call are the module's own"
+    same "$(awk '/^define void @cancho_dir_stat\(/ { on = 1 } on && /call i1 @cancho_sys_component\(/ { print "held"; exit } on && /^}/ { exit }' "$work/list.ll")" "held" "a name is held to being one component before the module is asked about it"
+    same "$(awk '/^define void @cancho_dir_stat\(/ { on = 1 } on && /call i64 @lexs_/ { n++ } on && /^}/ { print n; exit }' "$work/list.ll")" 3 "the kind, the size and the time are asked one after the other"
+else
+    fail "a program that lists a directory of a lent system, for no system, said: $(head -c 300 "$work/list.txt")"
+fi
 end
 
 begin an_object_for_no_system_is_an_elf_for_aarch64
