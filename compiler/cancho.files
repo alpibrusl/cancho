@@ -80,6 +80,7 @@ native/llout.cho
 native/llprint.cho
 native/llread.cho
 native/lltop.cho
+nativert.cho
 netcode.cho
 pass1.cho
 platform.cho

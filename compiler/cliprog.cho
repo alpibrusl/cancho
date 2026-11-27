@@ -637,7 +637,12 @@ pub fn program_command[&h, &i, &a, &f, &x, &c](heap: &!h Heap, io: &!i Io, args:
                     mode = 19;
                 }
             }
-            let built = driver.run_many(heap, io, buffer.bytes(r), mode, host + 8 * wasi);
+            // For the native backend the module is written with no vectors in it (bit 64 of the target, `nativert.cho`).
+            var written_for = host + 8 * wasi;
+            if backend == llback.native() && mode == 5 {
+                written_for = written_for + 64;
+            }
+            let built = driver.run_many(heap, io, buffer.bytes(r), mode, written_for);
             borrow built as &b in {
                 borrow laid as &lt in {
                     borrow mut lens as &!lb in {

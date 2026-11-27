@@ -244,7 +244,11 @@ pub fn test_files[&h, &i, &a, &f, &x, &c, &t, &l, &s, &k](heap: &!h Heap, io: &!
                 }
             }
             borrow raw as &r in {
-                let built = driver.run_many(heap, io, buffer.bytes(r), 5, host);
+                var written_for = host;
+                if clibase.backend_asked(args) == 1 {
+                    written_for = host + 64;
+                }
+                let built = driver.run_many(heap, io, buffer.bytes(r), 5, written_for);
                 borrow built as &b in {
                     borrow laid as &lt in {
                         borrow mut lens as &!lb in {
