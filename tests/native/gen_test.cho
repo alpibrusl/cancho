@@ -2,7 +2,7 @@
 // of most of what it lowers; it refuses, and writes nothing outside its table, when the table is too small or the module was not read; and no damaged byte
 // and no truncation of the module, once read, reaches a trap in it. That the code is right is `tests/native/gen/tricky.s`, which was run.
 //
-//     cancho test --std compiler/native/llmod.cho compiler/native/llread.cho compiler/native/llbody.cho compiler/native/lltop.cho compiler/native/lllayout.cho compiler/native/llout.cho compiler/native/a64.cho compiler/native/a64sys.cho compiler/native/a64frame.cho compiler/native/a64call.cho compiler/native/a64gen.cho compiler/native/a64fn.cho tests/native/gen_test.cho
+//     cancho test --std compiler/native/llmod.cho compiler/native/llread.cho compiler/native/llbody.cho compiler/native/lltop.cho compiler/native/lllayout.cho compiler/native/llout.cho compiler/native/a64.cho compiler/native/a64sys.cho compiler/native/a64frame.cho compiler/native/a64call.cho compiler/native/a64gen.cho compiler/native/a64fn.cho compiler/native/mem2reg.cho tests/native/gen_test.cho
 
 import std.test;
 import selfhost.llmod as lm;
@@ -31,9 +31,14 @@ fn make[&h, &t](heap: &!h Heap, text: &t [byte]) -> [heap] Made {
         let m = contents(tw);
         if lt.read(text, m, 0) == 0 {
             let code = box_slice(heap, out.room(m), 0);
+            let none = box_slice(heap, 0, 0);
             borrow mut code as &!cw in {
                 let o = contents(cw);
-                if a64fn.generate(text, m, o) == 0 {
+                var status = 0;
+                borrow mut none as &!nw in {
+                    status = a64fn.generate(text, m, contents(nw), o);
+                }
+                if status == 0 {
                     made = Made { status: 0, why: 0, line: 0, words: out.here(o), relocations: out.relocations(o) };
                     // Every word is 32 bits, and every relocation is of a word that was written.
                     var k = 0;
@@ -51,6 +56,7 @@ fn make[&h, &t](heap: &!h Heap, text: &t [byte]) -> [heap] Made {
                 }
             }
             unbox_slice(heap, code);
+            unbox_slice(heap, none);
         }
     }
     unbox_slice(heap, table);
@@ -76,19 +82,27 @@ fn test_too_little_room_and_no_module_are_refusals[&h](heap: &!h Heap) -> [heap]
         var size = 0;
         while size < need {
             let code = box_slice(heap, size, 0);
+            let none = box_slice(heap, 0, 0);
             borrow mut code as &!cw in {
-                test.assert_eq(a64fn.generate(text, m, contents(cw)), 1);
+                borrow mut none as &!nw in {
+                    test.assert_eq(a64fn.generate(text, m, contents(nw), contents(cw)), 1);
+                }
             }
             unbox_slice(heap, code);
+            unbox_slice(heap, none);
             size = size + 1 + size / 3;
         }
         // The module refused by the reader has no code.
         test.assert_eq(lt.read("define void @f() {\n", m, 0), 1);
         let code = box_slice(heap, need, 0);
+        let none = box_slice(heap, 0, 0);
         borrow mut code as &!cw in {
-            test.assert_eq(a64fn.generate(text, m, contents(cw)), 1);
+            borrow mut none as &!nw in {
+                test.assert_eq(a64fn.generate(text, m, contents(nw), contents(cw)), 1);
+            }
         }
         unbox_slice(heap, code);
+        unbox_slice(heap, none);
     }
     unbox_slice(heap, table);
     // The words of a table laid out and then told its code ends sooner are refused past that end.

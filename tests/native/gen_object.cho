@@ -82,9 +82,12 @@ fn main(world: World) -> [] int {
                                 said = buffer.append(h, said, lm.why_text(m[lm.h_fail_why()]));
                             } else {
                                 let code = box_slice(h, out.room(m), 0);
+                                let side = box_slice(h, 0, 0);
                                 borrow mut code as &!cw in {
                                     let o = contents(cw);
-                                    status = fnc.generate(t, m, o);
+                                    borrow mut side as &!sw in {
+                                        status = fnc.generate(t, m, contents(sw), o);
+                                    }
                                     if status != 0 {
                                         said = buffer.append(h, said, "generate: line ");
                                         said = buffer.push_nat(h, said, o[out.h_fail_line()]);
@@ -109,6 +112,7 @@ fn main(world: World) -> [] int {
                                     }
                                 }
                                 unbox_slice(h, code);
+                                unbox_slice(h, side);
                             }
                             said = buffer.append(h, said, "\n");
                             borrow said as &sb in {

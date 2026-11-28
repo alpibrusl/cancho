@@ -6,18 +6,21 @@ module gen_dump;
 // `adrp x16, name`, `add x16, x16, :lo12:name`, and the two that go through the linker's table of addresses). It is how the code generator is read by a
 // person, how its tests compare what it writes with what it wrote, and how its code was run before there was an object writer: the output assembles.
 //
-//     cancho build tests/native/gen_dump.cho compiler/native/{llmod,llread,llbody,lltop,lllayout,llout,a64,a64sys,a64frame,a64call,a64gen,a64fn}.cho --std -o EXE
-//     EXE MODULE.ll > MODULE.s
+//     cancho build tests/native/gen_dump.cho compiler/native/{llmod,llread,llbody,lltop,lllayout,llout,a64,a64sys,a64frame,a64call,a64gen,a64fn,mem2reg}.cho --std -o EXE
+//     EXE MODULE.ll [registers] > MODULE.s
 //
+// With `registers` the variables are made values first (`mem2reg.cho`, section 17); without, the code is that of `--no-registers`.
 // On the standard error: `ok: words W functions F relocations R`, or `read:` or `generate:`, the line of the module and the reason, with status 1.
 
 import std.buffer;
 import std.io as console;
+import std.bytes;
 import selfhost.llmod as lm;
 import selfhost.llread as lr;
 import selfhost.lltop as lt;
 import selfhost.llout as out;
 import selfhost.a64fn as fnc;
+import selfhost.mem2reg as m2;
 
 fn read_all[&h, &f, &p](heap: &!h Heap, fs: &f Fs(""), path: &p [byte]) -> [heap, fs_read(""), file_read] buffer.Buffer {
     var b = buffer.empty(heap, 4096);
@@ -168,9 +171,16 @@ fn main(world: World) -> [] int {
                                 said = buffer.append(h, said, lm.why_text(m[lm.h_fail_why()]));
                             } else {
                                 let code = box_slice(h, out.room(m), 0);
+                                var side_size = 0;
+                                if arg_count(a) > 2 && bytes.equal(arg(a, 2), "registers") {
+                                    side_size = m2.room(m);
+                                }
+                                let side = box_slice(h, side_size, 0);
                                 borrow mut code as &!cw in {
                                     let o = contents(cw);
-                                    status = fnc.generate(t, m, o);
+                                    borrow mut side as &!sw in {
+                                        status = fnc.generate(t, m, contents(sw), o);
+                                    }
                                     if status != 0 {
                                         said = buffer.append(h, said, "generate: line ");
                                         said = buffer.push_nat(h, said, o[out.h_fail_line()]);
@@ -187,6 +197,7 @@ fn main(world: World) -> [] int {
                                     }
                                 }
                                 unbox_slice(h, code);
+                                unbox_slice(h, side);
                             }
                             said = buffer.append(h, said, "\n");
                             borrow said as &sb in {

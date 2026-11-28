@@ -1,0 +1,454 @@
+// mem2reg_test.cho -- the variables of a function made values (`docs/native-backend.md` section 17.2): the side table for a diamond, a loop, a variable never
+// stored, allocas that are not promoted, nested loops (where a `phi` is pruned because the variable is not live), a use before its definition; a table too
+// small is a refusal at every size; and no damaged byte and no truncation of a module, once read, reaches a trap in the pass or in the code generator with it.
+//
+//     cancho test --std compiler/native/llmod.cho compiler/native/llread.cho compiler/native/llbody.cho compiler/native/lltop.cho compiler/native/lllayout.cho compiler/native/llout.cho compiler/native/a64.cho compiler/native/a64sys.cho compiler/native/a64frame.cho compiler/native/a64call.cho compiler/native/a64gen.cho compiler/native/a64fn.cho compiler/native/mem2reg.cho tests/native/mem2reg_test.cho
+
+import std.test;
+import selfhost.llmod as lm;
+import selfhost.llread as lr;
+import selfhost.lltop as lt;
+import selfhost.llout as out;
+import selfhost.a64fn;
+import selfhost.mem2reg as m2;
+
+fn diamond() -> [] &static [byte] {
+    return "define i64 @f(i1 %c, i64 %a) {\nentry:\n  %x = alloca i64\n  store i64 1, ptr %x\n  br i1 %c, label %then, label %else\nthen:\n  store i64 %a, ptr %x\n  br label %join\nelse:\n  br label %join\njoin:\n  %v = load i64, ptr %x\n  ret i64 %v\n}\n";
+}
+
+fn a_loop() -> [] &static [byte] {
+    return "define i64 @f(i64 %n) {\nentry:\n  %i = alloca i64\n  %s = alloca i64\n  store i64 0, ptr %i\n  store i64 0, ptr %s\n  br label %head\nhead:\n  %iv = load i64, ptr %i\n  %c = icmp slt i64 %iv, %n\n  br i1 %c, label %body, label %done\nbody:\n  %sv = load i64, ptr %s\n  %s2 = add i64 %sv, %iv\n  store i64 %s2, ptr %s\n  %i2 = add i64 %iv, 1\n  store i64 %i2, ptr %i\n  br label %head\ndone:\n  %r = load i64, ptr %s\n  ret i64 %r\n}\n";
+}
+
+fn never_stored() -> [] &static [byte] {
+    return "define double @f() {\nentry:\n  %x = alloca double\n  %v = load double, ptr %x\n  ret double %v\n}\n";
+}
+
+fn not_promoted() -> [] &static [byte] {
+    return "declare void @g(ptr)\ndefine i64 @f(i64 %n) {\nentry:\n  %esc = alloca i64\n  %held = alloca i64\n  %box = alloca ptr\n  %pair = alloca { i64, i64 }\n  %wide = alloca i128\n  %other = alloca i64\n  %vol = alloca i64\n  %two = alloca i64, i64 2\n  %one = alloca i8, i64 1\n  store i64 %n, ptr %esc\n  call void @g(ptr %esc)\n  store ptr %held, ptr %box\n  %p = load ptr, ptr %box\n  store { i64, i64 } zeroinitializer, ptr %pair\n  store i128 0, ptr %wide\n  store i64 %n, ptr %other\n  %o = load i32, ptr %other\n  store volatile i64 %n, ptr %vol\n  store i64 %n, ptr %two\n  store i8 7, ptr %one\n  %b = load i8, ptr %one\n  %r = load i64, ptr %esc\n  ret i64 %r\n}\n";
+}
+
+fn nested() -> [] &static [byte] {
+    return "define i64 @f(i64 %n) {\nentry:\n  %s = alloca i64\n  %i = alloca i64\n  %j = alloca i64\n  store i64 0, ptr %s\n  store i64 0, ptr %i\n  br label %outer\nouter:\n  %iv = load i64, ptr %i\n  %c = icmp slt i64 %iv, %n\n  br i1 %c, label %init, label %done\ninit:\n  store i64 0, ptr %j\n  br label %inner\ninner:\n  %jv = load i64, ptr %j\n  %d = icmp slt i64 %jv, %iv\n  br i1 %d, label %body, label %next\nbody:\n  %sv = load i64, ptr %s\n  %s2 = add i64 %sv, 1\n  store i64 %s2, ptr %s\n  %j2 = add i64 %jv, 1\n  store i64 %j2, ptr %j\n  br label %inner\nnext:\n  %i2 = add i64 %iv, 1\n  store i64 %i2, ptr %i\n  br label %outer\ndone:\n  %r = load i64, ptr %s\n  ret i64 %r\n}\n";
+}
+
+// A store of a load that comes after it: no dominance, so the function is left as it is.
+fn out_of_order() -> [] &static [byte] {
+    return "define i64 @f() {\nentry:\n  %x = alloca i64\n  br label %a\na:\n  store i64 %v, ptr %x\n  %v = load i64, ptr %x\n  ret i64 %v\n}\n";
+}
+
+// The first function's record in `m`, or 0.
+fn first_function[&m](m: &m [int]) -> [] int {
+    var at = lm.cell(m, lm.h_rec());
+    while at < lm.cell(m, lm.h_top()) && at > 0 {
+        if lm.cell(m, at) == lr.r_func() {
+            return at;
+        }
+        let size = lm.cell(m, at + 1);
+        if size < 2 {
+            return 0;
+        }
+        at = at + size;
+    }
+    return 0;
+}
+
+// The local number of the name `name` in the function at `func` (its names record), or -1.
+fn id_of[&t, &m, &n](text: &t [byte], m: &m [int], func: int, name: &n [byte]) -> [] int {
+    let names = lm.cell(m, func + 9);
+    var k = 0;
+    while k < lm.cell(m, names + 2) {
+        let place = lm.cell(m, names + 3 + 4 * k);
+        let end = lm.name_end(text, place);
+        if end - place == len(name) && lm.spells(text, place, end, name) {
+            return k;
+        }
+        k = k + 1;
+    }
+    return 0 - 1;
+}
+
+// The value a local is.
+fn local(id: int) -> [] int {
+    return id * 4 + 1;
+}
+
+// Is `value` the integer constant `n` (an operand of the module)?
+fn is_number[&m](m: &m [int], value: int, n: int) -> [] bool {
+    let at = m2.value_of(value);
+    return m2.kind(value) == m2.v_operand() && lm.cell(m, at + 1) == lr.o_int() && lm.cell(m, at + 2) == n;
+}
+
+// Every value the table gives is of a kind it has, and every local is one of the function's or a new phi.
+fn sound[&s](s: &s [int]) -> [] bool {
+    var i = 0;
+    while i < m2.instructions(s) {
+        if m2.action(s, i) == m2.a_replaced() && !good_value(s, m2.replacement(s, i)) {
+            return false;
+        }
+        i = i + 1;
+    }
+    var k = 0;
+    while k < m2.phis(s) {
+        var j = 0;
+        while j < m2.phi_values(s, k) {
+            if !good_value(s, m2.phi_value(s, k, j)) {
+                return false;
+            }
+            j = j + 1;
+        }
+        k = k + 1;
+    }
+    return true;
+}
+
+fn good_value[&s](s: &s [int], value: int) -> [] bool {
+    if m2.kind(value) == m2.v_zero() {
+        return value == 0;
+    }
+    if m2.kind(value) == m2.v_local() {
+        return m2.value_of(value) >= 0 && m2.value_of(value) < m2.names(s) + m2.phis(s);
+    }
+    return m2.kind(value) == m2.v_operand();
+}
+
+// The new phi of block `b` whose variable is the alloca that defines `name`: its number, or -1.
+fn phi_of[&t, &m, &s, &n](text: &t [byte], m: &m [int], s: &s [int], func: int, b: int, name: &n [byte]) -> [] int {
+    let alloca = m2.instruction_of(s, id_of(text, m, func, name));
+    var j = 0;
+    while j < m2.block_phis(s, b) {
+        let k = m2.block_phi(s, b, j);
+        if m2.phi_alloca(s, k) == alloca {
+            return k;
+        }
+        j = j + 1;
+    }
+    return 0 - 1;
+}
+
+fn test_a_diamond_has_one_phi_where_its_arms_meet[&h](heap: &!h Heap) -> [heap] int {
+    let text = diamond();
+    let table = box_slice(heap, lm.room(text), 0);
+    borrow mut table as &!tw in {
+        let m = contents(tw);
+        test.assert_eq(lt.read(text, m, 0), 0);
+        let func = first_function(m);
+        let side = box_slice(heap, m2.room(m), 0);
+        borrow mut side as &!sw in {
+            let s = contents(sw);
+            test.assert_eq(m2.layout(m, s), 0);
+            test.assert_eq(m2.promote(m, s, func), 0);
+            test.assert_eq(m2.promoted(s), 1);
+            test.assert_eq(m2.instructions(s), 8);
+            test.assert_eq(m2.blocks(s), 4);
+            // alloca, store, br; store, br; br; load, ret
+            test.assert_eq(m2.action(s, 0), m2.a_removed());
+            test.assert_eq(m2.action(s, 1), m2.a_removed());
+            test.assert_eq(m2.action(s, 2), m2.a_keep());
+            test.assert_eq(m2.action(s, 3), m2.a_removed());
+            test.assert_eq(m2.action(s, 6), m2.a_replaced());
+            test.assert_eq(m2.action(s, 7), m2.a_keep());
+            test.assert_eq(m2.phis(s), 1);
+            test.assert_eq(m2.phi_block(s, 0), 3);
+            test.assert_eq(m2.block_phis(s, 3), 1);
+            test.assert_eq(m2.block_phis(s, 1), 0);
+            test.assert_eq(m2.replacement(s, 6), local(m2.names(s)));
+            test.assert_eq(m2.phi_values(s, 0), 2);
+            test.assert_eq(m2.phi_value_from(s, 0, 1), local(id_of(text, m, func, "a")));
+            test.assert(is_number(m, m2.phi_value_from(s, 0, 2), 1));
+            test.assert_eq(m2.phi_value_from(s, 0, 0), 0 - 1);
+            test.assert(sound(s));
+        }
+        unbox_slice(heap, side);
+    }
+    unbox_slice(heap, table);
+    return 0;
+}
+
+fn test_a_loop_has_its_phis_at_the_header[&h](heap: &!h Heap) -> [heap] int {
+    let text = a_loop();
+    let table = box_slice(heap, lm.room(text), 0);
+    borrow mut table as &!tw in {
+        let m = contents(tw);
+        test.assert_eq(lt.read(text, m, 0), 0);
+        let func = first_function(m);
+        let side = box_slice(heap, m2.room(m), 0);
+        borrow mut side as &!sw in {
+            let s = contents(sw);
+            test.assert_eq(m2.layout(m, s), 0);
+            test.assert_eq(m2.promote(m, s, func), 0);
+            test.assert_eq(m2.promoted(s), 2);
+            test.assert_eq(m2.phis(s), 2);
+            test.assert_eq(m2.block_phis(s, 1), 2);
+            let pi = phi_of(text, m, s, func, 1, "i");
+            let ps = phi_of(text, m, s, func, 1, "s");
+            test.assert(pi >= 0 && ps >= 0 && pi != ps);
+            // From the entry the stores' zeros, from the body what it stored.
+            test.assert(is_number(m, m2.phi_value_from(s, pi, 0), 0));
+            test.assert(is_number(m, m2.phi_value_from(s, ps, 0), 0));
+            test.assert_eq(m2.phi_value_from(s, pi, 2), local(id_of(text, m, func, "i2")));
+            test.assert_eq(m2.phi_value_from(s, ps, 2), local(id_of(text, m, func, "s2")));
+            // The loads: in the header, in the body and after the loop, each is the header's phi.
+            test.assert_eq(m2.replacement(s, m2.instruction_of(s, id_of(text, m, func, "iv"))), local(m2.names(s) + pi));
+            test.assert_eq(m2.replacement(s, m2.instruction_of(s, id_of(text, m, func, "sv"))), local(m2.names(s) + ps));
+            test.assert_eq(m2.replacement(s, m2.instruction_of(s, id_of(text, m, func, "r"))), local(m2.names(s) + ps));
+            test.assert(sound(s));
+        }
+        unbox_slice(heap, side);
+    }
+    unbox_slice(heap, table);
+    return 0;
+}
+
+fn test_a_variable_never_stored_reads_zero[&h](heap: &!h Heap) -> [heap] int {
+    let text = never_stored();
+    let table = box_slice(heap, lm.room(text), 0);
+    borrow mut table as &!tw in {
+        let m = contents(tw);
+        test.assert_eq(lt.read(text, m, 0), 0);
+        let side = box_slice(heap, m2.room(m), 0);
+        borrow mut side as &!sw in {
+            let s = contents(sw);
+            test.assert_eq(m2.layout(m, s), 0);
+            test.assert_eq(m2.promote(m, s, first_function(m)), 0);
+            test.assert_eq(m2.promoted(s), 1);
+            test.assert_eq(m2.phis(s), 0);
+            test.assert_eq(m2.action(s, 0), m2.a_removed());
+            test.assert_eq(m2.action(s, 1), m2.a_replaced());
+            test.assert_eq(m2.replacement(s, 1), m2.v_zero());
+        }
+        unbox_slice(heap, side);
+    }
+    unbox_slice(heap, table);
+    return 0;
+}
+
+// What escapes, what is in parts or wider than 64 bits, what is loaded as another type, what is volatile, and what is counted more than once stays in
+// memory; a pointer variable whose value is another alloca's address is promoted, and so is a byte counted once.
+fn test_what_escapes_or_is_not_a_scalar_stays_in_memory[&h](heap: &!h Heap) -> [heap] int {
+    let text = not_promoted();
+    let table = box_slice(heap, lm.room(text), 0);
+    borrow mut table as &!tw in {
+        let m = contents(tw);
+        test.assert_eq(lt.read(text, m, 0), 0);
+        let func = first_function(m);
+        let side = box_slice(heap, m2.room(m), 0);
+        borrow mut side as &!sw in {
+            let s = contents(sw);
+            test.assert_eq(m2.layout(m, s), 0);
+            test.assert_eq(m2.promote(m, s, func), 0);
+            test.assert_eq(m2.promoted(s), 2);
+            test.assert_eq(m2.action(s, m2.instruction_of(s, id_of(text, m, func, "box"))), m2.a_removed());
+            test.assert_eq(m2.action(s, m2.instruction_of(s, id_of(text, m, func, "one"))), m2.a_removed());
+            test.assert_eq(m2.replacement(s, m2.instruction_of(s, id_of(text, m, func, "p"))), local(id_of(text, m, func, "held")));
+            test.assert(is_number(m, m2.replacement(s, m2.instruction_of(s, id_of(text, m, func, "b"))), 7));
+            test.assert_eq(m2.action(s, m2.instruction_of(s, id_of(text, m, func, "r"))), m2.a_keep());
+            test.assert_eq(m2.action(s, m2.instruction_of(s, id_of(text, m, func, "o"))), m2.a_keep());
+            let names = " esc held pair wide other vol two ";
+            var k = 0;
+            var from = 1;
+            while k < len(names) {
+                if lm.at(names, k) == ' ' && k > from {
+                    test.assert_eq(m2.action(s, m2.instruction_of(s, id_of(text, m, func, names[from..k]))), m2.a_keep());
+                }
+                if lm.at(names, k) == ' ' {
+                    from = k + 1;
+                }
+                k = k + 1;
+            }
+        }
+        unbox_slice(heap, side);
+    }
+    unbox_slice(heap, table);
+    return 0;
+}
+
+// The outer header has a phi for `s` and for `i`, the inner one for `s` and for `j`; `j` is in the outer header's iterated frontier too, but it is not live
+// there (each way from there stores it first or never reads it), so it has none.
+fn test_nested_loops_have_their_phis_and_no_dead_one[&h](heap: &!h Heap) -> [heap] int {
+    let text = nested();
+    let table = box_slice(heap, lm.room(text), 0);
+    borrow mut table as &!tw in {
+        let m = contents(tw);
+        test.assert_eq(lt.read(text, m, 0), 0);
+        let func = first_function(m);
+        let side = box_slice(heap, m2.room(m), 0);
+        borrow mut side as &!sw in {
+            let s = contents(sw);
+            test.assert_eq(m2.layout(m, s), 0);
+            test.assert_eq(m2.promote(m, s, func), 0);
+            test.assert_eq(m2.promoted(s), 3);
+            test.assert_eq(m2.blocks(s), 7);
+            test.assert_eq(m2.phis(s), 4);
+            test.assert_eq(m2.block_phis(s, 1), 2);
+            test.assert_eq(m2.block_phis(s, 3), 2);
+            test.assert(phi_of(text, m, s, func, 1, "s") >= 0);
+            test.assert(phi_of(text, m, s, func, 1, "i") >= 0);
+            test.assert_eq(phi_of(text, m, s, func, 1, "j"), 0 - 1);
+            test.assert(phi_of(text, m, s, func, 3, "s") >= 0);
+            test.assert(phi_of(text, m, s, func, 3, "j") >= 0);
+            let inner_s = phi_of(text, m, s, func, 3, "s");
+            let outer_s = phi_of(text, m, s, func, 1, "s");
+            // The inner header's `s` is the outer's when come to from `init`, and what the body stored when come to from it.
+            test.assert_eq(m2.phi_value_from(s, inner_s, 2), local(m2.names(s) + outer_s));
+            test.assert_eq(m2.phi_value_from(s, inner_s, 4), local(id_of(text, m, func, "s2")));
+            // The outer's, from `next`, is the inner's.
+            test.assert_eq(m2.phi_value_from(s, outer_s, 5), local(m2.names(s) + inner_s));
+            test.assert_eq(m2.replacement(s, m2.instruction_of(s, id_of(text, m, func, "r"))), local(m2.names(s) + outer_s));
+            test.assert(sound(s));
+        }
+        unbox_slice(heap, side);
+    }
+    unbox_slice(heap, table);
+    return 0;
+}
+
+fn test_a_use_before_its_definition_leaves_the_function_as_it_is[&h](heap: &!h Heap) -> [heap] int {
+    let text = out_of_order();
+    let table = box_slice(heap, lm.room(text), 0);
+    borrow mut table as &!tw in {
+        let m = contents(tw);
+        test.assert_eq(lt.read(text, m, 0), 0);
+        let side = box_slice(heap, m2.room(m), 0);
+        borrow mut side as &!sw in {
+            let s = contents(sw);
+            test.assert_eq(m2.layout(m, s), 0);
+            test.assert_eq(m2.promote(m, s, first_function(m)), 2);
+            test.assert_eq(m2.promoted(s), 0);
+            test.assert_eq(m2.phis(s), 0);
+            var i = 0;
+            while i < m2.instructions(s) {
+                test.assert_eq(m2.action(s, i), m2.a_keep());
+                i = i + 1;
+            }
+        }
+        unbox_slice(heap, side);
+    }
+    unbox_slice(heap, table);
+    return 0;
+}
+
+// A side table smaller than the module needs is a refusal at every size, by the pass and by the code generator, and so is one never laid out.
+fn test_too_little_room_is_a_refusal[&h](heap: &!h Heap) -> [heap] int {
+    let text = nested();
+    let table = box_slice(heap, lm.room(text), 0);
+    borrow mut table as &!tw in {
+        let m = contents(tw);
+        test.assert_eq(lt.read(text, m, 0), 0);
+        let need = m2.room(m);
+        var size = 1;
+        while size < need {
+            let side = box_slice(heap, size, 0);
+            borrow mut side as &!sw in {
+                test.assert_eq(m2.layout(m, contents(sw)), 1);
+                test.assert_eq(m2.promote(m, contents(sw), first_function(m)), 1);
+            }
+            unbox_slice(heap, side);
+            let code = box_slice(heap, out.room(m), 0);
+            let again = box_slice(heap, size, 0);
+            borrow mut code as &!cw in {
+                borrow mut again as &!aw in {
+                    test.assert_eq(a64fn.generate(text, m, contents(aw), contents(cw)), 1);
+                }
+            }
+            unbox_slice(heap, code);
+            unbox_slice(heap, again);
+            size = size + 1 + size / 3;
+        }
+        let side = box_slice(heap, need, 0);
+        borrow mut side as &!sw in {
+            test.assert_eq(m2.promote(m, contents(sw), first_function(m)), 1);
+            test.assert_eq(m2.layout(m, contents(sw)), 0);
+            test.assert_eq(m2.promote(m, contents(sw), first_function(m)), 0);
+            // A record that is no function is left as it is.
+            test.assert_eq(m2.promote(m, contents(sw), first_function(m) + 1), 2);
+        }
+        unbox_slice(heap, side);
+    }
+    unbox_slice(heap, table);
+    return 0;
+}
+
+// Read, the pass over each function, and the code with it: 0 if all went well and something was promoted, 1 if the reader refused, 2 otherwise.
+fn through[&h, &t](heap: &!h Heap, text: &t [byte]) -> [heap] int {
+    let table = box_slice(heap, lm.room(text), 0);
+    var status = 1;
+    borrow mut table as &!tw in {
+        let m = contents(tw);
+        if lt.read(text, m, 0) == 0 {
+            status = 2;
+            let side = box_slice(heap, m2.room(m), 0);
+            let code = box_slice(heap, out.room(m), 0);
+            borrow mut side as &!sw in {
+                borrow mut code as &!cw in {
+                    let s = contents(sw);
+                    var promoted = 0;
+                    if m2.layout(m, s) == 0 {
+                        var at = lm.cell(m, lm.h_rec());
+                        while at < lm.cell(m, lm.h_top()) && at > 0 {
+                            if lm.cell(m, at) == lr.r_func() {
+                                test.assert(m2.promote(m, s, at) != 1);
+                                test.assert(sound(s));
+                                promoted = promoted + m2.promoted(s);
+                            }
+                            let size = lm.cell(m, at + 1);
+                            if size < 2 {
+                                at = lm.cell(m, lm.h_top());
+                            } else {
+                                at = at + size;
+                            }
+                        }
+                    }
+                    a64fn.generate(text, m, s, contents(cw));
+                    if promoted > 0 {
+                        status = 0;
+                    }
+                }
+            }
+            unbox_slice(heap, side);
+            unbox_slice(heap, code);
+        }
+    }
+    unbox_slice(heap, table);
+    return status;
+}
+
+// Every byte of a module made each byte of `with`, and every beginning of it, through `through`. How many had something promoted; the test is that it returns.
+fn damage[&h, &t, &w](heap: &!h Heap, text: &t [byte], with: &w [byte]) -> [heap] int {
+    var had = 0;
+    let copy = box_slice(heap, len(text), byte_of(0));
+    borrow mut copy as &!cw in {
+        let c = contents(cw);
+        var k = 0;
+        while k < len(text) {
+            c[k] = text[k];
+            k = k + 1;
+        }
+        k = 0;
+        while k < len(text) {
+            var j = 0;
+            while j < len(with) {
+                c[k] = with[j];
+                if through(heap, c) == 0 {
+                    had = had + 1;
+                }
+                j = j + 1;
+            }
+            c[k] = text[k];
+            through(heap, text[0..k]);
+            k = k + 1;
+        }
+    }
+    unbox_slice(heap, copy);
+    return had;
+}
+
+fn test_no_damage_to_a_module_reaches_a_trap_in_the_pass[&h](heap: &!h Heap) -> [heap] int {
+    let had = damage(heap, nested(), " %0{,x\n@-1[i");
+    test.assert(had > 100);
+    test.assert(had < 12 * len(nested()));
+    // Damage seldom puts a definition back before its use.
+    let more = damage(heap, out_of_order(), " %x\n:1a");
+    test.assert(more < 10);
+    return 0;
+}
