@@ -364,3 +364,135 @@ yes:
 no:
   ret i1 false
 }
+
+; Is `name[0..len]` a host, and `port` a port, that the bound `bound[0..blen]` of a `Net` reaches? A trap if not, as the
+; hosted runtime traps (`netrt_dial` and `netrt_checked_host` of net.c), for a system that is lent (docs/bare-system.md):
+; a byte 1 in front of the bound says the host is matched exactly (edition 10), and `*.` there stands for one label;
+; otherwise the host is a prefix of the name. What follows the bound's last `:` is its port, if it is not empty.
+define void @cancho_sys_dial_check(ptr %name, i64 %len, i64 %port, ptr %b0, i64 %bl0) {
+entry:
+  %long = icmp uge i64 %len, 256
+  br i1 %long, label %bad, label %lead
+lead:
+  %has = icmp sgt i64 %bl0, 0
+  br i1 %has, label %peek, label %plain
+peek:
+  %c0 = load i8, ptr %b0
+  %isone = icmp eq i8 %c0, 1
+  br label %plain
+plain:
+  %exact = phi i1 [ false, %lead ], [ %isone, %peek ]
+  %b1 = getelementptr i8, ptr %b0, i64 1
+  %bound = select i1 %exact, ptr %b1, ptr %b0
+  %bl1 = sub i64 %bl0, 1
+  %blen = select i1 %exact, i64 %bl1, i64 %bl0
+  br label %colon
+colon:
+  %ci = phi i64 [ %blen, %plain ], [ %cprev, %cnext ]
+  %cany = icmp sgt i64 %ci, 0
+  br i1 %cany, label %cbody, label %nocolon
+cbody:
+  %cprev = sub i64 %ci, 1
+  %cp = getelementptr i8, ptr %bound, i64 %cprev
+  %cc = load i8, ptr %cp
+  %isc = icmp eq i8 %cc, 58
+  br i1 %isc, label %pdig, label %cnext
+cnext:
+  br label %colon
+pdig:
+  %pi = phi i64 [ %ci, %cbody ], [ %pi1, %pstep ]
+  %pv = phi i64 [ 0, %cbody ], [ %pv1, %pstep ]
+  %pmore = icmp slt i64 %pi, %blen
+  br i1 %pmore, label %pbody, label %pdone
+pbody:
+  %pp = getelementptr i8, ptr %bound, i64 %pi
+  %pc = load i8, ptr %pp
+  %lo = icmp ult i8 %pc, 48
+  %hi = icmp ugt i8 %pc, 57
+  %nd = or i1 %lo, %hi
+  br i1 %nd, label %bad, label %pstep
+pstep:
+  %pcz = zext i8 %pc to i64
+  %pd = sub i64 %pcz, 48
+  %pv10 = mul i64 %pv, 10
+  %pv1 = add i64 %pv10, %pd
+  %pi1 = add i64 %pi, 1
+  br label %pdig
+pdone:
+  %empty = icmp sge i64 %ci, %blen
+  %same = icmp eq i64 %pv, %port
+  %portok = or i1 %empty, %same
+  br i1 %portok, label %host, label %bad
+nocolon:
+  br label %host
+host:
+  %hl = phi i64 [ %cprev, %pdone ], [ %blen, %nocolon ]
+  %hasl = icmp sgt i64 %hl, 0
+  %ex = and i1 %exact, %hasl
+  br i1 %ex, label %exactly, label %prefix
+prefix:
+  %short = icmp slt i64 %len, %hl
+  br i1 %short, label %bad, label %ploop
+exactly:
+  %two = icmp sge i64 %hl, 2
+  br i1 %two, label %star, label %whole
+star:
+  %s0 = load i8, ptr %bound
+  %s1p = getelementptr i8, ptr %bound, i64 1
+  %s1 = load i8, ptr %s1p
+  %isstar = icmp eq i8 %s0, 42
+  %isdot = icmp eq i8 %s1, 46
+  %wild = and i1 %isstar, %isdot
+  br i1 %wild, label %wildcard, label %whole
+whole:
+  %samelen = icmp eq i64 %len, %hl
+  br i1 %samelen, label %ploop, label %bad
+ploop:
+  %i = phi i64 [ 0, %prefix ], [ 0, %whole ], [ %i1, %pok ]
+  %im = icmp slt i64 %i, %hl
+  br i1 %im, label %pcmp, label %ok
+pcmp:
+  %na = getelementptr i8, ptr %name, i64 %i
+  %nb = load i8, ptr %na
+  %ba = getelementptr i8, ptr %bound, i64 %i
+  %bb = load i8, ptr %ba
+  %eq = icmp eq i8 %nb, %bb
+  br i1 %eq, label %pok, label %bad
+pok:
+  %i1 = add i64 %i, 1
+  br label %ploop
+wildcard:
+  %tl = sub i64 %hl, 1
+  %fits = icmp sgt i64 %len, %tl
+  br i1 %fits, label %wstart, label %bad
+wstart:
+  %le = sub i64 %len, %tl
+  br label %wloop
+wloop:
+  %j = phi i64 [ 0, %wstart ], [ %j1, %wok ]
+  %jm = icmp slt i64 %j, %len
+  br i1 %jm, label %wbody, label %ok
+wbody:
+  %wa = getelementptr i8, ptr %name, i64 %j
+  %wc = load i8, ptr %wa
+  %inlabel = icmp slt i64 %j, %le
+  br i1 %inlabel, label %wlabel, label %wtail
+wlabel:
+  %wdot = icmp eq i8 %wc, 46
+  br i1 %wdot, label %bad, label %wok
+wtail:
+  %ti = sub i64 %j, %le
+  %ti1 = add i64 %ti, 1
+  %ta = getelementptr i8, ptr %bound, i64 %ti1
+  %tc = load i8, ptr %ta
+  %teq = icmp eq i8 %wc, %tc
+  br i1 %teq, label %wok, label %bad
+wok:
+  %j1 = add i64 %j, 1
+  br label %wloop
+ok:
+  ret void
+bad:
+  call void @cancho_trap()
+  unreachable
+}

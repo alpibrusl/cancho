@@ -234,10 +234,11 @@ pub fn discharged[&s](st: &!s [int], index: int) -> [] int {
 // On the target with no system, a `system` block discharges the hosted labels its module answers: the body's set is counted apart from the function's, and what is not
 // discharged is added back after it. `instances.lent` is what the block discharges, with bit 59 while its body is walked.
 
-// Is the body of a `system` block being walked, and does the block answer the label with an argument numbered `label` (`arg_label_name`)? Only `fs_read` (1) is ever answered.
+// Is the body of a `system` block being walked, and does the block answer the label with an argument numbered `label` (`arg_label_name`)? `fs_read` (1) and
+// `net_out` (3) are the ones a block answers (`instances.lent_args`).
 fn answered[&s](st: &!s [int], label: int) -> [] bool {
     let lent = instances.lent(st);
-    return has(st, lent, 59) && label == 1 && has(st, lent, 60);
+    return has(st, lent, 59) && has(st, lent, 60) && label >= 0 && label < 16 && has(st, instances.lent_args(st), label);
 }
 
 // Inside the body of a `system` block, the function performed a label with an argument the block does not answer (or something that has no row to tell by): bit 55 of the
@@ -291,7 +292,13 @@ pub fn lend_end[&s](st: &!s [int], outer: int, rows: int) -> [] int {
         n = n + 1;
     }
     if has(st, labels, 60) {
-        instances.forget_labels(st, st[64], 1, rows);
+        var a = 0;
+        while a < 16 {
+            if has(st, instances.lent_args(st), a) {
+                instances.forget_labels(st, st[64], a, rows);
+            }
+            a = a + 1;
+        }
     }
     st[54] = set;
     instances.set_lent(st, labels);
@@ -315,7 +322,7 @@ pub fn lender_exact[&s, &x](st: &!s [int], text: &x [byte], fn_item: int, from: 
         }
         n = n + 1;
     }
-    if has(st, labels, 60) && mmio_in_row(st, text, 1, ast.get(st, fn_item, 9), 0) >= 0 {
+    if has(st, labels, 60) && has(st, instances.lent_args(st), 1) && mmio_in_row(st, text, 1, ast.get(st, fn_item, 9), 0) >= 0 {
         var reads = false;
         var row = 0;
         while row < instances.label_rows(st) {

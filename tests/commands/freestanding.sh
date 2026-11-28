@@ -275,6 +275,26 @@ else
 fi
 end
 
+begin a_lent_system_answers_a_connection_out
+if "$cancho" build tests/probes/bare_system_net.cho tests/probes/bare_system_netmod.cho --target aarch64-none-elf --emit ll -o "$work/net.ll" > "$work/net.txt" 2>&1; then
+    same "$(calls_undefined "$work/net.ll")" "" "what the module calls and does not define"
+    same "$(grep -c '^define void @cancho_net_tcp_connect(\|^define void @cancho_net_conn_read(\|^define void @cancho_net_conn_write(' "$work/net.ll")" 3 "the functions the connection builtins call are the module's own"
+    same "$(awk '/^define void @cancho_net_tcp_connect\(/ { on = 1 } on && /call void @cancho_sys_dial_check\(/ { print "checked"; exit } on && /^}/ { exit }' "$work/net.ll")" "checked" "the host and port are held to the bound before the module is asked"
+    same "$("$cancho" authority tests/probes/bare_system_net.cho tests/probes/bare_system_netmod.cho --target aarch64-none-elf | head -1)" "performs nothing" "the block discharges the connection"
+else
+    fail "a program that connects out through a lent system, for no system, said: $(head -c 300 "$work/net.txt")"
+fi
+# without a `dial` in the module, connecting is a trap, not a call of something missing, and the label is not discharged
+sed 's/^pub fn dial\[/pub fn ring[/' tests/probes/bare_system_netmod.cho > "$work/nodial.cho"
+if "$cancho" build tests/probes/bare_system_net.cho "$work/nodial.cho" --target aarch64-none-elf --emit ll -o "$work/nodial.ll" > "$work/nodial.txt" 2>&1; then
+    same "$(calls_undefined "$work/nodial.ll")" "" "what the module calls and does not define, when the system cannot dial"
+    same "$(awk '/^define void @cancho_net_tcp_connect\(/ { on = 1 } on && /call void @cancho_trap\(/ { print "trap"; exit } on && /^}/ { exit }' "$work/nodial.ll")" "trap" "connecting through a system that cannot dial is a trap"
+    same "$("$cancho" authority tests/probes/bare_system_net.cho "$work/nodial.cho" --target aarch64-none-elf | sed -n 2p | tr -d ' ')" 'net_out("10.0.0.1:80")' "and the dial is in the report"
+else
+    fail "with a system that cannot dial, the build said: $(head -c 300 "$work/nodial.txt")"
+fi
+end
+
 begin an_object_for_no_system_is_an_elf_for_aarch64
 if "$cancho" build tests/probes/freestanding.cho --std --target aarch64-none-elf --emit obj -o "$work/bare.o" > "$work/obj.txt" 2>&1; then
     # The four bytes of the magic, then (at 18) the machine: 183, AArch64, little-endian.
