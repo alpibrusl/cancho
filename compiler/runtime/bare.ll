@@ -5,21 +5,44 @@
 ; the four functions LLVM itself calls for a copy or a fill are defined here.
 @__cancho_heap_start = external global i8
 @__cancho_heap_end = external global i8
-@cancho_bare_next = internal global i64 0
-@cancho_bare_free = internal global ptr null
 declare void @llvm.memset.p0.i64(ptr, i8, i64, i1)
+
+; What the allocator keeps is one record of 52 words: 0 where the next fresh memory begins (0: not yet begun), 1 the
+; list of chunks given back, 2 to 49 the lists of the heap's blocks by size, 50 and 51 the two ends of the memory it
+; hands out (0: the two symbols the link provides). It is reached through `@cancho_bare_arena`, which is null for the
+; module's own record, `@cancho_bare_own`, so that a lent system can point it at the record of a program's block
+; (cancho-os docs/programs.md, section 6) and nothing of one is ever in the other's lists.
+@cancho_bare_own = internal global [52 x i64] zeroinitializer
+@cancho_bare_arena = internal global ptr null
+
+define internal ptr @cancho_bare_state() {
+entry:
+  %a = load ptr, ptr @cancho_bare_arena
+  %own = icmp eq ptr %a, null
+  %s = select i1 %own, ptr @cancho_bare_own, ptr %a
+  ret ptr %s
+}
 
 ; The next `bytes` (a multiple of 16) of the memory the link names; past its end is a trap.
 define internal ptr @cancho_bare_bump(i64 %bytes) {
 entry:
-  %n0 = load i64, ptr @cancho_bare_next
+  %st = call ptr @cancho_bare_state()
+  %n0 = load i64, ptr %st
   %unset = icmp eq i64 %n0, 0
-  %first = ptrtoint ptr @__cancho_heap_start to i64
+  %startp = getelementptr i64, ptr %st, i64 50
+  %start = load i64, ptr %startp
+  %linked = ptrtoint ptr @__cancho_heap_start to i64
+  %nostart = icmp eq i64 %start, 0
+  %first = select i1 %nostart, i64 %linked, i64 %start
   %up = add i64 %first, 15
   %aligned = and i64 %up, -16
   %n = select i1 %unset, i64 %aligned, i64 %n0
   %e = add i64 %n, %bytes
-  %lim = ptrtoint ptr @__cancho_heap_end to i64
+  %endp = getelementptr i64, ptr %st, i64 51
+  %end = load i64, ptr %endp
+  %linkend = ptrtoint ptr @__cancho_heap_end to i64
+  %noend = icmp eq i64 %end, 0
+  %lim = select i1 %noend, i64 %linkend, i64 %end
   %wrapped = icmp ult i64 %e, %n
   %over = icmp ugt i64 %e, %lim
   %bad = or i1 %wrapped, %over
@@ -28,7 +51,7 @@ fail:
   call void @cancho_trap()
   unreachable
 ok:
-  store i64 %e, ptr @cancho_bare_next
+  store i64 %e, ptr %st
   %p = inttoptr i64 %n to ptr
   ret ptr %p
 }
@@ -36,12 +59,14 @@ ok:
 ; A chunk of 64 KiB: one given back earlier, or the next of the memory.
 define internal ptr @cancho_region_take() {
 entry:
-  %f = load ptr, ptr @cancho_bare_free
+  %st = call ptr @cancho_bare_state()
+  %freep = getelementptr i64, ptr %st, i64 1
+  %f = load ptr, ptr %freep
   %none = icmp eq ptr %f, null
   br i1 %none, label %fresh, label %pop
 pop:
   %link = load ptr, ptr %f
-  store ptr %link, ptr @cancho_bare_free
+  store ptr %link, ptr %freep
   store ptr null, ptr %f
   ret ptr %f
 fresh:
@@ -54,7 +79,6 @@ fresh:
 ; what the caller asked for. A block that is given back is kept in the list of its size and is the next one of that
 ; size to be handed out; it is never split and never joined to another. So at most half of a block is not what was
 ; asked for, and memory that has been one size stays that size. The lists are threaded through the blocks themselves.
-@cancho_bare_bins = internal global [48 x ptr] zeroinitializer
 declare i64 @llvm.ctlz.i64(i64, i1)
 
 ; `size` bytes, aligned to 16. No memory left is a trap, as it is for a region: there is nobody to tell.
@@ -76,7 +100,9 @@ ok:
   %small = icmp ult i64 %bits, 5
   %k0 = sub i64 %bits, 5
   %k = select i1 %small, i64 0, i64 %k0
-  %slot = getelementptr [48 x ptr], ptr @cancho_bare_bins, i64 0, i64 %k
+  %st = call ptr @cancho_bare_state()
+  %bin = add i64 %k, 2
+  %slot = getelementptr i64, ptr %st, i64 %bin
   %head = load ptr, ptr %slot
   %none = icmp eq ptr %head, null
   br i1 %none, label %fresh, label %pop
@@ -107,7 +133,9 @@ fail:
   call void @cancho_trap()
   unreachable
 ok:
-  %slot = getelementptr [48 x ptr], ptr @cancho_bare_bins, i64 0, i64 %k
+  %st = call ptr @cancho_bare_state()
+  %bin = add i64 %k, 2
+  %slot = getelementptr i64, ptr %st, i64 %bin
   %head = load ptr, ptr %slot
   store ptr %head, ptr %user
   store ptr %base, ptr %slot
@@ -140,9 +168,11 @@ entry:
   %e = ptrtoint ptr %end to i64
   %used = sub i64 %e, %b
   call void @llvm.memset.p0.i64(ptr %base, i8 0, i64 %used, i1 false)
-  %head = load ptr, ptr @cancho_bare_free
+  %st = call ptr @cancho_bare_state()
+  %freep = getelementptr i64, ptr %st, i64 1
+  %head = load ptr, ptr %freep
   store ptr %head, ptr %base
-  store ptr %base, ptr @cancho_bare_free
+  store ptr %base, ptr %freep
   ret void
 }
 
