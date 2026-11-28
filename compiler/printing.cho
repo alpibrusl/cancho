@@ -767,7 +767,18 @@ fn stmt[&i, &s, &x](io: &!i Io, st: &!s [int], text: &x [byte], id: int, depth: 
         name(io, st, text, ast.get(st, id, 4));
         w(io, st, "(");
         exprs(io, st, text, ast.get(st, id, 5), ast.get(st, id, 6));
-        w(io, st, ") in {\n");
+        w(io, st, ")");
+        if ast.get(st, id, 10) >= 0 {
+            w(io, st, " runs (");
+            exprs(io, st, text, ast.get(st, id, 9), ast.get(st, id, 10));
+            w(io, st, ")");
+        }
+        if ast.get(st, id, 12) >= 0 {
+            w(io, st, " as (");
+            params(io, st, text, ast.get(st, id, 11), ast.get(st, id, 12));
+            w(io, st, ")");
+        }
+        w(io, st, " in {\n");
         return nested(io, st, text, ast.get(st, id, 7), ast.get(st, id, 8), depth);
     }
     if ast.is_kind(st, id, kinds.NK::SRegion) {

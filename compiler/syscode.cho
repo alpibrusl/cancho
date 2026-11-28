@@ -6,6 +6,7 @@ module selfhost.syscode;
 // program's module.
 
 import selfhost.emit;
+import selfhost.mmio;
 
 fn system_at[&s](st: &!s [int], i: int) -> [] int {
     emit.str(st, "ptr getelementptr inbounds ([32 x i64], ptr @cancho_sys_lent, i64 0, i64 ");
@@ -15,7 +16,7 @@ fn system_at[&s](st: &!s [int], i: int) -> [] int {
 
 // Has a `system` block already been written into this module? (Its globals are among the constants.)
 pub fn system_seen[&s](st: &!s [int]) -> [] bool {
-    let mark = "@cancho_sys_on = ";
+    let mark = "@cancho_sys_lent = ";
     var at = 0;
     while at + len(mark) <= st[57] {
         var k = 0;
@@ -30,11 +31,29 @@ pub fn system_seen[&s](st: &!s [int]) -> [] bool {
     return false;
 }
 
-// The globals: whether something is lent, what is, and room for sixty-four arguments of 255 bytes.
+// Has a block that runs been written into this module (`@cancho_runs_body` is among the constants)?
+pub fn runs_seen[&s](st: &!s [int]) -> [] bool {
+    let mark = "define internal i64 @cancho_runs_body(";
+    var at = 0;
+    while at + len(mark) <= st[57] {
+        var k = 0;
+        while k < len(mark) && st[st[56] + at + k] == int_of(mark[k]) {
+            k = k + 1;
+        }
+        if k == len(mark) {
+            return true;
+        }
+        at = at + 1;
+    }
+    return false;
+}
+
+// The globals: what is lent, and room for sixty-four arguments of 255 bytes. (Whether something is lent, `@cancho_sys_on`, is
+// `runtime/bare.ll`'s, since the trap reads it in every module of this target.)
 pub fn system_globals[&s](st: &!s [int]) -> [] int {
     let keep = st[49];
     st[49] = 3;
-    emit.str(st, "@cancho_sys_on = global i64 0\n@cancho_sys_lent = global [32 x i64] zeroinitializer\n@cancho_sys_args = global [64 x [256 x i8]] zeroinitializer\n");
+    emit.str(st, "@cancho_sys_lent = global [32 x i64] zeroinitializer\n@cancho_sys_args = global [64 x [256 x i8]] zeroinitializer\n");
     st[49] = keep;
     return 0;
 }
@@ -349,4 +368,270 @@ pub fn system_files[&s](st: &!s [int], op: int, callee: int, n: int) -> [] int {
     }
     st[49] = keep;
     return 0;
+}
+
+// ------------------------------------------------------------ a block that runs (docs/bare-system.md, 11e) ---
+//
+// The block `at .. at + size` is the program's. From `at`: 0 the state (0 fresh, 1 running, 2 ended, 3 failed), 8 the value it
+// ended with or why it failed, 16 where, 24 its 21 saved registers, 192 its allocator's record (52 words), 608 the whole numbers and
+// booleans the body copies; its heap from 1024 to the stack's end, three quarters in; its stack from there to the top. The
+// kernel's registers, while a program runs, are in `@cancho_sys_back`.
+
+// The functions of a module with a block that runs, written once: the switch (the 21 words the processor's calling rules keep:
+// x19 to x30, the stack pointer, d8 to d15, stored at the first argument and loaded from the second), where a program begins and
+// ends, where it fails (the trap calls it through `@cancho_runs_hook`), and what the system's functions do around the module's.
+pub fn runs_functions[&s](st: &!s [int]) -> [] int {
+    let keep = st[49];
+    st[49] = 3;
+    emit.str(st, "@cancho_sys_back = internal global [21 x i64] zeroinitializer\n@cancho_sys_block = internal global ptr null\n");
+    emit.str(st, "module asm \".text\"\nmodule asm \".p2align 2\"\nmodule asm \"cancho_switch:\"\n");
+    emit.str(st, "module asm \"  stp x19, x20, [x0, #0]\"\nmodule asm \"  stp x21, x22, [x0, #16]\"\nmodule asm \"  stp x23, x24, [x0, #32]\"\nmodule asm \"  stp x25, x26, [x0, #48]\"\nmodule asm \"  stp x27, x28, [x0, #64]\"\nmodule asm \"  stp x29, x30, [x0, #80]\"\nmodule asm \"  mov x9, sp\"\nmodule asm \"  str x9, [x0, #96]\"\nmodule asm \"  stp d8, d9, [x0, #104]\"\nmodule asm \"  stp d10, d11, [x0, #120]\"\nmodule asm \"  stp d12, d13, [x0, #136]\"\nmodule asm \"  stp d14, d15, [x0, #152]\"\n");
+    emit.str(st, "module asm \"  ldp x19, x20, [x1, #0]\"\nmodule asm \"  ldp x21, x22, [x1, #16]\"\nmodule asm \"  ldp x23, x24, [x1, #32]\"\nmodule asm \"  ldp x25, x26, [x1, #48]\"\nmodule asm \"  ldp x27, x28, [x1, #64]\"\nmodule asm \"  ldp x29, x30, [x1, #80]\"\nmodule asm \"  ldr x9, [x1, #96]\"\nmodule asm \"  mov sp, x9\"\nmodule asm \"  ldp d8, d9, [x1, #104]\"\nmodule asm \"  ldp d10, d11, [x1, #120]\"\nmodule asm \"  ldp d12, d13, [x1, #136]\"\nmodule asm \"  ldp d14, d15, [x1, #152]\"\nmodule asm \"  ret\"\n");
+    emit.str(st, "declare void @cancho_switch(ptr, ptr)\n");
+    // a program begins here, on its own stack, and ends with the value of its body
+    emit.str(st, "define internal void @cancho_runs_start() noreturn noinline {\nentry:\n  %b = load ptr, ptr @cancho_sys_block\n  %c = getelementptr i8, ptr %b, i64 608\n  %v = call i64 @cancho_runs_body(ptr %c)\n  %vp = getelementptr i64, ptr %b, i64 1\n  store i64 %v, ptr %vp\n  store i64 2, ptr %b\n  store i64 0, ptr @cancho_sys_on\n  %r = getelementptr i8, ptr %b, i64 24\n  call void @cancho_switch(ptr %r, ptr @cancho_sys_back)\n  unreachable\n}\n\n");
+    // a program fails: why, and where the trap was called from
+    emit.str(st, "define internal void @cancho_runs_failed(ptr %at) noreturn noinline {\nentry:\n  %b = load ptr, ptr @cancho_sys_block\n  %w = load i64, ptr @cancho_sys_why\n  %none = icmp eq i64 %w, 0\n  %why = select i1 %none, i64 1, i64 %w\n  store i64 3, ptr %b\n  %wp = getelementptr i64, ptr %b, i64 1\n  store i64 %why, ptr %wp\n  %where = ptrtoint ptr %at to i64\n  %ap = getelementptr i64, ptr %b, i64 2\n  store i64 %where, ptr %ap\n  store i64 0, ptr @cancho_sys_why\n  store i64 0, ptr @cancho_sys_on\n  %r = getelementptr i8, ptr %b, i64 24\n  call void @cancho_switch(ptr %r, ptr @cancho_sys_back)\n  unreachable\n}\n\n");
+    // the kernel enters the block, and is back when the program has ended or failed
+    emit.str(st, "define internal void @cancho_runs_enter(ptr %b, i64 %size) noinline {\nentry:\n  %a = ptrtoint ptr %b to i64\n  store i64 1, ptr %b\n  %vp = getelementptr i64, ptr %b, i64 1\n  store i64 0, ptr %vp\n  %ap = getelementptr i64, ptr %b, i64 2\n  store i64 0, ptr %ap\n  %top = add i64 %a, %size\n  %q = lshr i64 %size, 2\n  %low = sub i64 %top, %q\n  %rec = getelementptr i8, ptr %b, i64 192\n  call void @llvm.memset.p0.i64(ptr %rec, i8 0, i64 416, i1 false)\n  %heap = add i64 %a, 1024\n  %h50 = getelementptr i64, ptr %rec, i64 50\n  store i64 %heap, ptr %h50\n  %h51 = getelementptr i64, ptr %rec, i64 51\n  store i64 %low, ptr %h51\n  %regs = getelementptr i8, ptr %b, i64 24\n  call void @llvm.memset.p0.i64(ptr %regs, i8 0, i64 168, i1 false)\n  %lr = getelementptr i64, ptr %regs, i64 11\n  store ptr @cancho_runs_start, ptr %lr\n  %sp = getelementptr i64, ptr %regs, i64 12\n  store i64 %top, ptr %sp\n  store ptr %b, ptr @cancho_sys_block\n  store ptr %rec, ptr @cancho_bare_arena\n  %end = add i64 %low, 4096\n  store i64 %end, ptr @cancho_stack_end\n  store ptr @cancho_runs_failed, ptr @cancho_runs_hook\n  store i64 1, ptr @cancho_sys_on\n  call void @cancho_switch(ptr @cancho_sys_back, ptr %regs)\n  store i64 0, ptr @cancho_stack_end\n  store ptr null, ptr @cancho_bare_arena\n  store ptr null, ptr @cancho_runs_hook\n  store ptr null, ptr @cancho_sys_block\n  ret void\n}\n\n");
+    // around the module's function, while a program runs: room on its stack for the kernel's answer (16 KiB, or the program
+    // fails, why 3), and the answer made by the kernel, with the kernel's allocator
+    emit.str(st, "define internal void @cancho_runs_away() {\nentry:\n  %h = load ptr, ptr @cancho_runs_hook\n  %none = icmp eq ptr %h, null\n  br i1 %none, label %done, label %program\nprogram:\n  %sp = call i64 asm \"mov $0, sp\", \"=r\"()\n  %need = sub i64 %sp, 16384\n  %end = load i64, ptr @cancho_stack_end\n  %deep = icmp ult i64 %need, %end\n  br i1 %deep, label %over, label %room\nover:\n  store i64 3, ptr @cancho_sys_why\n  call void @cancho_trap()\n  unreachable\nroom:\n  store i64 2, ptr @cancho_sys_on\n  store ptr null, ptr @cancho_bare_arena\n  br label %done\ndone:\n  ret void\n}\n\n");
+    emit.str(st, "define internal void @cancho_runs_back() {\nentry:\n  %h = load ptr, ptr @cancho_runs_hook\n  %none = icmp eq ptr %h, null\n  br i1 %none, label %done, label %program\nprogram:\n  store i64 1, ptr @cancho_sys_on\n  %b = load ptr, ptr @cancho_sys_block\n  %rec = getelementptr i8, ptr %b, i64 192\n  store ptr %rec, ptr @cancho_bare_arena\n  br label %done\ndone:\n  ret void\n}\n\n");
+    st[49] = keep;
+    return 0;
+}
+
+// Does the line of buffer 3 from `at` to `end` begin with `s`?
+fn line_begins[&s](st: &!s [int], at: int, end: int, s: &static [byte]) -> [] bool {
+    if end - at < len(s) {
+        return false;
+    }
+    var k = 0;
+    while k < len(s) {
+        if st[st[56] + at + k] != int_of(s[k]) {
+            return false;
+        }
+        k = k + 1;
+    }
+    return true;
+}
+
+fn line_has[&s](st: &!s [int], at: int, end: int, s: &static [byte]) -> [] bool {
+    var i = at;
+    while i + len(s) <= end {
+        if line_begins(st, i, end, s) {
+            return true;
+        }
+        i = i + 1;
+    }
+    return false;
+}
+
+fn place_text[&s](st: &!s [int], at: int, s: &static [byte]) -> [] int {
+    var k = 0;
+    while k < len(s) {
+        st[st[56] + at + k] = int_of(s[k]);
+        k = k + 1;
+    }
+    return 0;
+}
+
+// The system's functions written from `from` in buffer 3, for a block that runs: before each call of the module's function
+// `@cancho_runs_away()`, and before each `ret` `@cancho_runs_back()` (which is nothing where none was away). In place, from the
+// end, so that nothing is copied twice.
+pub fn runs_wrap[&s](st: &!s [int], from: int) -> [] int {
+    let away = "  call void @cancho_runs_away()\n";
+    let back = "  call void @cancho_runs_back()\n";
+    let end = st[57];
+    var extra = 0;
+    var at = from;
+    while at < end {
+        var e = at;
+        while e < end && st[st[56] + e] != 10 {
+            e = e + 1;
+        }
+        if e < end {
+            e = e + 1;
+        }
+        if line_begins(st, at, e, "  ret ") {
+            extra = extra + len(back);
+        }
+        if line_has(st, at, e, "@lexs_") {
+            extra = extra + len(away);
+        }
+        at = e;
+    }
+    if end + extra > st[50] {
+        // too long for its buffer: `emit.overflowed` says the code is no good
+        st[57] = st[50] + 1;
+        return 0;
+    }
+    var src = end;
+    var dst = end + extra;
+    while src > from {
+        var start = src - 1;
+        while start > from && st[st[56] + start - 1] != 10 {
+            start = start - 1;
+        }
+        let is_ret = line_begins(st, start, src, "  ret ");
+        let is_call = line_has(st, start, src, "@lexs_");
+        var i = src;
+        while i > start {
+            i = i - 1;
+            dst = dst - 1;
+            st[st[56] + dst] = st[st[56] + i];
+        }
+        src = start;
+        if is_ret {
+            dst = dst - len(back);
+            place_text(st, dst, back);
+        }
+        if is_call {
+            dst = dst - len(away);
+            place_text(st, dst, away);
+        }
+    }
+    st[57] = end + extra;
+    return 0;
+}
+
+// The body of the block, which the checker wrote into the function (buffer 1 from `m1`, its `alloca`s in buffer 2 from `m2`), is
+// cut out and becomes `@cancho_runs_body`, among the constants: it is handed where the copies are, makes a slot for each binding of
+// the function it named, fills it, and runs. A body that reaches its end ends with 0.
+pub fn runs_cut[&s](st: &!s [int], m1: int, m2: int) -> [] int {
+    let keep = st[49];
+    st[49] = 3;
+    emit.str(st, "define internal i64 @cancho_runs_body(ptr %copies) {\nentry:\n");
+    var i = m2;
+    while i < st[48] {
+        emit.put(st, st[st[47] + i]);
+        i = i + 1;
+    }
+    var k = 0;
+    while k < st[69] {
+        emit.str(st, "  %s");
+        emit.nat(st, st[70 + 2 * k]);
+        emit.str(st, " = alloca ");
+        emit.llvm_type(st, st[71 + 2 * k]);
+        emit.str(st, "\n");
+        k = k + 1;
+    }
+    k = 0;
+    while k < st[69] {
+        emit.str(st, "  %runs.p");
+        emit.nat(st, k);
+        emit.str(st, " = getelementptr i64, ptr %copies, i64 ");
+        emit.nat(st, k);
+        emit.str(st, "\n  %runs.v");
+        emit.nat(st, k);
+        emit.str(st, " = load ");
+        emit.llvm_type(st, st[71 + 2 * k]);
+        emit.str(st, ", ptr %runs.p");
+        emit.nat(st, k);
+        emit.str(st, "\n  store ");
+        emit.llvm_type(st, st[71 + 2 * k]);
+        emit.str(st, " %runs.v");
+        emit.nat(st, k);
+        emit.str(st, ", ptr %s");
+        emit.nat(st, st[70 + 2 * k]);
+        emit.str(st, "\n");
+        k = k + 1;
+    }
+    i = m1;
+    while i < st[46] {
+        emit.put(st, st[st[45] + i]);
+        i = i + 1;
+    }
+    emit.str(st, "  ret i64 0\n}\n\n");
+    st[46] = m1;
+    st[48] = m2;
+    st[49] = keep;
+    return 0;
+}
+
+// Where the block was, in the function: `at` and `size` held to what `runs` asks (a trap with nothing lent, the kernel's, if
+// not: `size` a power of two of 64 KiB or more, `at` a multiple of 16, the block inside one range of the bound `text[from..to]`
+// of `mem`, the empty bound being every address); then, if the state is 0, the copies and the program, until it has ended or
+// failed.
+pub fn runs_site[&s, &x](st: &!s [int], text: &x [byte], from: int, to: int, ak: bool, av: int, ar: int, zk: bool, zv: int, zr: int) -> [] int {
+    emit.str(st, "  %runs.at = add i64 0, ");
+    emit.operand(st, 1, ak, av, ar);
+    emit.str(st, "\n  %runs.size = add i64 0, ");
+    emit.operand(st, 1, zk, zv, zr);
+    emit.str(st, "\n  %runs.m1 = sub i64 %runs.size, 1\n  %runs.pow = and i64 %runs.size, %runs.m1\n  %runs.npow = icmp ne i64 %runs.pow, 0\n  %runs.small = icmp ult i64 %runs.size, 65536\n  %runs.odd = and i64 %runs.at, 15\n  %runs.nodd = icmp ne i64 %runs.odd, 0\n  %runs.b1 = or i1 %runs.npow, %runs.small\n  %runs.b2 = or i1 %runs.b1, %runs.nodd\n");
+    let ranges = mmio.count(text, from, to);
+    if ranges > 0 {
+        emit.str(st, "  %runs.in0 = icmp ne i64 0, 0\n");
+        var k = 0;
+        while k < ranges {
+            let lo = mmio.low(text, from, to, k);
+            let hi = mmio.high(text, from, to, k);
+            // inside: lo <= at, at <= hi, size <= hi - at
+            emit.str(st, "  %runs.lo");
+            emit.nat(st, k);
+            emit.str(st, " = icmp uge i64 %runs.at, ");
+            emit.nat(st, lo);
+            emit.str(st, "\n  %runs.hi");
+            emit.nat(st, k);
+            emit.str(st, " = icmp ule i64 %runs.at, ");
+            emit.nat(st, hi);
+            emit.str(st, "\n  %runs.room");
+            emit.nat(st, k);
+            emit.str(st, " = sub i64 ");
+            emit.nat(st, hi);
+            emit.str(st, ", %runs.at\n  %runs.fits");
+            emit.nat(st, k);
+            emit.str(st, " = icmp ule i64 %runs.size, %runs.room");
+            emit.nat(st, k);
+            emit.str(st, "\n  %runs.a");
+            emit.nat(st, k);
+            emit.str(st, " = and i1 %runs.lo");
+            emit.nat(st, k);
+            emit.str(st, ", %runs.hi");
+            emit.nat(st, k);
+            emit.str(st, "\n  %runs.c");
+            emit.nat(st, k);
+            emit.str(st, " = and i1 %runs.a");
+            emit.nat(st, k);
+            emit.str(st, ", %runs.fits");
+            emit.nat(st, k);
+            emit.str(st, "\n  %runs.in");
+            emit.nat(st, k + 1);
+            emit.str(st, " = or i1 %runs.in");
+            emit.nat(st, k);
+            emit.str(st, ", %runs.c");
+            emit.nat(st, k);
+            emit.str(st, "\n");
+            k = k + 1;
+        }
+        emit.str(st, "  %runs.out = xor i1 %runs.in");
+        emit.nat(st, ranges);
+        emit.str(st, ", true\n  %runs.bad = or i1 %runs.b2, %runs.out\n");
+    } else {
+        emit.str(st, "  %runs.bad = or i1 %runs.b2, false\n");
+    }
+    emit.str(st, "  br i1 %runs.bad, label %runs.wrong, label %runs.right\nruns.wrong:\n  call void @cancho_trap()\n  unreachable\nruns.right:\n  %runs.b = inttoptr i64 %runs.at to ptr\n  %runs.state = load i64, ptr %runs.b\n  %runs.fresh = icmp eq i64 %runs.state, 0\n  br i1 %runs.fresh, label %runs.go, label %runs.past\nruns.go:\n");
+    var k = 0;
+    while k < st[69] {
+        emit.str(st, "  %runs.q");
+        emit.nat(st, k);
+        emit.str(st, " = getelementptr i8, ptr %runs.b, i64 ");
+        emit.nat(st, 608 + 8 * k);
+        emit.str(st, "\n  %runs.x");
+        emit.nat(st, k);
+        emit.str(st, " = load ");
+        emit.llvm_type(st, st[71 + 2 * k]);
+        emit.str(st, ", ptr %s");
+        emit.nat(st, st[70 + 2 * k]);
+        emit.str(st, "\n  store ");
+        emit.llvm_type(st, st[71 + 2 * k]);
+        emit.str(st, " %runs.x");
+        emit.nat(st, k);
+        emit.str(st, ", ptr %runs.q");
+        emit.nat(st, k);
+        emit.str(st, "\n");
+        k = k + 1;
+    }
+    return emit.str(st, "  call void @cancho_runs_enter(ptr %runs.b, i64 %runs.size)\n  br label %runs.past\nruns.past:\n");
 }

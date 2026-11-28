@@ -295,6 +295,42 @@ else
 fi
 end
 
+# A block that runs (docs/bare-system.md, 11e): the body is a program in a block of memory of its own, on its own stack, and a trap
+# in it ends it and not the machine. Where there are a qemu-system-aarch64 and an ld.lld the probe is booted, and QEMU's serial
+# line is the judge: each of four programs a hundred times, the words on each side of the block untouched, and a trap in the
+# kernel's own answer still the machine's. What the rule refuses is refused with the rule's sentence.
+begin a_block_that_runs_is_left_by_a_trap_and_the_machine_goes_on
+if "$cancho" build tests/probes/bare_runs.cho tests/probes/bare_runs_sys.cho --target aarch64-none-elf --emit ll -o "$work/runs.ll" > "$work/runs.txt" 2>&1; then
+    # (the switch is defined in the module's assembly, which the reader of calls does not read)
+    same "$(calls_undefined "$work/runs.ll" | sed 's/cancho_switch //')" "" "what the module calls and does not define"
+    same "$(grep -c '^define internal i64 @cancho_runs_body(ptr %copies)' "$work/runs.ll")" 1 "the body is a function of its own"
+    same "$(grep -c '^module asm "cancho_switch:"' "$work/runs.ll")" 1 "the switch is written once"
+else
+    fail "a program with a block that runs said: $(head -c 300 "$work/runs.txt")"
+fi
+if command -v qemu-system-aarch64 > /dev/null 2>&1 && command -v ld.lld > /dev/null 2>&1 && "$cancho" build tests/probes/bare_runs.cho tests/probes/bare_runs_sys.cho --target aarch64-none-elf --emit obj -o "$work/runs.o" > "$work/runso.txt" 2>&1; then
+    clang --target=aarch64-none-elf -c tests/native/asm/virt.S -o "$work/runsboot.o" && ld.lld -T tests/probes/bare_runs/virt.ld "$work/runsboot.o" "$work/runs.o" -o "$work/runs.elf"
+    rm -f "$work/runs.serial"
+    (qemu-system-aarch64 -M virt -cpu cortex-a72 -m 2G -display none -nic none -serial "file:$work/runs.serial" -kernel "$work/runs.elf" > /dev/null 2>&1 &
+     pid=$!; n=0; while [ $n -lt 200 ] && ! grep -q '^d' "$work/runs.serial" 2> /dev/null; do sleep 0.1; n=$((n + 1)); done; sleep 1; kill $pid 2> /dev/null; wait $pid 2> /dev/null)
+    same "$(tr '\n' ' ' < "$work/runs.serial")" "it runs 1 2 42 s 2 3 1 s 3 3 2 s 4 3 3 s 1 g d " "what the probe prints on the serial line"
+else
+    echo "freestanding: no qemu-system-aarch64 or ld.lld here: the block that runs was built and not booted" >&2
+fi
+# refused: a body that names what is not a whole number of the function, or assigns to one; `runs` with two words; on this machine
+sed 's/return program(io, heap, which, n);/return program(io, heap, which, used[0]);/' tests/probes/bare_runs.cho > "$work/names.cho"
+sed 's/return program(io, heap, which, n);/n = 3; return program(io, heap, which, n);/' tests/probes/bare_runs.cho > "$work/assigns.cho"
+sed 's/runs (m, block, 1048576) as/runs (m, block) as/' tests/probes/bare_runs.cho > "$work/two.cho"
+for case in names:unknown-name assigns:assign-to-immutable two:arity-mismatch; do
+    "$cancho" check "$work/${case%%:*}.cho" tests/probes/bare_runs_sys.cho --target aarch64-none-elf --output json > "$work/refused.txt" 2>&1
+    same "$(grep -c "\"${case#*:}\"" "$work/refused.txt")" 1 "${case%%:*} is refused by ${case#*:}"
+done
+"$cancho" check tests/probes/bare_runs.cho tests/probes/bare_runs_sys.cho --output json > "$work/host.txt" 2>&1
+same "$(grep -c '"unsupported-on-target"' "$work/host.txt")" 1 "a block that runs, for this machine"
+"$cancho" check tests/probes/bare_runs.cho tests/probes/bare_runs_sys.cho --target aarch64-none-elf --backend native --output json > "$work/native.txt" 2>&1
+same "$(grep -c '"unsupported-by-backend"' "$work/native.txt")" 1 "a block that runs, with the backend of cancho's own"
+end
+
 begin an_object_for_no_system_is_an_elf_for_aarch64
 if "$cancho" build tests/probes/freestanding.cho --std --target aarch64-none-elf --emit obj -o "$work/bare.o" > "$work/obj.txt" 2>&1; then
     # The four bytes of the magic, then (at 18) the machine: 183, AArch64, little-endian.
