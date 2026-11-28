@@ -845,3 +845,144 @@ N9 to N11 are where it is paid back, and this number is what they are measured a
   every fixture built, run and refused, and that alone is 52 minutes. Until N9 the job is the slowest of CI.
 - The seed is still built by clang (decision O3).
 
+---
+
+## 16. The image for no system (N7)
+
+`cancho build k.cho --target aarch64-none-elf --backend native --layout board/pi.layout -o kernel8.img` is the whole build of
+a program with no system under it: no linker, no `objcopy`, no assembler from outside. Three pieces, each pure:
+`compiler/native/layout.cho` reads the layout, `a64asm.cho` assembles the boot page, `image.cho` places everything, resolves
+every address and writes the file.
+
+### 16.1 The layout description
+
+A text the program keeps beside its sources. It is not a linker's script language: it is a list of lines, each one of twelve
+words and its operands, read from top to bottom with one number in hand, **the place** (an address). `#` starts a comment.
+Numbers are decimal or `0x`; every address in the file is counted from `base`.
+
+| line | what it does |
+|---|---|
+| `base ADDRESS` | where the machine's memory starts; every other address in the file is added to it. One line differs between two boards |
+| `at OFFSET` | the place becomes `base + OFFSET`. It may only go forward |
+| `boot FILE` | the boot page: assembly (section 16.3), the file named from the layout's own directory. Its sections are put at the place, in the order the file has them |
+| `text` | the functions the image reaches, at the place |
+| `rodata`, `data` | the constants, and the values that change, that the image reaches |
+| `bss` | the values that start as zero: they take room at the place and no bytes of the file |
+| `align N` | the place goes up to a multiple of `N` (a power of two) |
+| `skip N` | the place goes up by `N` |
+| `symbol NAME` | `NAME` is the place. `symbol NAME = OFFSET` is `base + OFFSET` whatever the place is |
+| `limit OFFSET` | refuse the build if the place is past `base + OFFSET`, saying by how much |
+| `entry NAME` | where the machine starts (an ELF executable records it; a flat image starts at its first byte, and `entry` must then be that byte) |
+
+Each of `boot`, `text`, `rodata`, `data`, `bss` is written once at most; a program with values of a kind the layout does not
+place is refused. The file is the bytes from the first thing placed to the last byte of the last thing placed that has bytes
+(`bss` has none); a gap is zeros. cancho-os's link script for a Raspberry Pi, as a layout:
+
+```
+base 0
+at 0x80000
+symbol __text_start
+boot boot.S
+text
+align 4096
+symbol __text_end
+rodata
+align 4096
+symbol __rodata_end
+data
+align 16
+symbol __bss_start
+bss
+symbol __bss_end
+limit 0x200000
+at 0x200000
+symbol __tables
+skip 32768
+symbol __fault_note
+skip 4096
+at 0x210000
+skip 0x10000
+symbol __stage
+skip 0x200000
+symbol __stage_end
+symbol __mapped_start = 0x1000
+symbol __copier = 0x2000
+align 4096
+symbol __cancho_heap_start
+symbol __cancho_heap_end = 0x3c000000
+entry _start
+```
+
+and for QEMU's `virt` the same with `base 0x40000000`. What a linker's script can say and this cannot: an expression, a
+pattern of section names, a section made of parts of several files, a load address other than the address the code runs at.
+
+### 16.2 What is placed, and what is dropped
+
+Every name is one of the module's (a function, a value), one of the boot page's labels, or a `symbol` of the layout; a name
+used and defined by none of the three is a refusal that names it, and so is a name two of them define.
+
+**What the image does not reach is not in it.** The roots are the boot page (all of it), `entry`, and what they name; a
+function or a value is kept when a kept one names it, in code or in a value. This is what `--gc-sections` did for the kernel,
+with a section for each function; here the unit is the function and the value themselves, since the image writer has the
+code generator's tables and needs no sections to know where one ends. The kept ones stay in the module's order.
+
+**Addresses.** A call is the distance to its function (26 bits of words). The address of a name is `adrp` and `add`, the page
+and the 12 bits below it. A name of "another object", which an object reaches through the linker's table of addresses
+(`adrp`, `ldr` from the table), has no table here: every name is in the image, so the `ldr` is rewritten as the `add` it would
+have been (the relaxation a linker does). An address written in a value is its 8 bytes. A distance that does not fit its
+field is a refusal, with the two names.
+
+### 16.3 The boot page (decision O2)
+
+The owner chose, of the three proposals, **a small assembler**: the boot page stays the assembly file that was reviewed and
+that booted a real board, and the compiler assembles exactly the instructions and directives it uses, with the encoder of
+section 11. (A file of bytes kept in the repository would need an assembler from outside whenever it changed; the page
+rewritten as calls of the encoder in cancho would be a new page nobody has booted, and needs the compiler to run the
+program's code while it builds.) The assembler is held to clang's: the same sections, bytes, labels and relocations for the
+test sources, checked from a file clang made (`tests/native/asm_vectors.py`), as the encoder's vectors are.
+
+### 16.4 The two files
+
+`--emit image` (what `--layout` means when no `--emit` is given): the flat file, what `objcopy -O binary` wrote.
+`--emit exe` with `--layout`: an ELF executable with one loaded segment and the entry, which QEMU's `-kernel` takes for the
+`virt` machine. `--emit obj` stays, for a program that wants its own linker.
+
+### 16.5 What was measured
+
+Linux x86-64, clang 18.1.3 and `ld.lld` as the other implementations, `qemu-system-aarch64` 8.2.2 as the machine.
+
+| what | result |
+|---|---|
+| The probe for no system (`tests/probes/freestanding.cho`) with `tests/native/asm/virt.S` and `virt.layout`, as a flat image and as an ELF executable, in QEMU's `virt` | both print `probe be`: the probe's foreign function was reached with 190. The executable's loaded part is the flat image, byte for byte |
+| The same object and boot page linked by `ld.lld` under a script that says what the layout says | prints the same line |
+| The build with a `PATH` that has no program in it | it succeeds: the compiler started nothing (the gate's test builds every image so) |
+| The size of the probe's image | **20,912 bytes.** `ld.lld` makes 240,336 of the native backend's object, which is one `.text` it cannot drop from (section 13.5): what is not reached is eleven twelfths of the module. From clang's object at `-O2`, with a section a function and `--gc-sections`, `ld.lld` makes 4,880: the native image is 4.3 times that, which is section 12's code and not the image writer's |
+| The assembler against clang's, on `tests/native/asm/forms.S` (every form), `virt.S`, **and cancho-os's own `board/boot.S`** | the same sections, bytes, alignments, labels and relocations for all three. cancho-os's file is not in this repository; it was assembled where it is |
+| 2,700 single instructions made at random, each given to both assemblers | every line both take gives the same word, and none is taken here that clang refuses |
+| Every beginning of the three sources, and thousands of bytes of each replaced by each of twenty | refused or assembled; none traps (`tests/commands/native_asm.sh` runs it for the two kept sources) |
+| The layout reader on every beginning of a kernel's layout and every byte replaced by each of fourteen (8,000 texts) | none traps |
+| Eight layouts that cannot be followed, a boot page that is not there, and one with an instruction the assembler has not | each refused by the rule, with the name, the number or the line; nothing written |
+| **cancho-os's kernel** through `--layout`, with its layout as section 16.1 has it | its boot page assembles, the image is placed, and **it is refused by the layout's own `limit`: the image is 139,856 bytes past the 2 MB where the kernel's tables are.** The linker's image of clang's code is 349,200 bytes; this one would be about 1.71 MB, 4.9 times. Booting it is N8, and needs either smaller code (N9) or the tables moved, which is cancho-os's to decide |
+
+Running against clang found two mistakes in the assembler that no reading had: `mov wzr, #0xff000` was taken as an `orr` whose
+destination is then the stack pointer, and `msr` to a register that can only be read was encoded; clang refuses both, and so
+does the assembler now. It also found one of clang's: `ldr w0, =V` and `ldr x1, =V` in one section share a 4-byte entry of
+the pool, so the second reads past it; the assembler refuses a value loaded in both sizes rather than copy that.
+
+**What the assembler takes** is what cancho-os's page uses and little more; `compiler/native/a64asm.cho` lists it. What clang
+takes and it refuses, on purpose: `/* */` comments, upper-case mnemonics, a macro used in a macro, a numbered label of another
+section, `.section` with flags other than `"ax"`, arithmetic on `sp` between registers. `ldr r, =NUMBER` is a `movz` when one
+says it and an entry of a pool at the end of the section otherwise, as clang does it.
+
+### 16.6 Not done
+
+- **The image writer has no run of damaged inputs of its own**: it is given only what the reader, the generator, the layout
+  reader and the assembler accepted, each of which has one, and the gate's script gives it eight layouts it must refuse.
+- **cancho-os built this way** (N8): today its image passes its own limit.
+- **A map of the image** (where each name went), which a person debugging a kernel wants and a linker gives.
+- **Debug information.** An ELF executable from here has one loaded part and no sections or symbols. `llvm-readelf -l` reads it and
+  QEMU loads it; `llvm-objdump -d` finds no section to disassemble and says the file ends early.
+- **Images for another processor**, and position-independent ones.
+- The QEMU run in the gate needs `qemu-system-aarch64`; where there is none the image is made and not booted, and the script
+  says so. CI's Linux gate installs it.
+

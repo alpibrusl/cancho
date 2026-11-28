@@ -1,0 +1,375 @@
+edition 7;
+module selfhost.layout;
+
+// layout.cho -- the layout description of an image for no system (`docs/native-backend.md` section 16.1): a list of lines, each one of twelve words and its
+// operands, read into a table of numbers. Pure, and no trap on any bytes: what is not one of the twelve lines is a refusal with its line.
+
+import selfhost.llmod as lm;
+
+// ---- the table: four cells of a head, then four cells a line ----
+
+// The lines read; the line of the first refusal (0 for none) and its reason.
+pub fn h_count() -> [] int {
+    return 0;
+}
+
+pub fn h_fail_line() -> [] int {
+    return 1;
+}
+
+pub fn h_fail_why() -> [] int {
+    return 2;
+}
+
+pub fn head() -> [] int {
+    return 4;
+}
+
+// The words. A line's four cells are its word, then: a number (`base`, `at`, `align`, `skip`, `limit`), or where a name starts in the text and its length
+// (`boot`, `symbol`, `entry`); for `symbol NAME = OFFSET` the fourth cell is the offset and one more (0: the symbol is the place).
+pub fn v_base() -> [] int {
+    return 1;
+}
+
+pub fn v_at() -> [] int {
+    return 2;
+}
+
+pub fn v_boot() -> [] int {
+    return 3;
+}
+
+pub fn v_text() -> [] int {
+    return 4;
+}
+
+pub fn v_rodata() -> [] int {
+    return 5;
+}
+
+pub fn v_data() -> [] int {
+    return 6;
+}
+
+pub fn v_bss() -> [] int {
+    return 7;
+}
+
+pub fn v_align() -> [] int {
+    return 8;
+}
+
+pub fn v_skip() -> [] int {
+    return 9;
+}
+
+pub fn v_symbol() -> [] int {
+    return 10;
+}
+
+pub fn v_limit() -> [] int {
+    return 11;
+}
+
+pub fn v_entry() -> [] int {
+    return 12;
+}
+
+// The reasons.
+pub fn why_word() -> [] int {
+    return 1;
+}
+
+pub fn why_number() -> [] int {
+    return 2;
+}
+
+pub fn why_name() -> [] int {
+    return 3;
+}
+
+pub fn why_more() -> [] int {
+    return 4;
+}
+
+pub fn why_twice() -> [] int {
+    return 5;
+}
+
+pub fn why_power() -> [] int {
+    return 6;
+}
+
+pub fn why_room() -> [] int {
+    return 7;
+}
+
+pub fn why_text(why: int) -> [] &static [byte] {
+    if why == why_word() {
+        return "a line that does not start with one of: base at boot text rodata data bss align skip symbol limit entry";
+    }
+    if why == why_number() {
+        return "a number was expected (decimal, or 0x and hexadecimal digits, below 2 to the 62)";
+    }
+    if why == why_name() {
+        return "a name was expected";
+    }
+    if why == why_more() {
+        return "more on the line than the word takes";
+    }
+    if why == why_twice() {
+        return "this word is written once at most";
+    }
+    if why == why_power() {
+        return "`align` takes a power of two";
+    }
+    return "the layout has more lines than there is room for";
+}
+
+// The cells a layout of this text needs.
+pub fn room[&t](text: &t [byte]) -> [] int {
+    var lines = 1;
+    var i = 0;
+    while i < len(text) {
+        if int_of(text[i]) == 10 {
+            lines = lines + 1;
+        }
+        i = i + 1;
+    }
+    return head() + 4 * lines + 4;
+}
+
+pub fn count[&l](l: &l [int]) -> [] int {
+    return lm.cell(l, h_count());
+}
+
+// Cell `c` of line `k`.
+pub fn line[&l](l: &l [int], k: int, c: int) -> [] int {
+    if k < 0 || k >= count(l) || c < 0 || c > 3 {
+        return 0;
+    }
+    return lm.cell(l, head() + 4 * k + c);
+}
+
+pub fn failed[&l](l: &l [int]) -> [] bool {
+    return len(l) < head() || l[h_fail_why()] != 0;
+}
+
+fn refuse[&l](l: &!l [int], number: int, why: int) -> [] int {
+    if len(l) >= head() && l[h_fail_why()] == 0 {
+        l[h_fail_line()] = number;
+        l[h_fail_why()] = why;
+    }
+    return 1;
+}
+
+fn blank(c: int) -> [] bool {
+    return c == 32 || c == 9 || c == 13;
+}
+
+// Past the blanks at `i`, not past `end`.
+fn skip_blanks[&t](text: &t [byte], i: int, end: int) -> [] int {
+    var k = i;
+    while k < end && blank(lm.at(text, k)) {
+        k = k + 1;
+    }
+    return k;
+}
+
+// The end of the word that starts at `i`.
+fn word_end[&t](text: &t [byte], i: int, end: int) -> [] int {
+    var k = i;
+    while k < end && !blank(lm.at(text, k)) {
+        k = k + 1;
+    }
+    return k;
+}
+
+fn is_word[&t, &w](text: &t [byte], from: int, to: int, word: &w [byte]) -> [] bool {
+    if to - from != len(word) {
+        return false;
+    }
+    var k = 0;
+    while k < len(word) {
+        if lm.at(text, from + k) != int_of(word[k]) {
+            return false;
+        }
+        k = k + 1;
+    }
+    return true;
+}
+
+// The number written in `text[from..to]`, or -1.
+pub fn number[&t](text: &t [byte], from: int, to: int) -> [] int {
+    var value = 0;
+    var i = from;
+    var digits = 0;
+    if to - from > 2 && lm.at(text, from) == '0' && (lm.at(text, from + 1) == 'x' || lm.at(text, from + 1) == 'X') {
+        i = from + 2;
+        while i < to {
+            let c = lm.at(text, i);
+            var d = 0 - 1;
+            if c >= '0' && c <= '9' {
+                d = c - '0';
+            } else if c >= 'a' && c <= 'f' {
+                d = c - 'a' + 10;
+            } else if c >= 'A' && c <= 'F' {
+                d = c - 'A' + 10;
+            }
+            if d < 0 || value >= 1 << 58 {
+                return 0 - 1;
+            }
+            value = value * 16 + d;
+            digits = digits + 1;
+            i = i + 1;
+        }
+    } else {
+        while i < to {
+            let c = lm.at(text, i);
+            if c < '0' || c > '9' || value >= 1 << 58 {
+                return 0 - 1;
+            }
+            value = value * 10 + (c - '0');
+            digits = digits + 1;
+            i = i + 1;
+        }
+    }
+    if digits == 0 {
+        return 0 - 1;
+    }
+    return value;
+}
+
+fn verb_of[&t](text: &t [byte], from: int, to: int) -> [] int {
+    if is_word(text, from, to, "base") {
+        return v_base();
+    }
+    if is_word(text, from, to, "at") {
+        return v_at();
+    }
+    if is_word(text, from, to, "boot") {
+        return v_boot();
+    }
+    if is_word(text, from, to, "text") {
+        return v_text();
+    }
+    if is_word(text, from, to, "rodata") {
+        return v_rodata();
+    }
+    if is_word(text, from, to, "data") {
+        return v_data();
+    }
+    if is_word(text, from, to, "bss") {
+        return v_bss();
+    }
+    if is_word(text, from, to, "align") {
+        return v_align();
+    }
+    if is_word(text, from, to, "skip") {
+        return v_skip();
+    }
+    if is_word(text, from, to, "symbol") {
+        return v_symbol();
+    }
+    if is_word(text, from, to, "limit") {
+        return v_limit();
+    }
+    if is_word(text, from, to, "entry") {
+        return v_entry();
+    }
+    return 0;
+}
+
+// Has the table a line of this word already?
+fn seen[&l](l: &l [int], verb: int) -> [] bool {
+    var k = 0;
+    while k < count(l) {
+        if line(l, k, 0) == verb {
+            return true;
+        }
+        k = k + 1;
+    }
+    return false;
+}
+
+// The layout in `text`, read into `l`: 0, or 1 with the line and the reason in the head.
+pub fn read[&t, &l](text: &t [byte], l: &!l [int]) -> [] int {
+    if len(l) < head() {
+        return 1;
+    }
+    l[h_count()] = 0;
+    l[h_fail_line()] = 0;
+    l[h_fail_why()] = 0;
+    var i = 0;
+    var n = 1;
+    while i < len(text) {
+        // One line: to its end, or to the `#` that starts a comment.
+        var end = i;
+        while end < len(text) && int_of(text[end]) != 10 {
+            end = end + 1;
+        }
+        var stop = i;
+        while stop < end && int_of(text[stop]) != '#' {
+            stop = stop + 1;
+        }
+        let a = skip_blanks(text, i, stop);
+        if a < stop {
+            let b = word_end(text, a, stop);
+            let verb = verb_of(text, a, b);
+            let c = skip_blanks(text, b, stop);
+            let d = word_end(text, c, stop);
+            var rest = skip_blanks(text, d, stop);
+            let at = head() + 4 * count(l);
+            if verb == 0 {
+                return refuse(l, n, why_word());
+            }
+            if at + 4 > len(l) {
+                return refuse(l, n, why_room());
+            }
+            if verb != v_align() && verb != v_skip() && verb != v_symbol() && verb != v_at() && verb != v_limit() && seen(l, verb) {
+                return refuse(l, n, why_twice());
+            }
+            l[at] = verb;
+            l[at + 1] = 0;
+            l[at + 2] = 0;
+            l[at + 3] = 0;
+            if verb == v_text() || verb == v_rodata() || verb == v_data() || verb == v_bss() {
+                rest = c;
+            } else if verb == v_boot() || verb == v_entry() || verb == v_symbol() {
+                if d <= c {
+                    return refuse(l, n, why_name());
+                }
+                l[at + 1] = c;
+                l[at + 2] = d - c;
+                if verb == v_symbol() && rest < stop {
+                    // `= OFFSET`
+                    let e = word_end(text, rest, stop);
+                    let f = skip_blanks(text, e, stop);
+                    let g = word_end(text, f, stop);
+                    let value = number(text, f, g);
+                    if !is_word(text, rest, e, "=") || value < 0 {
+                        return refuse(l, n, why_number());
+                    }
+                    l[at + 3] = 1 + value;
+                    rest = skip_blanks(text, g, stop);
+                }
+            } else {
+                let value = number(text, c, d);
+                if value < 0 {
+                    return refuse(l, n, why_number());
+                }
+                if verb == v_align() && (value == 0 || value & value - 1 != 0) {
+                    return refuse(l, n, why_power());
+                }
+                l[at + 1] = value;
+            }
+            if rest < stop {
+                return refuse(l, n, why_more());
+            }
+            l[h_count()] = count(l) + 1;
+        }
+        i = end + 1;
+        n = n + 1;
+    }
+    return 0;
+}

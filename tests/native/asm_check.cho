@@ -1,0 +1,386 @@
+edition 7;
+module asm_check;
+
+// asm_check.cho -- a source assembled by `compiler/native/a64asm.cho` and printed as `tests/native/asm_vectors.py` prints what clang's assembler made of
+// it, so that `diff` with `tests/native/asm/NAME.expected` is the test (`docs/native-backend.md`, N7).
+//
+//     cancho build tests/native/asm_check.cho compiler/native/a64asm.cho compiler/native/a64asmops.cho compiler/native/a64.cho compiler/native/a64sys.cho compiler/native/llmod.cho --std -o EXE
+//     EXE FILE.S             the sections, labels and relocations; a source that is refused is `refused line N: WHY` and status 1
+//     EXE --damage FILE.S    every beginning of the source, and bytes of it replaced one at a time, assembled: how many were refused and accepted
+//
+// The lines: `section NAME align N size N`, then its bytes, 32 to a line; `label NAME SECTION OFFSET local|global` in the order of the names;
+// `relocation KIND SECTION OFFSET NAME ADDEND` in the order of the sections and offsets. A relocation to a label that is not global is printed as clang
+// writes it, to the label's section with the label's offset added. A label whose name begins `.L` is not printed: clang keeps none in its object.
+// Status 2 if the file cannot be read.
+
+import std.buffer;
+import std.io as console;
+import selfhost.a64asm as asm;
+
+fn hex(n: int) -> [] byte {
+    if n < 10 {
+        return byte_of('0' + n);
+    }
+    return byte_of('a' + n - 10);
+}
+
+// The name of section `k`: `.text` for the one the source did not name.
+fn section_name[&h, &s, &t](heap: &!h Heap, out: buffer.Buffer, source: &s [byte], t: &t [int], k: int) -> [heap] buffer.Buffer {
+    let start = asm.section(t, k, 0);
+    let n = asm.section(t, k, 1);
+    if n == 0 {
+        return buffer.append(heap, out, ".text");
+    }
+    return buffer.append(heap, out, source[start..start + n]);
+}
+
+// Is the name at `a` before the name at `b`, as bytes are ordered?
+fn before[&s](source: &s [byte], a: int, alen: int, b: int, blen: int) -> [] bool {
+    var i = 0;
+    while i < alen && i < blen {
+        let x = int_of(source[a + i]);
+        let y = int_of(source[b + i]);
+        if x != y {
+            return x < y;
+        }
+        i = i + 1;
+    }
+    return alen < blen;
+}
+
+// The label with the name of the source at `start`, or -1.
+fn label_named[&s, &t](source: &s [byte], t: &t [int], start: int, n: int) -> [] int {
+    var k = 0;
+    while k < asm.labels(t) {
+        if asm.label(t, k, 1) == n && !before(source, asm.label(t, k, 0), n, start, n) && !before(source, start, n, asm.label(t, k, 0), n) {
+            return k;
+        }
+        k = k + 1;
+    }
+    return 0 - 1;
+}
+
+fn kind_name(kind: int) -> [] &static [byte] {
+    if kind == asm.r_abs64() {
+        return "abs64";
+    }
+    if kind == asm.r_call26() {
+        return "call26";
+    }
+    if kind == asm.r_jump26() {
+        return "jump26";
+    }
+    if kind == asm.r_adr21() {
+        return "adr21";
+    }
+    if kind == asm.r_cond19() {
+        return "cond19";
+    }
+    if kind == asm.r_literal19() {
+        return "literal19";
+    }
+    return "unknown";
+}
+
+// What the table and the bytes say, as text.
+fn listing[&h, &s, &t, &b](heap: &!h Heap, source: &s [byte], t: &t [int], bytes: &b [byte]) -> [heap] buffer.Buffer {
+    var out = buffer.empty(heap, 4096);
+    var k = 0;
+    while k < asm.sections(t) {
+        out = buffer.append(heap, out, "section ");
+        out = section_name(heap, out, source, t, k);
+        out = buffer.append(heap, out, " align ");
+        out = buffer.push_nat(heap, out, asm.section(t, k, 4));
+        out = buffer.append(heap, out, " size ");
+        out = buffer.push_nat(heap, out, asm.section(t, k, 3));
+        out = buffer.append(heap, out, "\n");
+        let from = asm.section(t, k, 2);
+        var i = 0;
+        while i < asm.section(t, k, 3) && from + i < len(bytes) {
+            if i % 32 == 0 {
+                out = buffer.append(heap, out, "bytes ");
+            }
+            let v = int_of(bytes[from + i]);
+            out = buffer.push(heap, out, hex(v >> 4));
+            out = buffer.push(heap, out, hex(v & 15));
+            i = i + 1;
+            if i % 32 == 0 || i == asm.section(t, k, 3) {
+                out = buffer.append(heap, out, "\n");
+            }
+        }
+        k = k + 1;
+    }
+    // The labels in the order of their names: each time the least name after the one printed last.
+    var last = 0 - 1;
+    var going = true;
+    while going {
+        var next = 0 - 1;
+        k = 0;
+        while k < asm.labels(t) {
+            let start = asm.label(t, k, 0);
+            let n = asm.label(t, k, 1);
+            let after = last < 0 || before(source, asm.label(t, last, 0), asm.label(t, last, 1), start, n);
+            if after && (next < 0 || before(source, start, n, asm.label(t, next, 0), asm.label(t, next, 1))) {
+                next = k;
+            }
+            k = k + 1;
+        }
+        if next < 0 {
+            going = false;
+        } else {
+            let start = asm.label(t, next, 0);
+            let n = asm.label(t, next, 1);
+            if !(n >= 2 && int_of(source[start]) == '.' && int_of(source[start + 1]) == 'L') {
+                out = buffer.append(heap, out, "label ");
+                out = buffer.append(heap, out, source[start..start + n]);
+                out = buffer.append(heap, out, " ");
+                out = section_name(heap, out, source, t, asm.label(t, next, 2));
+                out = buffer.append(heap, out, " ");
+                out = buffer.push_nat(heap, out, asm.label(t, next, 3));
+                if asm.label(t, next, 4) == 1 {
+                    out = buffer.append(heap, out, " global\n");
+                } else {
+                    out = buffer.append(heap, out, " local\n");
+                }
+            }
+            last = next;
+        }
+    }
+    k = 0;
+    while k < asm.relocations(t) {
+        out = buffer.append(heap, out, "relocation ");
+        out = buffer.append(heap, out, kind_name(asm.relocation(t, k, 0)));
+        out = buffer.append(heap, out, " ");
+        out = section_name(heap, out, source, t, asm.relocation(t, k, 1));
+        out = buffer.append(heap, out, " ");
+        out = buffer.push_nat(heap, out, asm.relocation(t, k, 2));
+        out = buffer.append(heap, out, " ");
+        let start = asm.relocation(t, k, 3);
+        let n = asm.relocation(t, k, 4);
+        var addend = asm.relocation(t, k, 5);
+        let l = label_named(source, t, start, n);
+        if l >= 0 && asm.label(t, l, 4) == 0 {
+            out = section_name(heap, out, source, t, asm.label(t, l, 2));
+            addend = addend + asm.label(t, l, 3);
+        } else {
+            out = buffer.append(heap, out, source[start..start + n]);
+        }
+        out = buffer.append(heap, out, " ");
+        out = buffer.push_nat(heap, out, addend);
+        out = buffer.append(heap, out, "\n");
+        k = k + 1;
+    }
+    return out;
+}
+
+// The source assembled and printed. The status.
+fn show[&h, &i, &s](heap: &!h Heap, io: &!i Io, source: &s [byte]) -> [heap, io_write] int {
+    var status = 0;
+    let table = box_slice(heap, asm.room(source), 0);
+    var bytes = buffer.empty(heap, 4096);
+    var out = buffer.empty(heap, 64);
+    borrow mut table as &!tw in {
+        let t = contents(tw);
+        bytes = asm.assemble(heap, source, t, bytes);
+        if asm.failed(t) {
+            status = 1;
+            out = buffer.append(heap, out, "refused line ");
+            out = buffer.push_nat(heap, out, asm.fail_line(t));
+            out = buffer.append(heap, out, ": ");
+            out = buffer.append(heap, out, asm.why_text(asm.fail_why(t)));
+            out = buffer.append(heap, out, "\n");
+        } else {
+            borrow bytes as &bb in {
+                buffer.drop(heap, out);
+                out = listing(heap, source, t, buffer.bytes(bb));
+            }
+        }
+    }
+    borrow out as &ob in {
+        buffer.write(io, ob);
+    }
+    buffer.drop(heap, out);
+    buffer.drop(heap, bytes);
+    unbox_slice(heap, table);
+    return status;
+}
+
+// One source assembled: 0 accepted, 1 refused, 2 refused for want of room in a table of `room` cells, which is never to happen.
+fn once[&h, &s](heap: &!h Heap, source: &s [byte]) -> [heap] int {
+    var answer = 0;
+    let table = box_slice(heap, asm.room(source), 0);
+    var bytes = buffer.empty(heap, 4096);
+    borrow mut table as &!tw in {
+        let t = contents(tw);
+        bytes = asm.assemble(heap, source, t, bytes);
+        if asm.failed(t) {
+            answer = 1;
+            if asm.fail_why(t) == 1 {
+                answer = 2;
+            }
+        }
+    }
+    buffer.drop(heap, bytes);
+    unbox_slice(heap, table);
+    return answer;
+}
+
+// Every beginning of the source, and at some four hundred places each of eighteen bytes in place of the one that is there. What matters is that this
+// function returns: nothing the assembler is given may trap.
+fn damage[&h, &i, &s](heap: &!h Heap, io: &!i Io, source: &s [byte]) -> [heap, io_write] int {
+    let others = "\n ,:#=[]\\(09x.\"-/b";
+    var refused = 0;
+    var accepted = 0;
+    var roomless = 0;
+    var runs = 0;
+    var n = 0;
+    while n <= len(source) {
+        let a = once(heap, source[0..n]);
+        if a == 0 {
+            accepted = accepted + 1;
+        } else {
+            refused = refused + 1;
+        }
+        if a == 2 {
+            roomless = roomless + 1;
+        }
+        runs = runs + 1;
+        n = n + 1;
+    }
+    let truncations = runs;
+    let copy = box_slice(heap, len(source), byte_of(0));
+    borrow mut copy as &!cw in {
+        let c = contents(cw);
+        var i = 0;
+        while i < len(source) {
+            c[i] = source[i];
+            i = i + 1;
+        }
+        var step = len(source) / 400;
+        if step < 1 {
+            step = 1;
+        }
+        var p = step / 2;
+        while p < len(source) {
+            var w = 0;
+            while w <= len(others) + 1 {
+                // The eighteen, then a byte that is no text at all, and one that is no ASCII.
+                var b = byte_of(0);
+                if w < len(others) {
+                    b = others[w];
+                } else if w == len(others) + 1 {
+                    b = byte_of(200);
+                }
+                c[p] = b;
+                let a = once(heap, c);
+                if a == 0 {
+                    accepted = accepted + 1;
+                } else {
+                    refused = refused + 1;
+                }
+                if a == 2 {
+                    roomless = roomless + 1;
+                }
+                runs = runs + 1;
+                w = w + 1;
+            }
+            c[p] = source[p];
+            p = p + step;
+        }
+    }
+    unbox_slice(heap, copy);
+    var out = buffer.append(heap, buffer.empty(heap, 128), "beginnings ");
+    out = buffer.push_nat(heap, out, truncations);
+    out = buffer.append(heap, out, " replacements ");
+    out = buffer.push_nat(heap, out, runs - truncations);
+    out = buffer.append(heap, out, " refused ");
+    out = buffer.push_nat(heap, out, refused);
+    out = buffer.append(heap, out, " accepted ");
+    out = buffer.push_nat(heap, out, accepted);
+    out = buffer.append(heap, out, " without room ");
+    out = buffer.push_nat(heap, out, roomless);
+    out = buffer.append(heap, out, "\n");
+    borrow out as &ob in {
+        buffer.write(io, ob);
+    }
+    buffer.drop(heap, out);
+    if roomless > 0 {
+        return 1;
+    }
+    return 0;
+}
+
+fn read_all[&h, &f, &p](heap: &!h Heap, fs: &f Fs(""), path: &p [byte]) -> [heap, fs_read(""), file_read] (buffer.Buffer, int) {
+    var out = buffer.empty(heap, 4096);
+    var failed = 0;
+    match open_read(fs, path) {
+        Opened::Failed(reason) => {
+            failed = 1;
+        }
+        Opened::Ok(opened) => {
+            var file = opened;
+            var chunk = buffer.empty(heap, 65536);
+            borrow mut file as &!handle in {
+                var going = true;
+                while going {
+                    borrow mut chunk as &!c in {
+                        match file_read(handle, buffer.room(c)) {
+                            Read::Got(n) => {
+                                buffer.filled(c, n);
+                                out = buffer.append(heap, out, buffer.bytes(c));
+                                buffer.clear(c);
+                            }
+                            Read::End => {
+                                going = false;
+                            }
+                            Read::Failed(reason) => {
+                                going = false;
+                                failed = 1;
+                            }
+                        }
+                    }
+                }
+            }
+            buffer.drop(heap, chunk);
+            file_close(file);
+        }
+    }
+    return (out, failed);
+}
+
+fn main(world: World) -> [] int {
+    let Split { io, ffi, fs, heap, args, net, clock, signals, exec } = split(world);
+    release(ffi);
+    release(net);
+    release(clock);
+    release(signals);
+    release(exec);
+    var status = 2;
+    borrow mut heap as &!h in {
+        borrow mut io as &!i in {
+            borrow args as &a in {
+                borrow fs as &f in {
+                    let n = arg_count(a);
+                    if n == 2 || n == 3 {
+                        let (text, failed) = read_all(h, f, arg(a, n - 1));
+                        if failed == 0 {
+                            borrow text as &tb in {
+                                if n == 2 {
+                                    status = show(h, i, buffer.bytes(tb));
+                                } else {
+                                    status = damage(h, i, buffer.bytes(tb));
+                                }
+                            }
+                        }
+                        buffer.drop(h, text);
+                    }
+                }
+            }
+        }
+    }
+    release(fs);
+    release(args);
+    release(heap);
+    release(io);
+    return status;
+}

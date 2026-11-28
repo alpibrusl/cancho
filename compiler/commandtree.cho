@@ -11,7 +11,7 @@ fn usage_0[&h](heap: &!h Heap, out: buffer.Buffer) -> [heap] buffer.Buffer {
     b = buffer.append(heap, b, "cancho — the bootstrap compiler for the cancho systems dialect\n");
     b = buffer.append(heap, b, "\n");
     b = buffer.append(heap, b, "usage:\n");
-    b = buffer.append(heap, b, "    cancho build <file.cho>... [-o <output>] [--emit exe|obj|ll] [--std] [--backend llvm|native] [--target <triple>] [-l <name>]... [-L <path>]... [--clang <path>]\n");
+    b = buffer.append(heap, b, "    cancho build <file.cho>... [-o <output>] [--emit exe|obj|ll|image] [--std] [--backend llvm|native] [--target <triple>] [--layout <file>] [-l <name>]... [-L <path>]... [--clang <path>]\n");
     b = buffer.append(heap, b, "    cancho check <file.cho>... [--std] [--output json] [--backend llvm|native] [--target <triple>]\n");
     b = buffer.append(heap, b, "    cancho run   <file.cho>... [--std] [--backend llvm|native] [--target <triple>] [-l <name>]... [-L <path>]...\n");
     b = buffer.append(heap, b, "    cancho test  <file.cho>... [--std] [--backend llvm|native] [-l <name>]... [-L <path>]...\n");
@@ -40,7 +40,8 @@ fn usage_0[&h](heap: &!h Heap, out: buffer.Buffer) -> [heap] buffer.Buffer {
     b = buffer.append(heap, b, "\n");
     b = buffer.append(heap, b, "options:\n");
     b = buffer.append(heap, b, "    -o <output>     where to write the result (default: the first input's stem)\n");
-    b = buffer.append(heap, b, "    --emit exe|obj|ll  emit a linked executable (default), a bare object file, or the LLVM module with no clang\n");
+    b = buffer.append(heap, b, "    --emit exe|obj|ll|image  emit a linked executable (default), a bare object file, the LLVM module with no clang, or with `--layout` the image that boots\n");
+    b = buffer.append(heap, b, "    --layout <file>  (build, with `--target aarch64-none-elf --backend native`) where the parts of an image for no system go; the compiler writes the image itself, with no linker (docs/native-backend.md section 16)\n");
     b = buffer.append(heap, b, "    --std           make the standard library's source available\n");
     b = buffer.append(heap, b, "    --clang <path>  (build) the clang that compiles the generated LLVM IR and links it (default: /usr/bin/clang)\n");
     return b;

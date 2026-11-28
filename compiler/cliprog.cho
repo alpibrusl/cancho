@@ -28,6 +28,7 @@ import selfhost.satisfytext;
 import selfhost.clibase;
 import selfhost.cliedges;
 import selfhost.llback;
+import selfhost.cliimage;
 
 // The program `tool` started with the arguments in `list` (each followed by a NUL) and waited for, its standard output (or, with `err`,
 // its standard error) written to the file at `log`: its exit status, 128 and the signal if it was killed, or 255 if it did not run.
@@ -259,6 +260,10 @@ fn link_object[&h, &i, &a, &f, &x, &r, &o, &c](heap: &!h Heap, io: &!i Io, args:
 pub fn make_through[&h, &i, &a, &f, &x, &r, &o, &c, &p](heap: &!h Heap, io: &!i Io, args: &a Args, fs: &f Fs(""), exec: &x Exec(""), ir: &r [byte], out: &o [byte], clang: &c [byte], obj: bool, bare: bool, ll: bool, backend: int, target: int, path: &p [byte]) -> [heap, io_write, err_write, args, fs_read(""), fs_write(""), file_read, file_write, exec("")] int {
     if backend == 0 {
         return emit_module(heap, io, args, fs, exec, ir, out, clang, obj, bare, ll);
+    }
+    if backend == llback.native() && bare && cliimage.layout_at(args) >= 0 {
+        // `--layout`: the image itself, with no linker (`docs/native-backend.md` section 16).
+        return cliimage.make(heap, io, args, fs, ir, out, path);
     }
     let llback.Judged { text, line, why } = llback.through(heap, ir, backend, target);
     var status = 0;
@@ -547,6 +552,8 @@ pub fn program_command[&h, &i, &a, &f, &x, &c](heap: &!h Heap, io: &!i Io, args:
     var ll = false;
     var clang_at = 0 - 1;
     var std_dir = 0 - 1;
+    var layout_at = 0 - 1;
+    var image_asked = false;
     var files = 0;
     var n = 2;
     while n < arg_count(args) {
@@ -599,9 +606,17 @@ pub fn program_command[&h, &i, &a, &f, &x, &c](heap: &!h Heap, io: &!i Io, args:
                 obj = true;
             } else if n < arg_count(args) && bytes.equal(arg(args, n), "ll") && !run {
                 ll = true;
+            } else if n < arg_count(args) && bytes.equal(arg(args, n), "image") && !run {
+                image_asked = true;
             } else if n >= arg_count(args) || !bytes.equal(arg(args, n), "exe") {
-                return clibase.usage_error(heap, io, "`--emit` needs exe, obj or ll");
+                return clibase.usage_error(heap, io, "`--emit` needs exe, obj, ll or image");
             }
+        } else if build && !run && bytes.equal(word, "--layout") {
+            n = n + 1;
+            if n >= arg_count(args) {
+                return clibase.usage_error(heap, io, "`--layout` needs a file");
+            }
+            layout_at = n;
         } else if build && (bytes.equal(word, "-l") || bytes.equal(word, "-L")) {
             n = n + 1;
             if n >= arg_count(args) {
@@ -655,7 +670,13 @@ pub fn program_command[&h, &i, &a, &f, &x, &c](heap: &!h Heap, io: &!i Io, args:
     if files == 0 {
         return clibase.usage_error(heap, io, "no file given");
     }
-    if build && host == 3 && !obj && !ll {
+    if layout_at >= 0 && (host != 3 || backend != llback.native() || obj || ll) {
+        return clibase.usage_error(heap, io, "`--layout` places a program for no system that the native backend builds: it goes with `--target aarch64-none-elf --backend native`, and not with `--emit obj` or `--emit ll`");
+    }
+    if image_asked && layout_at < 0 {
+        return clibase.usage_error(heap, io, "`--emit image` needs `--layout`: the file that says where the image's parts go");
+    }
+    if build && host == 3 && !obj && !ll && layout_at < 0 {
         return clibase.usage_error(heap, io, "`--target aarch64-none-elf` makes an object file or a module, which the program's own link script places: add `--emit obj` or `--emit ll`");
     }
     let loaded = load_program(heap, io, args, fs, build, run, std_dir, "", "");

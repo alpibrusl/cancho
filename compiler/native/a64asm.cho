@@ -1,0 +1,862 @@
+edition 7;
+module selfhost.a64asm;
+
+// a64asm.cho -- an assembler for what a kernel's boot page is written in (`docs/native-backend.md`, N7): the instructions and directives of that page and
+// no others, on the encoder of `a64.cho`. What it writes is what clang's assembler writes for the same source, section by section, with the same
+// relocations: `tests/native/asm/*.expected` are clang's answers (`tests/native/asm_vectors.py`), and `tests/commands/native_asm.sh` holds this to them.
+// Pure but for the buffer it appends to, and no trap: a source it does not understand is refused with its line and a reason, never guessed at.
+//
+// The subset. Comments from `//`. Labels `name:` and `1:`, the second named by `1b` and `1f`. `.section NAME, "ax"`, `.global NAME`, `.balign N`,
+// `.quad` of numbers and names, `.macro NAME PARAMETER...` to `.endm` with `\PARAMETER` in its lines. Numbers decimal or `0x`, with `( ) + - | <<`.
+// `mov ldr str ldrb strb add sub subs cmp cmn and orr bic lsl lsr ubfx clz b bl br b.COND cbz cbnz adr msr mrs isb dsb ic dc tlbi wfe eret`, in the forms
+// `a64asmops.cho` has. Lower case only, but the name of a system register.
+//
+// What is clang's and is kept: section 0 is always `.text`, of alignment 4, there before any directive and empty if nothing is put in it (it has a name in
+// the source only once the source names it); another section's alignment is 1 until a `.balign` or a literal raises it; `.balign` pads code with `nop`;
+// the literals of `ldr r, =v` go after the last byte of their section, each aligned to its own size with zeros, one entry for a value however often it is
+// loaded. A label of the same section that is not `.global` is resolved here; a `.global` one, one of another section and a name the source does not
+// define are relocations, the instruction's field left zero.
+//
+// Two things differ from clang's object and are for whoever reads the table to know. A relocation names the label as the source wrote it; clang's names
+// the section and adds the label's offset when the label is not global (`tests/native/asm_check.cho` prints clang's form from this one). And the lines of
+// a macro are refused, and so reported, at the line that used the macro.
+
+import std.buffer;
+import selfhost.a64;
+import selfhost.a64asmops as ops;
+
+// ---- the size of the table ----
+
+fn line_end[&s](source: &s [byte], from: int) -> [] int {
+    var i = from;
+    while i < len(source) && int_of(source[i]) != '\n' {
+        i = i + 1;
+    }
+    return i;
+}
+
+// Does the line of the source from `from` to `to` begin with the word `w`?
+fn begins[&s, &w](source: &s [byte], from: int, to: int, w: &w [byte]) -> [] bool {
+    var i = from;
+    while i < to && (ops.at(source, i) == ' ' || ops.at(source, i) == '\t') {
+        i = i + 1;
+    }
+    if i + len(w) > to {
+        return false;
+    }
+    var k = 0;
+    while k < len(w) {
+        if ops.at(source, i + k) != int_of(w[k]) {
+            return false;
+        }
+        k = k + 1;
+    }
+    return i + k >= to || !ops.is_name(ops.at(source, i + k));
+}
+
+// How many records a list may need, and how many macros there are. A line makes at most a label for each `:`, a relocation for each `,` and one more, and
+// one record of any other list; a line of a macro makes them once for every line that may use the macro.
+fn counts[&s](source: &s [byte]) -> [] (int, int) {
+    var outside = 8;
+    var inside = 0;
+    var users = 1;
+    var macros = 0;
+    var defining = false;
+    var from = 0;
+    while from < len(source) {
+        let to = line_end(source, from);
+        var k = 2;
+        var i = from;
+        while i < to {
+            let c = int_of(source[i]);
+            if c == ':' || c == ',' || c == '=' {
+                k = k + 1;
+            }
+            i = i + 1;
+        }
+        if defining && !begins(source, from, to, ".endm") {
+            inside = inside + k;
+        } else if defining {
+            defining = false;
+        } else if begins(source, from, to, ".macro") {
+            defining = true;
+            macros = macros + 1;
+        } else {
+            outside = outside + k;
+            users = users + 1;
+        }
+        from = to + 1;
+    }
+    return (outside + inside * users, macros);
+}
+
+// The widths of the six lists that share one bound.
+fn widths() -> [] int {
+    return 28;
+}
+
+fn source_limit() -> [] int {
+    return 1 << 24;
+}
+
+// The cells the table needs for this source: an upper bound.
+pub fn room[&s](source: &s [byte]) -> [] int {
+    if len(source) > source_limit() {
+        return ops.h_text() + ops.line_room();
+    }
+    let (cap, macros) = counts(source);
+    return ops.h_text() + ops.line_room() + cap * widths() + macros * ops.width(ops.l_macro());
+}
+
+// ---- what the table says ----
+
+pub fn failed[&t](t: &t [int]) -> [] bool {
+    return ops.failed(t);
+}
+
+// The line of the source that was refused, counted from 1.
+pub fn fail_line[&t](t: &t [int]) -> [] int {
+    return ops.get(t, 1);
+}
+
+pub fn fail_why[&t](t: &t [int]) -> [] int {
+    if len(t) < 3 {
+        return ops.why_room();
+    }
+    return t[2];
+}
+
+fn why_source() -> [] int {
+    return 3;
+}
+
+fn why_unterminated() -> [] int {
+    return 13;
+}
+
+fn why_section() -> [] int {
+    return 18;
+}
+
+fn why_align() -> [] int {
+    return 19;
+}
+
+pub fn why_text(why: int) -> [] &static [byte] {
+    if why == ops.why_room() {
+        return "the table has no room for this source";
+    }
+    if why == ops.why_long() {
+        return "a line is over 512 bytes";
+    }
+    if why == why_source() {
+        return "the source is over 16 MB";
+    }
+    if why == ops.why_mnemonic() {
+        return "this is not an instruction of the subset";
+    }
+    if why == ops.why_directive() {
+        return "this is not a directive of the subset";
+    }
+    if why == ops.why_register() {
+        return "a register was expected";
+    }
+    if why == ops.why_operand() {
+        return "this register cannot be the operand here";
+    }
+    if why == ops.why_number() {
+        return "a number was expected";
+    }
+    if why == ops.why_encoding() {
+        return "the instruction has no encoding for this operand";
+    }
+    if why == ops.why_range() {
+        return "the label is too far from the instruction";
+    }
+    if why == ops.why_numbered() {
+        return "no numbered label of this section is there in that direction";
+    }
+    if why == ops.why_twice() {
+        return "the name is defined twice";
+    }
+    if why == why_unterminated() {
+        return "the macro has no .endm";
+    }
+    if why == ops.why_macro() {
+        return "a macro is used or written in a way the subset does not have";
+    }
+    if why == ops.why_syntax() {
+        return "this is not what the statement may have here";
+    }
+    if why == ops.why_system() {
+        return "this is not a system register or operation of the subset";
+    }
+    if why == ops.why_pool() {
+        return "one number is loaded both as 32 bits and as 64, which clang makes one literal of";
+    }
+    if why == why_section() {
+        return "a section is a name and \"ax\"";
+    }
+    if why == why_align() {
+        return "an alignment is a power of two up to 65536";
+    }
+    if why == ops.why_size() {
+        return "a section is over 256 MB";
+    }
+    return "no refusal";
+}
+
+pub fn sections[&t](t: &t [int]) -> [] int {
+    return ops.count(t, ops.l_section());
+}
+
+// Of section `k`: 0 where its name is in the source, 1 the name's length (0: the source never names `.text`), 2 its offset in the bytes that were
+// appended, 3 its size, 4 its alignment.
+pub fn section[&t](t: &t [int], k: int, c: int) -> [] int {
+    if c < 0 || c > 4 {
+        return 0;
+    }
+    return ops.rec(t, ops.l_section(), k, c);
+}
+
+// The labels that have names.
+pub fn labels[&t](t: &t [int]) -> [] int {
+    return ops.count(t, ops.l_label());
+}
+
+// Of label `k`: 0 where its name is, 1 the name's length, 2 its section, 3 its offset there, 4 whether it is `.global`.
+pub fn label[&t](t: &t [int], k: int, c: int) -> [] int {
+    return ops.rec(t, ops.l_label(), k, c);
+}
+
+pub fn relocations[&t](t: &t [int]) -> [] int {
+    return ops.count(t, ops.l_reloc());
+}
+
+// Of relocation `k`: 0 its kind, 1 the section it is in, 2 its offset there, 3 where the name it is to is written, 4 the name's length, 5 what is added.
+pub fn relocation[&t](t: &t [int], k: int, c: int) -> [] int {
+    return ops.rec(t, ops.l_reloc(), k, c);
+}
+
+pub fn r_abs64() -> [] int {
+    return ops.r_abs64();
+}
+
+pub fn r_call26() -> [] int {
+    return ops.r_call26();
+}
+
+pub fn r_jump26() -> [] int {
+    return ops.r_jump26();
+}
+
+pub fn r_adr21() -> [] int {
+    return ops.r_adr21();
+}
+
+pub fn r_cond19() -> [] int {
+    return ops.r_cond19();
+}
+
+pub fn r_literal19() -> [] int {
+    return ops.r_literal19();
+}
+
+// ---- a line ----
+
+fn keep[&t](t: &!t [int], n: int, c: int, from: int) -> [] int {
+    if n >= ops.line_room() {
+        ops.refuse(t, ops.why_long());
+        return n;
+    }
+    ops.put(t, ops.h_text() + n, c | from << 8);
+    return n + 1;
+}
+
+// The source from `from` to `to` becomes the line being read, without its comment. In a macro's line `\NAME` is the argument the macro was used with.
+fn load[&t, &s](t: &!t [int], source: &s [byte], from: int, to: int) -> [] int {
+    let m = ops.get(t, ops.h_macro()) - 1;
+    var n = 0;
+    var i = from;
+    var going = true;
+    while going && i < to {
+        let c = ops.at(source, i);
+        if c == '/' && i + 1 < to && ops.at(source, i + 1) == '/' {
+            going = false;
+        } else if c == '\\' && m >= 0 {
+            var j = i + 1;
+            while j < to && ops.is_name(ops.at(source, j)) {
+                j = j + 1;
+            }
+            var p = 0;
+            var found = 0 - 1;
+            while p < ops.rec(t, ops.l_macro(), m, 4) && p < 8 {
+                if ops.same(source, ops.rec(t, ops.l_macro(), m, 5 + 2 * p), ops.rec(t, ops.l_macro(), m, 6 + 2 * p), i + 1, j - i - 1) {
+                    found = p;
+                }
+                p = p + 1;
+            }
+            if found < 0 {
+                ops.refuse(t, ops.why_macro());
+                going = false;
+            } else {
+                let start = ops.get(t, ops.h_args() + 2 * found);
+                var k = 0;
+                while k < ops.get(t, ops.h_args() + 2 * found + 1) {
+                    n = keep(t, n, ops.at(source, start + k), start + k);
+                    k = k + 1;
+                }
+                i = j;
+            }
+        } else {
+            n = keep(t, n, c, i);
+            i = i + 1;
+        }
+    }
+    ops.put(t, ops.h_len(), n);
+    ops.put(t, ops.h_at(), 0);
+    return 0;
+}
+
+// ---- directives ----
+
+// `.section NAME, "ax"`: the section of that name, made if it is new, is the one written from here.
+fn directive_section[&t, &s](t: &!t [int], source: &s [byte]) -> [] int {
+    let from = ops.blanks(t);
+    let to = ops.name_end(t, from);
+    if to == from {
+        return ops.refuse(t, why_section());
+    }
+    let start = ops.name_start(t, from, to);
+    ops.put(t, ops.h_at(), to);
+    ops.need(t, ',');
+    let q = ops.blanks(t);
+    if ops.ch(t, q) != '"' || ops.ch(t, q + 1) != 'a' || ops.ch(t, q + 2) != 'x' || ops.ch(t, q + 3) != '"' {
+        return ops.refuse(t, why_section());
+    }
+    ops.put(t, ops.h_at(), q + 4);
+    ops.done(t);
+    if ops.failed(t) {
+        return 0;
+    }
+    var found = 0 - 1;
+    if ops.word_is(t, from, to, ".text") {
+        found = 0;
+        if ops.rec(t, ops.l_section(), 0, 1) == 0 {
+            ops.set(t, ops.l_section(), 0, 0, start);
+            ops.set(t, ops.l_section(), 0, 1, to - from);
+        }
+    }
+    var k = 1;
+    while k < sections(t) && found < 0 {
+        if ops.same(source, ops.rec(t, ops.l_section(), k, 0), ops.rec(t, ops.l_section(), k, 1), start, to - from) {
+            found = k;
+        }
+        k = k + 1;
+    }
+    if found < 0 {
+        if ops.get(t, ops.h_pass()) >= 0 {
+            return ops.refuse(t, ops.why_room());
+        }
+        found = ops.add(t, ops.l_section());
+        ops.set(t, ops.l_section(), found, 0, start);
+        ops.set(t, ops.l_section(), found, 1, to - from);
+        ops.set(t, ops.l_section(), found, 4, 1);
+    }
+    if found >= 0 {
+        ops.put(t, ops.h_cur(), found);
+    }
+    return 0;
+}
+
+fn directive_global[&t](t: &!t [int]) -> [] int {
+    let from = ops.blanks(t);
+    let to = ops.name_end(t, from);
+    let start = ops.name_start(t, from, to);
+    ops.put(t, ops.h_at(), to);
+    ops.done(t);
+    if !ops.failed(t) && ops.get(t, ops.h_pass()) < 0 {
+        let k = ops.add(t, ops.l_global());
+        ops.set(t, ops.l_global(), k, 0, start);
+        ops.set(t, ops.l_global(), k, 1, to - from);
+    }
+    return 0;
+}
+
+// `.balign N`: how many bytes of padding that is here, and the section is aligned at least so.
+fn directive_balign[&t](t: &!t [int]) -> [] int {
+    let n = ops.expression(t);
+    ops.done(t);
+    if ops.failed(t) {
+        return 0;
+    }
+    if n < 1 || n > 65536 || n & n - 1 != 0 {
+        return ops.refuse(t, why_align());
+    }
+    let cur = ops.get(t, ops.h_cur());
+    if n > ops.rec(t, ops.l_section(), cur, 4) {
+        ops.set(t, ops.l_section(), cur, 4, n);
+    }
+    ops.put(t, ops.h_word(), (n - ops.here(t) % n) % n);
+    return 0;
+}
+
+// One value of a `.quad`: a number, or a name, which is 0 and a relocation.
+fn quad_value[&t](t: &!t [int]) -> [] int {
+    let from = ops.blanks(t);
+    if ops.is_name_start(ops.ch(t, from)) {
+        let to = ops.name_end(t, from);
+        let start = ops.name_start(t, from, to);
+        ops.put(t, ops.h_at(), to);
+        if !ops.failed(t) && ops.writing(t) {
+            ops.relocate(t, ops.r_abs64(), ops.here(t), start, to - from);
+        }
+        return 0;
+    }
+    return ops.expression(t);
+}
+
+// ---- macros ----
+
+// The line `.macro NAME PARAMETER...` (the line being read): the macro's record, its body beginning at `body`. Its number plus one.
+fn macro_open[&t, &s](t: &!t [int], source: &s [byte], body: int) -> [] int {
+    var from = ops.blanks(t) + 6;
+    ops.put(t, ops.h_at(), from);
+    from = ops.blanks(t);
+    var to = ops.name_end(t, from);
+    let start = ops.name_start(t, from, to);
+    if ops.failed(t) {
+        return 1;
+    }
+    var k = 0;
+    while k < ops.count(t, ops.l_macro()) {
+        if ops.same(source, ops.rec(t, ops.l_macro(), k, 0), ops.rec(t, ops.l_macro(), k, 1), start, to - from) {
+            ops.refuse(t, ops.why_twice());
+        }
+        k = k + 1;
+    }
+    let m = ops.add(t, ops.l_macro());
+    ops.set(t, ops.l_macro(), m, 0, start);
+    ops.set(t, ops.l_macro(), m, 1, to - from);
+    ops.set(t, ops.l_macro(), m, 2, body);
+    ops.set(t, ops.l_macro(), m, 3, body);
+    var n = 0;
+    var going = true;
+    while going && !ops.failed(t) {
+        ops.put(t, ops.h_at(), to);
+        ops.eat(t, ',');
+        from = ops.blanks(t);
+        to = ops.name_end(t, from);
+        if from >= ops.get(t, ops.h_len()) {
+            going = false;
+        } else if to == from || n >= 8 {
+            ops.refuse(t, ops.why_macro());
+        } else {
+            ops.set(t, ops.l_macro(), m, 5 + 2 * n, ops.name_start(t, from, to));
+            ops.set(t, ops.l_macro(), m, 6 + 2 * n, to - from);
+            n = n + 1;
+        }
+    }
+    ops.set(t, ops.l_macro(), m, 4, n);
+    return m + 1;
+}
+
+// The macro whose name the line has from `from` to `to`, or -1.
+fn find_macro[&t, &s](t: &t [int], source: &s [byte], from: int, to: int) -> [] int {
+    var k = 0;
+    while k < ops.count(t, ops.l_macro()) {
+        if ops.word_same(t, from, to, source, ops.rec(t, ops.l_macro(), k, 0), ops.rec(t, ops.l_macro(), k, 1)) {
+            return k;
+        }
+        k = k + 1;
+    }
+    return 0 - 1;
+}
+
+// A macro is used: its arguments, between commas, one for each parameter, are kept for its lines. An argument is of this line as it is written (a macro
+// is not used in a macro's line), and has no `:` or `=` in it, so that a line of the macro makes no more records than `room` counted.
+fn macro_use[&t](t: &!t [int], m: int) -> [] int {
+    if ops.get(t, ops.h_macro()) != 0 {
+        return ops.refuse(t, ops.why_macro());
+    }
+    let n = ops.get(t, ops.h_len());
+    let wanted = ops.rec(t, ops.l_macro(), m, 4);
+    var p = ops.blanks(t);
+    var got = 0;
+    var more = p < n;
+    while more && !ops.failed(t) {
+        var to = p;
+        while to < n && ops.ch(t, to) != ',' {
+            let c = ops.ch(t, to);
+            if c == ':' || c == '=' || c == '\\' {
+                ops.refuse(t, ops.why_macro());
+            }
+            to = to + 1;
+        }
+        var last = to;
+        while last > p && (ops.ch(t, last - 1) == ' ' || ops.ch(t, last - 1) == '\t' || ops.ch(t, last - 1) == '\r') {
+            last = last - 1;
+        }
+        if got >= wanted || got >= 8 || last == p {
+            return ops.refuse(t, ops.why_macro());
+        }
+        ops.put(t, ops.h_args() + 2 * got, ops.name_start(t, p, last));
+        ops.put(t, ops.h_args() + 2 * got + 1, last - p);
+        got = got + 1;
+        more = to < n;
+        if more {
+            // After a comma there is another argument.
+            ops.put(t, ops.h_at(), to + 1);
+            p = ops.blanks(t);
+        }
+    }
+    if got != wanted {
+        return ops.refuse(t, ops.why_macro());
+    }
+    ops.put(t, ops.h_macro(), m + 1);
+    return 0;
+}
+
+// ---- statements ----
+
+// What a line leaves to be done once its labels are taken: 0 nothing, 1 the word at `h_word`, 2 that many bytes of padding, 3 the values of a `.quad`,
+// which are next in the line, 4 the lines of the macro at `h_macro`.
+fn dispatch[&t, &s](t: &!t [int], source: &s [byte], from: int, to: int) -> [] int {
+    if ops.word_is(t, from, to, ".section") {
+        directive_section(t, source);
+        return 0;
+    }
+    if ops.word_is(t, from, to, ".global") {
+        directive_global(t);
+        return 0;
+    }
+    if ops.word_is(t, from, to, ".balign") {
+        directive_balign(t);
+        return 2;
+    }
+    if ops.word_is(t, from, to, ".quad") {
+        return 3;
+    }
+    if ops.word_is(t, from, to, ".macro") || ops.word_is(t, from, to, ".endm") {
+        // A macro begins and ends at the beginning of a line, and `.endm` ends one.
+        ops.refuse(t, ops.why_macro());
+        return 0;
+    }
+    if ops.ch(t, from) == '.' {
+        ops.refuse(t, ops.why_directive());
+        return 0;
+    }
+    let m = find_macro(t, source, from, to);
+    if m >= 0 {
+        macro_use(t, m);
+        return 4;
+    }
+    ops.put(t, ops.h_word(), ops.instruction(t, source, from, to));
+    return 1;
+}
+
+// The line being read: its labels are defined (in the pass that finds them) and what is left is answered as `dispatch` does.
+fn statement[&t, &s](t: &!t [int], source: &s [byte]) -> [] int {
+    let collecting = ops.get(t, ops.h_pass()) < 0;
+    var code = 0 - 1;
+    while code < 0 && !ops.failed(t) {
+        let from = ops.blanks(t);
+        let c = ops.ch(t, from);
+        if from >= ops.get(t, ops.h_len()) {
+            code = 0;
+        } else if ops.is_digit(c) {
+            var v = 0;
+            var i = from;
+            while ops.is_digit(ops.ch(t, i)) && i - from < 9 {
+                v = v * 10 + ops.ch(t, i) - '0';
+                i = i + 1;
+            }
+            if ops.ch(t, i) != ':' {
+                ops.refuse(t, ops.why_syntax());
+            } else {
+                if collecting {
+                    let k = ops.add(t, ops.l_numbered());
+                    ops.set(t, ops.l_numbered(), k, 0, v);
+                    ops.set(t, ops.l_numbered(), k, 1, ops.get(t, ops.h_cur()));
+                    ops.set(t, ops.l_numbered(), k, 2, ops.here(t));
+                }
+                ops.put(t, ops.h_seen(), ops.get(t, ops.h_seen()) + 1);
+                ops.put(t, ops.h_at(), i + 1);
+            }
+        } else if ops.is_name_start(c) {
+            let to = ops.name_end(t, from);
+            ops.put(t, ops.h_at(), to);
+            if ops.ch(t, to) == ':' {
+                if collecting {
+                    let start = ops.name_start(t, from, to);
+                    if !ops.failed(t) && ops.find_label(t, source, start, to - from) >= 0 {
+                        ops.refuse(t, ops.why_twice());
+                    }
+                    let k = ops.add(t, ops.l_label());
+                    ops.set(t, ops.l_label(), k, 0, start);
+                    ops.set(t, ops.l_label(), k, 1, to - from);
+                    ops.set(t, ops.l_label(), k, 2, ops.get(t, ops.h_cur()));
+                    ops.set(t, ops.l_label(), k, 3, ops.here(t));
+                }
+                ops.put(t, ops.h_at(), to + 1);
+            } else {
+                code = dispatch(t, source, from, to);
+            }
+        } else {
+            ops.refuse(t, ops.why_syntax());
+        }
+    }
+    if ops.failed(t) {
+        return 0;
+    }
+    return code;
+}
+
+// ---- bytes ----
+
+// The section being written is `n` bytes further.
+fn advance[&t](t: &!t [int], n: int) -> [] int {
+    let cur = ops.get(t, ops.h_cur());
+    let to = ops.here(t) + n;
+    if to > 1 << 28 {
+        return ops.refuse(t, ops.why_size());
+    }
+    return ops.set(t, ops.l_section(), cur, 5, to);
+}
+
+// The low `n` bytes of `v`, the lowest first.
+fn value[&h](heap: &!h Heap, bytes: buffer.Buffer, v: int, n: int) -> [heap] buffer.Buffer {
+    var out = bytes;
+    var i = 0;
+    while i < n {
+        out = buffer.push(heap, out, byte_of(v >> 8 * i & 255));
+        i = i + 1;
+    }
+    return out;
+}
+
+// What a statement left (`code`, as `dispatch` answers) is written, if this pass writes this section, and the section is that much further.
+fn emit[&h, &t](heap: &!h Heap, t: &!t [int], bytes: buffer.Buffer, code: int) -> [heap] buffer.Buffer {
+    var out = bytes;
+    if ops.failed(t) {
+        return out;
+    }
+    if code == 1 {
+        if ops.writing(t) {
+            out = value(heap, out, ops.get(t, ops.h_word()), 4);
+        }
+        advance(t, 4);
+    } else if code == 2 {
+        // Code is padded with `nop`, after zeros to the next whole instruction.
+        let n = ops.get(t, ops.h_word());
+        if ops.writing(t) {
+            var i = 0;
+            while i < n % 4 {
+                out = buffer.push(heap, out, byte_of(0));
+                i = i + 1;
+            }
+            while i < n {
+                out = value(heap, out, a64.hint(0), 4);
+                i = i + 4;
+            }
+        }
+        advance(t, n);
+    } else if code == 3 {
+        var going = true;
+        while going && !ops.failed(t) {
+            let v = quad_value(t);
+            if !ops.failed(t) {
+                if ops.writing(t) {
+                    out = value(heap, out, v, 8);
+                }
+                advance(t, 8);
+            }
+            going = ops.eat(t, ',');
+        }
+        ops.done(t);
+    }
+    return out;
+}
+
+// The literals of section `k`, after its last byte: each at the offset it was given, zeros before it, and an address is a relocation.
+fn pool[&h, &t](heap: &!h Heap, t: &!t [int], bytes: buffer.Buffer, k: int) -> [heap] buffer.Buffer {
+    var out = bytes;
+    ops.put(t, ops.h_cur(), k);
+    var e = 0;
+    while e < ops.count(t, ops.l_pool()) && !ops.failed(t) {
+        if ops.rec(t, ops.l_pool(), e, 0) == k {
+            let offset = ops.rec(t, ops.l_pool(), e, 5);
+            let size = ops.rec(t, ops.l_pool(), e, 1);
+            while ops.here(t) < offset && !ops.failed(t) {
+                out = buffer.push(heap, out, byte_of(0));
+                advance(t, 1);
+            }
+            if ops.rec(t, ops.l_pool(), e, 2) == 1 {
+                ops.relocate(t, ops.r_abs64(), offset, ops.rec(t, ops.l_pool(), e, 3), ops.rec(t, ops.l_pool(), e, 4));
+                out = value(heap, out, 0, size);
+            } else {
+                out = value(heap, out, ops.rec(t, ops.l_pool(), e, 3), size);
+            }
+            advance(t, size);
+        }
+        e = e + 1;
+    }
+    return out;
+}
+
+// ---- the passes ----
+
+// The source is read once: in pass -1 for its labels, macros and literals and the size of each section, in pass `k` for the bytes of section `k`.
+fn pass[&h, &t, &s](heap: &!h Heap, t: &!t [int], source: &s [byte], bytes: buffer.Buffer, k: int) -> [heap] buffer.Buffer {
+    var out = bytes;
+    ops.put(t, ops.h_pass(), k);
+    ops.put(t, ops.h_cur(), 0);
+    ops.put(t, ops.h_seen(), 0);
+    ops.put(t, ops.h_macro(), 0);
+    var s = 0;
+    while s < sections(t) {
+        ops.set(t, ops.l_section(), s, 5, 0);
+        s = s + 1;
+    }
+    // The macro being defined (its number plus one, or 1 in a pass that defines none), and the line it began at.
+    var defining = 0;
+    var began = 0;
+    var from = 0;
+    var line = 1;
+    while from < len(source) && !ops.failed(t) {
+        let to = line_end(source, from);
+        ops.put(t, ops.h_line(), line);
+        if defining != 0 {
+            if begins(source, from, to, ".endm") {
+                load(t, source, from, to);
+                ops.put(t, ops.h_at(), ops.blanks(t) + 5);
+                ops.done(t);
+                if k < 0 {
+                    ops.set(t, ops.l_macro(), defining - 1, 3, from);
+                }
+                defining = 0;
+            } else if begins(source, from, to, ".macro") {
+                ops.refuse(t, ops.why_macro());
+            }
+        } else if begins(source, from, to, ".macro") {
+            defining = 1;
+            began = line;
+            if k < 0 {
+                load(t, source, from, to);
+                defining = macro_open(t, source, to + 1);
+            }
+        } else {
+            load(t, source, from, to);
+            let code = statement(t, source);
+            if code == 4 && !ops.failed(t) {
+                let m = ops.get(t, ops.h_macro()) - 1;
+                let stop = ops.rec(t, ops.l_macro(), m, 3);
+                var b = ops.rec(t, ops.l_macro(), m, 2);
+                while b < stop && !ops.failed(t) {
+                    let e = line_end(source, b);
+                    load(t, source, b, e);
+                    out = emit(heap, t, out, statement(t, source));
+                    b = e + 1;
+                }
+                ops.put(t, ops.h_macro(), 0);
+            } else {
+                out = emit(heap, t, out, code);
+            }
+        }
+        from = to + 1;
+        line = line + 1;
+    }
+    if defining != 0 && !ops.failed(t) {
+        ops.put(t, ops.h_line(), began);
+        ops.refuse(t, why_unterminated());
+    }
+    if k >= 0 {
+        out = pool(heap, t, out, k);
+    }
+    return out;
+}
+
+// After the pass that finds them: each literal's place after its section, each section's size and where its bytes will be, and which labels are global.
+fn settle[&t, &s](t: &!t [int], source: &s [byte]) -> [] int {
+    var offset = 0;
+    var k = 0;
+    while k < sections(t) {
+        var size = ops.rec(t, ops.l_section(), k, 5);
+        var e = 0;
+        while e < ops.count(t, ops.l_pool()) {
+            if ops.rec(t, ops.l_pool(), e, 0) == k {
+                let n = ops.rec(t, ops.l_pool(), e, 1);
+                size = size + (n - size % n) % n;
+                ops.set(t, ops.l_pool(), e, 5, size);
+                size = size + n;
+                if n > ops.rec(t, ops.l_section(), k, 4) {
+                    ops.set(t, ops.l_section(), k, 4, n);
+                }
+            }
+            e = e + 1;
+        }
+        ops.set(t, ops.l_section(), k, 2, offset);
+        ops.set(t, ops.l_section(), k, 3, size);
+        offset = offset + size;
+        k = k + 1;
+    }
+    var g = 0;
+    while g < ops.count(t, ops.l_global()) {
+        let l = ops.find_label(t, source, ops.rec(t, ops.l_global(), g, 0), ops.rec(t, ops.l_global(), g, 1));
+        if l >= 0 {
+            ops.set(t, ops.l_label(), l, 4, 1);
+        }
+        g = g + 1;
+    }
+    return 0;
+}
+
+// The source assembled: `t` is filled, and every section's bytes are appended to `bytes`, the sections one after another in the order the source first
+// has them. When the source is refused (`failed`) what was appended is of no use.
+pub fn assemble[&h, &s, &t](heap: &!h Heap, source: &s [byte], t: &!t [int], bytes: buffer.Buffer) -> [heap] buffer.Buffer {
+    var out = bytes;
+    let fixed = ops.h_text() + ops.line_room();
+    if len(t) < 3 {
+        return out;
+    }
+    var i = 0;
+    while i < fixed && i < len(t) {
+        t[i] = 0;
+        i = i + 1;
+    }
+    if len(t) < fixed {
+        ops.refuse(t, ops.why_room());
+        return out;
+    }
+    if len(source) > source_limit() {
+        ops.refuse(t, why_source());
+        return out;
+    }
+    let (cap, macros) = counts(source);
+    if len(t) < fixed + cap * widths() + macros * ops.width(ops.l_macro()) {
+        ops.refuse(t, ops.why_room());
+        return out;
+    }
+    ops.put(t, ops.h_cap(), cap);
+    ops.put(t, ops.h_macro_cap(), macros);
+    var base = fixed;
+    var list = 0;
+    while list < 7 {
+        ops.put(t, ops.h_lists() + 2 * list, base);
+        base = base + cap * ops.width(list);
+        list = list + 1;
+    }
+    // `.text` is there before the source says anything, and its alignment is an instruction's.
+    ops.add(t, ops.l_section());
+    ops.set(t, ops.l_section(), 0, 4, 4);
+    out = pass(heap, t, source, out, 0 - 1);
+    if !ops.failed(t) {
+        settle(t, source);
+    }
+    var k = 0;
+    while k < sections(t) && !ops.failed(t) {
+        out = pass(heap, t, source, out, k);
+        k = k + 1;
+    }
+    return out;
+}
