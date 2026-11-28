@@ -285,13 +285,18 @@ fn r_preds() -> [] int {
     return 39;
 }
 
-// The rest: frontiers, phis, their values, their index, the log.
-fn r_pool() -> [] int {
+// The register allocator's (`regalloc.cho`), which this pass does not read or write: the side table is everything the code generator reads beside the module.
+fn r_alloc() -> [] int {
     return 40;
 }
 
-fn regions() -> [] int {
+// The rest: frontiers, phis, their values, their index, the log.
+fn r_pool() -> [] int {
     return 41;
+}
+
+fn regions() -> [] int {
+    return 42;
 }
 
 pub fn header() -> [] int {
@@ -318,8 +323,20 @@ fn region_len(r: int, n: int, i: int, b: int, e: int) -> [] int {
     if r <= r_preds() {
         return e;
     }
+    if r == r_alloc() {
+        return alloc_room(n, i, b);
+    }
     // The pool: measured on the compiler's own module, where no function used more than (section 17.8).
     return 6 * i + 4 * e + 4 * b + 256;
+}
+
+// The cells the register allocator asks for a function of at most `n` names, `i` instructions and `b` blocks: for each value (the names and as many new
+// phis again, which is what the code generator makes room for) seven cells, two for each block, four bit sets of the values for each block, one for each
+// position of the order (`regalloc.need`, which must not ask for more).
+pub fn alloc_room(n: int, i: int, b: int) -> [] int {
+    let u = 2 * n + 8;
+    let words = (u + 63) / 64;
+    return 32 + 7 * u + 2 * b + 4 * b * words + 2 * (i + b) + 8 + 64;
 }
 
 // ---- cells ----
@@ -693,6 +710,75 @@ pub fn phi_value_from[&s](s: &s [int], k: int, from: int) -> [] int {
         j = j + 1;
     }
     return 0 - 1;
+}
+
+// ---- what the register allocator reads (`regalloc.cho`) ----
+
+// Where its cells are in the table, and how many.
+pub fn alloc_base[&s](s: &s [int]) -> [] int {
+    return base(s, r_alloc());
+}
+
+pub fn alloc_cells[&s](s: &s [int]) -> [] int {
+    if len(s) < header() {
+        return 0;
+    }
+    return length(s, r_alloc());
+}
+
+// What `promote` said of the function last given (0 done).
+pub fn status[&s](s: &s [int]) -> [] int {
+    return lm.cell(s, h_status());
+}
+
+// How many blocks the first reaches, and the `j`th of them in reverse postorder.
+pub fn reached_blocks[&s](s: &s [int]) -> [] int {
+    return lm.cell(s, h_reached());
+}
+
+pub fn in_order[&s](s: &s [int], j: int) -> [] int {
+    if j < 0 || j >= reached_blocks(s) {
+        return 0 - 1;
+    }
+    return get(s, r_order(), j);
+}
+
+// Block `b`: its record, its first instruction, the instruction after its last, how many successors it has and the `k`th.
+pub fn block_record[&s](s: &s [int], b: int) -> [] int {
+    return get(s, r_b_rec(), b);
+}
+
+pub fn block_first[&s](s: &s [int], b: int) -> [] int {
+    return get(s, r_b_first(), b);
+}
+
+pub fn block_after[&s](s: &s [int], b: int) -> [] int {
+    if b < 0 || b >= blocks(s) {
+        return 0 - 1;
+    }
+    return block_end(s, b, blocks(s), instructions(s));
+}
+
+pub fn successors[&s](s: &s [int], b: int) -> [] int {
+    if b < 0 || b >= blocks(s) {
+        return 0;
+    }
+    return get(s, r_b_nsucc(), b);
+}
+
+pub fn successor_of[&s](s: &s [int], b: int, k: int) -> [] int {
+    if k < 0 || k >= successors(s, b) {
+        return 0 - 1;
+    }
+    return succ(s, b, k);
+}
+
+// The record of instruction `i`.
+pub fn record_of[&s](s: &s [int], i: int) -> [] int {
+    if i < 0 || i >= instructions(s) {
+        return 0;
+    }
+    return get(s, r_rec(), i);
 }
 
 // ---- the pass ----

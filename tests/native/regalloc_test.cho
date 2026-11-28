@@ -1,0 +1,486 @@
+// regalloc_test.cho -- the values of a function given registers (`docs/native-backend.md` section 17.3): the intervals of straight-line code, of a diamond,
+// of a loop (a value live across the edge back), a value live across a call (in a register the callee keeps, saved and restored), more values live at once
+// than there are registers (the ones that end last stay in memory), two `phi`s that swap in registers (a cycle broken through `x17`); and no damaged byte
+// and no truncation of a module, once read, reaches a trap in the allocator or in the code generator with it.
+//
+//     cancho test --std compiler/native/llmod.cho compiler/native/llread.cho compiler/native/llbody.cho compiler/native/lltop.cho compiler/native/lllayout.cho compiler/native/llout.cho compiler/native/a64.cho compiler/native/a64sys.cho compiler/native/a64frame.cho compiler/native/a64call.cho compiler/native/a64gen.cho compiler/native/a64fn.cho compiler/native/mem2reg.cho compiler/native/regalloc.cho tests/native/regalloc_test.cho
+
+import std.test;
+import selfhost.llmod as lm;
+import selfhost.llread as lr;
+import selfhost.lltop as lt;
+import selfhost.llout as out;
+import selfhost.a64fn;
+import selfhost.mem2reg as m2;
+import selfhost.regalloc as ra;
+
+fn straight() -> [] &static [byte] {
+    return "define i64 @f(i64 %a, i64 %b) {\nentry:\n  %c = add i64 %a, %b\n  %d = mul i64 %c, %a\n  ret i64 %d\n}\n";
+}
+
+fn diamond() -> [] &static [byte] {
+    return "define i64 @f(i1 %c, i64 %a, i64 %b) {\nentry:\n  %x = add i64 %a, 1\n  br i1 %c, label %then, label %else\nthen:\n  %y = add i64 %x, %b\n  br label %join\nelse:\n  %z = sub i64 %x, %b\n  br label %join\njoin:\n  %v = phi i64 [ %y, %then ], [ %z, %else ]\n  %w = add i64 %v, %x\n  ret i64 %w\n}\n";
+}
+
+fn a_loop() -> [] &static [byte] {
+    return "define i64 @f(i64 %n, i64 %k) {\nentry:\n  %m = mul i64 %k, 3\n  br label %head\nhead:\n  %i = phi i64 [ 0, %entry ], [ %i2, %body ]\n  %s = phi i64 [ 0, %entry ], [ %s2, %body ]\n  %c = icmp slt i64 %i, %n\n  br i1 %c, label %body, label %done\nbody:\n  %s2 = add i64 %s, %m\n  %i2 = add i64 %i, 1\n  br label %head\ndone:\n  ret i64 %s\n}\n";
+}
+
+// A value used only by an edge, of an inner loop back to its own head: it must live around the outer loop as well, through a block that comes after
+// that edge in the order.
+fn nested() -> [] &static [byte] {
+    return "define i64 @f(i64 %n, i64 %k) {\nentry:\n  %v = mul i64 %k, 7\n  br label %outer\nouter:\n  %i = phi i64 [ 0, %entry ], [ %i2, %next ]\n  %c = icmp slt i64 %i, %n\n  br i1 %c, label %inner, label %done\ninner:\n  %j = phi i64 [ 0, %outer ], [ %v, %inner ]\n  %d = icmp eq i64 %j, 0\n  br i1 %d, label %inner, label %next\nnext:\n  %i2 = add i64 %i, 1\n  br label %outer\ndone:\n  ret i64 %i\n}\n";
+}
+
+fn a_call() -> [] &static [byte] {
+    return "declare i64 @g(i64)\ndefine i64 @f(i64 %a) {\nentry:\n  %b = add i64 %a, 1\n  %c = call i64 @g(i64 %a)\n  %d = add i64 %b, %c\n  ret i64 %d\n}\n";
+}
+
+// Twelve values and the parameter live at once, and nine doubles: two more than the general registers, one more than the floating-point ones. What
+// ends at the instruction where another begins gives it its register.
+fn crowded() -> [] &static [byte] {
+    return "define i64 @f(i64 %a, double %x) {\nentry:\n  %v1 = add i64 %a, 1\n  %v2 = add i64 %a, 2\n  %v3 = add i64 %a, 3\n  %v4 = add i64 %a, 4\n  %v5 = add i64 %a, 5\n  %v6 = add i64 %a, 6\n  %v7 = add i64 %a, 7\n  %v8 = add i64 %a, 8\n  %v9 = add i64 %a, 9\n  %v10 = add i64 %a, 10\n  %v11 = add i64 %a, 11\n  %v12 = add i64 %a, 12\n  %s1 = add i64 %v1, %v2\n  %s2 = add i64 %s1, %v3\n  %s3 = add i64 %s2, %v4\n  %s4 = add i64 %s3, %v5\n  %s5 = add i64 %s4, %v6\n  %s6 = add i64 %s5, %v7\n  %s7 = add i64 %s6, %v8\n  %s8 = add i64 %s7, %v9\n  %s9 = add i64 %s8, %v10\n  %s10 = add i64 %s9, %v11\n  %s11 = add i64 %s10, %v12\n  %d1 = fadd double %x, 0x3FF0000000000000\n  %d2 = fadd double %x, 0x4000000000000000\n  %d3 = fadd double %x, 0x4008000000000000\n  %d4 = fadd double %x, 0x4010000000000000\n  %d5 = fadd double %x, 0x4014000000000000\n  %d6 = fadd double %x, 0x4018000000000000\n  %d7 = fadd double %x, 0x401C000000000000\n  %d8 = fadd double %x, 0x4020000000000000\n  %e1 = fadd double %d1, %d2\n  %e2 = fadd double %e1, %d3\n  %e3 = fadd double %e2, %d4\n  %e4 = fadd double %e3, %d5\n  %e5 = fadd double %e4, %d6\n  %e6 = fadd double %e5, %d7\n  %e7 = fadd double %e6, %d8\n  %e8 = fadd double %e7, %x\n  %t = fptosi double %e8 to i64\n  %r = add i64 %s11, %t\n  ret i64 %r\n}\n";
+}
+
+fn swap() -> [] &static [byte] {
+    return "define i64 @f(i64 %n) {\nentry:\n  br label %head\nhead:\n  %a = phi i64 [ 1, %entry ], [ %b, %body ]\n  %b = phi i64 [ 2, %entry ], [ %a, %body ]\n  %i = phi i64 [ 0, %entry ], [ %i2, %body ]\n  %c = icmp slt i64 %i, %n\n  br i1 %c, label %body, label %done\nbody:\n  %i2 = add i64 %i, 1\n  br label %head\ndone:\n  %r = mul i64 %a, 10\n  %t = add i64 %r, %b\n  ret i64 %t\n}\n";
+}
+
+// The front end's way: every local an `alloca`, so that the values are `mem2reg`'s first.
+fn variables() -> [] &static [byte] {
+    return "define i64 @f(i64 %n) {\nentry:\n  %i = alloca i64\n  %s = alloca i64\n  %t = alloca i64\n  store i64 0, ptr %i\n  store i64 1, ptr %s\n  store i64 2, ptr %t\n  br label %head\nhead:\n  %iv = load i64, ptr %i\n  %c = icmp slt i64 %iv, %n\n  br i1 %c, label %body, label %done\nbody:\n  %sv = load i64, ptr %s\n  %tv = load i64, ptr %t\n  store i64 %tv, ptr %s\n  store i64 %sv, ptr %t\n  %i2 = add i64 %iv, 1\n  store i64 %i2, ptr %i\n  br label %head\ndone:\n  %r = load i64, ptr %s\n  ret i64 %r\n}\n";
+}
+
+// The last function's record in `m`, or 0.
+fn last_function[&m](m: &m [int]) -> [] int {
+    var found = 0;
+    var at = lm.cell(m, lm.h_rec());
+    while at < lm.cell(m, lm.h_top()) && at > 0 {
+        if lm.cell(m, at) == lr.r_func() {
+            found = at;
+        }
+        let size = lm.cell(m, at + 1);
+        if size < 2 {
+            return found;
+        }
+        at = at + size;
+    }
+    return found;
+}
+
+// The local number of the name `name` in the function at `func`, or -1.
+fn id_of[&t, &m, &n](text: &t [byte], m: &m [int], func: int, name: &n [byte]) -> [] int {
+    let names = lm.cell(m, func + 9);
+    var k = 0;
+    while k < lm.cell(m, names + 2) {
+        let place = lm.cell(m, names + 3 + 4 * k);
+        let end = lm.name_end(text, place);
+        if end - place == len(name) && lm.spells(text, place, end, name) {
+            return k;
+        }
+        k = k + 1;
+    }
+    return 0 - 1;
+}
+
+// The number in the text of the block labelled `name`.
+fn block_named[&t, &m, &s, &n](text: &t [byte], m: &m [int], s: &s [int], func: int, name: &n [byte]) -> [] int {
+    return m2.block_of(s, id_of(text, m, func, name));
+}
+
+fn reg_of[&t, &m, &s, &n](text: &t [byte], m: &m [int], s: &s [int], func: int, name: &n [byte]) -> [] int {
+    return ra.register(s, id_of(text, m, func, name));
+}
+
+fn start_of[&t, &m, &s, &n](text: &t [byte], m: &m [int], s: &s [int], func: int, name: &n [byte]) -> [] int {
+    return ra.start(s, id_of(text, m, func, name));
+}
+
+fn end_of[&t, &m, &s, &n](text: &t [byte], m: &m [int], s: &s [int], func: int, name: &n [byte]) -> [] int {
+    return ra.end(s, id_of(text, m, func, name));
+}
+
+fn general(r: int) -> [] bool {
+    return r >= 19 && r <= 28;
+}
+
+// Is any word of the code from `from` to `to` the word `w`?
+fn has_word[&o](o: &o [int], from: int, to: int, w: int) -> [] bool {
+    var k = from;
+    while k < to {
+        if out.word(o, k) == w {
+            return true;
+        }
+        k = k + 1;
+    }
+    return false;
+}
+
+// `mov xd, xm`.
+fn mov_word(d: int, m: int) -> [] int {
+    return 0xaa0003e0 | m << 16 | d;
+}
+
+fn test_straight_line_code_has_one_interval_a_value_and_gives_registers_back[&h](heap: &!h Heap) -> [heap] int {
+    let text = straight();
+    let table = box_slice(heap, lm.room(text), 0);
+    borrow mut table as &!tw in {
+        let m = contents(tw);
+        test.assert_eq(lt.read(text, m, 0), 0);
+        let func = last_function(m);
+        let side = box_slice(heap, m2.room(m), 0);
+        borrow mut side as &!sw in {
+            let s = contents(sw);
+            test.assert_eq(m2.layout(m, s), 0);
+            test.assert_eq(m2.promote(m, s, func), 0);
+            test.assert_eq(ra.allocate(m, s, func, true), 4);
+            test.assert_eq(ra.status(s), 1);
+            // The block begins at 0; the add is at 2 (its result at 3), the mul at 4 (5), the ret at 6.
+            test.assert_eq(start_of(text, m, s, func, "a"), 0);
+            test.assert_eq(end_of(text, m, s, func, "a"), 4);
+            test.assert_eq(start_of(text, m, s, func, "b"), 0);
+            test.assert_eq(end_of(text, m, s, func, "b"), 2);
+            test.assert_eq(start_of(text, m, s, func, "c"), 3);
+            test.assert_eq(end_of(text, m, s, func, "c"), 4);
+            test.assert_eq(start_of(text, m, s, func, "d"), 5);
+            test.assert_eq(end_of(text, m, s, func, "d"), 6);
+            test.assert_eq(reg_of(text, m, s, func, "a"), 19);
+            test.assert_eq(reg_of(text, m, s, func, "b"), 20);
+            // `b` ends before `c` begins, `a` and `c` before `d`.
+            test.assert_eq(reg_of(text, m, s, func, "c"), 20);
+            test.assert_eq(reg_of(text, m, s, func, "d"), 19);
+            test.assert_eq(ra.spilled(s), 0);
+            test.assert_eq(ra.used(s), 1 << 19 | 1 << 20);
+        }
+        unbox_slice(heap, side);
+    }
+    unbox_slice(heap, table);
+    return 0;
+}
+
+fn test_a_diamond_keeps_what_both_arms_use_and_what_comes_after[&h](heap: &!h Heap) -> [heap] int {
+    let text = diamond();
+    let table = box_slice(heap, lm.room(text), 0);
+    borrow mut table as &!tw in {
+        let m = contents(tw);
+        test.assert_eq(lt.read(text, m, 0), 0);
+        let func = last_function(m);
+        let side = box_slice(heap, m2.room(m), 0);
+        borrow mut side as &!sw in {
+            let s = contents(sw);
+            test.assert_eq(m2.layout(m, s), 0);
+            test.assert_eq(m2.promote(m, s, func), 0);
+            test.assert(ra.allocate(m, s, func, true) > 0);
+            let then_b = block_named(text, m, s, func, "then");
+            let else_b = block_named(text, m, s, func, "else");
+            let join = block_named(text, m, s, func, "join");
+            let x = id_of(text, m, func, "x");
+            let b = id_of(text, m, func, "b");
+            let v = id_of(text, m, func, "v");
+            test.assert(ra.live_out(s, 0, x));
+            test.assert(ra.live_in(s, then_b, x) && ra.live_in(s, else_b, x) && ra.live_in(s, join, x));
+            test.assert(ra.live_in(s, then_b, b) && ra.live_in(s, else_b, b));
+            test.assert(!ra.live_in(s, join, b));
+            // A `phi` is defined where its block begins, and is not live into it.
+            test.assert_eq(ra.start(s, v), ra.block_start(s, join));
+            test.assert(!ra.live_in(s, join, v));
+            // What the arms make is used by the edge out of each, after its last instruction.
+            test.assert(end_of(text, m, s, func, "y") > start_of(text, m, s, func, "y"));
+            test.assert(end_of(text, m, s, func, "z") > start_of(text, m, s, func, "z"));
+            test.assert(!ra.live_out(s, then_b, id_of(text, m, func, "y")));
+            // Used by nothing but the edge, they have registers all the same.
+            test.assert(general(reg_of(text, m, s, func, "y")) && general(reg_of(text, m, s, func, "z")));
+            test.assert(general(ra.register(s, x)) && general(ra.register(s, b)) && general(ra.register(s, v)));
+            test.assert(ra.register(s, x) != ra.register(s, b));
+            test.assert(ra.register(s, x) != ra.register(s, v));
+            test.assert(ra.end(s, x) > ra.block_start(s, join));
+        }
+        unbox_slice(heap, side);
+    }
+    unbox_slice(heap, table);
+    return 0;
+}
+
+fn test_a_value_live_across_the_edge_back_holds_its_register_through_the_loop[&h](heap: &!h Heap) -> [heap] int {
+    let text = a_loop();
+    let table = box_slice(heap, lm.room(text), 0);
+    borrow mut table as &!tw in {
+        let m = contents(tw);
+        test.assert_eq(lt.read(text, m, 0), 0);
+        let func = last_function(m);
+        let side = box_slice(heap, m2.room(m), 0);
+        borrow mut side as &!sw in {
+            let s = contents(sw);
+            test.assert_eq(m2.layout(m, s), 0);
+            test.assert_eq(m2.promote(m, s, func), 0);
+            test.assert(ra.allocate(m, s, func, true) > 0);
+            let head = block_named(text, m, s, func, "head");
+            let body = block_named(text, m, s, func, "body");
+            let done = block_named(text, m, s, func, "done");
+            let mv = id_of(text, m, func, "m");
+            let n = id_of(text, m, func, "n");
+            // `m` is used in the body, and the body goes back to the head: it is live around the whole loop, out of the body too.
+            test.assert(ra.live_in(s, head, mv) && ra.live_in(s, body, mv) && ra.live_out(s, body, mv));
+            test.assert(ra.live_out(s, body, n));
+            test.assert(!ra.live_in(s, done, mv));
+            // In reverse postorder the head comes first, then what it leaves to, then the body: the interval takes in all of them.
+            test.assert(ra.block_start(s, head) < ra.block_start(s, done));
+            test.assert(ra.block_start(s, done) < ra.block_start(s, body));
+            test.assert(ra.end(s, mv) > ra.block_start(s, body));
+            test.assert(ra.end(s, n) > ra.block_start(s, body));
+            // Neither the `phi` `s` nor `m` may share a register with anything live at the same time.
+            let sv = id_of(text, m, func, "s");
+            let iv = id_of(text, m, func, "i");
+            test.assert(general(ra.register(s, mv)) && general(ra.register(s, sv)) && general(ra.register(s, iv)) && general(ra.register(s, n)));
+            test.assert(ra.register(s, mv) != ra.register(s, sv) && ra.register(s, mv) != ra.register(s, iv) && ra.register(s, mv) != ra.register(s, n));
+            test.assert(ra.register(s, sv) != ra.register(s, iv) && ra.register(s, n) != ra.register(s, sv) && ra.register(s, n) != ra.register(s, iv));
+            test.assert_eq(ra.spilled(s), 0);
+        }
+        unbox_slice(heap, side);
+    }
+    unbox_slice(heap, table);
+    return 0;
+}
+
+fn test_a_value_an_inner_edge_uses_lives_around_the_outer_loop[&h](heap: &!h Heap) -> [heap] int {
+    let text = nested();
+    let table = box_slice(heap, lm.room(text), 0);
+    borrow mut table as &!tw in {
+        let m = contents(tw);
+        test.assert_eq(lt.read(text, m, 0), 0);
+        let func = last_function(m);
+        let side = box_slice(heap, m2.room(m), 0);
+        borrow mut side as &!sw in {
+            let s = contents(sw);
+            test.assert_eq(m2.layout(m, s), 0);
+            test.assert_eq(m2.promote(m, s, func), 0);
+            test.assert(ra.allocate(m, s, func, true) > 0);
+            let v = id_of(text, m, func, "v");
+            let inner = block_named(text, m, s, func, "inner");
+            let next_b = block_named(text, m, s, func, "next");
+            test.assert(ra.live_in(s, inner, v) && ra.live_out(s, next_b, v));
+            test.assert(ra.block_start(s, inner) < ra.block_start(s, next_b));
+            test.assert(ra.end(s, v) > ra.block_start(s, next_b));
+            test.assert(ra.register(s, v) != ra.register(s, id_of(text, m, func, "i2")));
+        }
+        unbox_slice(heap, side);
+    }
+    unbox_slice(heap, table);
+    return 0;
+}
+
+fn test_a_value_live_across_a_call_is_in_a_register_the_callee_keeps_saved_and_restored[&h](heap: &!h Heap) -> [heap] int {
+    let text = a_call();
+    let table = box_slice(heap, lm.room(text), 0);
+    borrow mut table as &!tw in {
+        let m = contents(tw);
+        test.assert_eq(lt.read(text, m, 0), 0);
+        let func = last_function(m);
+        let code = box_slice(heap, out.room(m), 0);
+        let side = box_slice(heap, m2.room(m), 0);
+        borrow mut side as &!sw in {
+            borrow mut code as &!cw in {
+                let o = contents(cw);
+                test.assert_eq(a64fn.generate(text, m, contents(sw), o), 0);
+                let s = contents(sw);
+                let b = reg_of(text, m, s, func, "b");
+                test.assert(general(b));
+                test.assert(start_of(text, m, s, func, "b") < start_of(text, m, s, func, "c"));
+                test.assert(end_of(text, m, s, func, "b") > start_of(text, m, s, func, "c"));
+                test.assert(o[out.h_saved()] >> b & 1 == 1);
+                // The register is written to the frame at the entry and read back before the return: one at a time or in a pair.
+                let from = out.function(o, 0, 1);
+                let to = out.function(o, 0, 2);
+                var stored = 0 - 1;
+                var loaded = 0 - 1;
+                var k = from;
+                while k < to {
+                    let w = out.word(o, k);
+                    let one = w & 0xffc003ff == 0xf90003e0 | b;
+                    let pair = w & 0xffc003ff == 0xa90003e0 | b || w & 0xffc07fe0 == 0xa90003e0 | b << 10;
+                    if (one || pair) && stored < 0 {
+                        stored = k;
+                    }
+                    if w & 0xffc003ff == 0xf94003e0 | b || w & 0xffc003ff == 0xa94003e0 | b || w & 0xffc07fe0 == 0xa94003e0 | b << 10 {
+                        loaded = k;
+                    }
+                    k = k + 1;
+                }
+                test.assert(stored > from && stored < from + 6);
+                test.assert(loaded > stored && loaded > to - 6);
+                // The argument goes from the parameter's register to `x0`: `a` stays where it is.
+                test.assert(has_word(o, from, to, mov_word(0, reg_of(text, m, s, func, "a"))));
+            }
+        }
+        unbox_slice(heap, side);
+        unbox_slice(heap, code);
+    }
+    unbox_slice(heap, table);
+    return 0;
+}
+
+fn test_more_values_than_registers_leaves_the_ones_that_end_last_in_memory[&h](heap: &!h Heap) -> [heap] int {
+    let text = crowded();
+    let table = box_slice(heap, lm.room(text), 0);
+    borrow mut table as &!tw in {
+        let m = contents(tw);
+        test.assert_eq(lt.read(text, m, 0), 0);
+        let func = last_function(m);
+        let side = box_slice(heap, m2.room(m), 0);
+        borrow mut side as &!sw in {
+            let s = contents(sw);
+            test.assert_eq(m2.layout(m, s), 0);
+            test.assert_eq(m2.promote(m, s, func), 0);
+            test.assert(ra.allocate(m, s, func, true) > 0);
+            // When `v10` begins, `a` and `v1` to `v9` hold the ten; `v10` and `v11` end after all of them and stay in their slots. `v12` begins after `a`'s
+            // last use and takes its register.
+            test.assert_eq(reg_of(text, m, s, func, "v10"), 0 - 1);
+            test.assert_eq(reg_of(text, m, s, func, "v11"), 0 - 1);
+            test.assert_eq(reg_of(text, m, s, func, "v12"), reg_of(text, m, s, func, "a"));
+            test.assert(general(reg_of(text, m, s, func, "v1")) && general(reg_of(text, m, s, func, "v9")));
+            // Of the doubles: `x` and `d1` to `d7` hold the eight when `d8` begins, and `x`, used last, is the one given back to its slot.
+            test.assert_eq(reg_of(text, m, s, func, "x"), 0 - 1);
+            test.assert_eq(reg_of(text, m, s, func, "d8"), 8);
+            let d1 = reg_of(text, m, s, func, "d1");
+            test.assert(d1 >= 9 && d1 <= 15);
+            test.assert_eq(ra.spilled(s), 3);
+            test.assert_eq(ra.used(s) & 0xffffffff, (1 << 29) - (1 << 19));
+            test.assert_eq(ra.used(s) >> 32, (1 << 16) - (1 << 8));
+        }
+        unbox_slice(heap, side);
+    }
+    unbox_slice(heap, table);
+    return 0;
+}
+
+fn test_two_phis_that_swap_in_registers_go_through_x17[&h](heap: &!h Heap) -> [heap] int {
+    let text = swap();
+    let table = box_slice(heap, lm.room(text), 0);
+    borrow mut table as &!tw in {
+        let m = contents(tw);
+        test.assert_eq(lt.read(text, m, 0), 0);
+        let func = last_function(m);
+        let code = box_slice(heap, out.room(m), 0);
+        let side = box_slice(heap, m2.room(m), 0);
+        borrow mut side as &!sw in {
+            borrow mut code as &!cw in {
+                let o = contents(cw);
+                test.assert_eq(a64fn.generate(text, m, contents(sw), o), 0);
+                let s = contents(sw);
+                let a = reg_of(text, m, s, func, "a");
+                let b = reg_of(text, m, s, func, "b");
+                test.assert(general(a) && general(b) && a != b);
+                let from = out.function(o, 0, 1);
+                let to = out.function(o, 0, 2);
+                // One of the two is kept in `x17`, the other moved into it, and `x17` into the other.
+                let keep_a = has_word(o, from, to, mov_word(17, a)) && has_word(o, from, to, mov_word(a, b)) && has_word(o, from, to, mov_word(b, 17));
+                let keep_b = has_word(o, from, to, mov_word(17, b)) && has_word(o, from, to, mov_word(b, a)) && has_word(o, from, to, mov_word(a, 17));
+                test.assert(keep_a || keep_b);
+            }
+        }
+        unbox_slice(heap, side);
+        unbox_slice(heap, code);
+    }
+    unbox_slice(heap, table);
+    return 0;
+}
+
+fn test_the_variables_made_values_are_given_registers_and_without_the_table_none_is[&h](heap: &!h Heap) -> [heap] int {
+    let text = variables();
+    let table = box_slice(heap, lm.room(text), 0);
+    borrow mut table as &!tw in {
+        let m = contents(tw);
+        test.assert_eq(lt.read(text, m, 0), 0);
+        let code = box_slice(heap, out.room(m), 0);
+        let side = box_slice(heap, m2.room(m), 0);
+        let none = box_slice(heap, 0, 0);
+        borrow mut code as &!cw in {
+            let o = contents(cw);
+            borrow mut side as &!sw in {
+                test.assert_eq(a64fn.generate(text, m, contents(sw), o), 0);
+            }
+            // The three variables are three new phis in the head; with the loads that are them, and `n`, `c`, `i2`, all in registers.
+            test.assert_eq(o[out.h_promoted()], 3);
+            test.assert_eq(o[out.h_allocated()], 6);
+            test.assert_eq(o[out.h_spilled()], 0);
+            test.assert(o[out.h_saved()] != 0);
+            borrow mut none as &!nw in {
+                test.assert_eq(a64fn.generate(text, m, contents(nw), o), 0);
+            }
+            test.assert_eq(o[out.h_allocated()], 0);
+            test.assert_eq(o[out.h_saved()], 0);
+        }
+        unbox_slice(heap, code);
+        unbox_slice(heap, side);
+        unbox_slice(heap, none);
+    }
+    unbox_slice(heap, table);
+    return 0;
+}
+
+// Read, then the code with the side table (the pass and the allocation for each function): 0 if all went well and some value was given a register, 1 if the
+// reader refused, 2 otherwise.
+fn through[&h, &t](heap: &!h Heap, text: &t [byte]) -> [heap] int {
+    let table = box_slice(heap, lm.room(text), 0);
+    var status = 1;
+    borrow mut table as &!tw in {
+        let m = contents(tw);
+        if lt.read(text, m, 0) == 0 {
+            status = 2;
+            let side = box_slice(heap, m2.room(m), 0);
+            let code = box_slice(heap, out.room(m), 0);
+            borrow mut side as &!sw in {
+                borrow mut code as &!cw in {
+                    let o = contents(cw);
+                    a64fn.generate(text, m, contents(sw), o);
+                    if o[out.h_allocated()] > 0 {
+                        status = 0;
+                    }
+                }
+            }
+            unbox_slice(heap, side);
+            unbox_slice(heap, code);
+        }
+    }
+    unbox_slice(heap, table);
+    return status;
+}
+
+// Every byte of a module made each byte of `with`, and every beginning of it, through `through`. How many had registers; the test is that it returns.
+fn damage[&h, &t, &w](heap: &!h Heap, text: &t [byte], with: &w [byte]) -> [heap] int {
+    var had = 0;
+    let copy = box_slice(heap, len(text), byte_of(0));
+    borrow mut copy as &!cw in {
+        let c = contents(cw);
+        var k = 0;
+        while k < len(text) {
+            c[k] = text[k];
+            k = k + 1;
+        }
+        k = 0;
+        while k < len(text) {
+            var j = 0;
+            while j < len(with) {
+                c[k] = with[j];
+                if through(heap, c) == 0 {
+                    had = had + 1;
+                }
+                j = j + 1;
+            }
+            c[k] = text[k];
+            through(heap, text[0..k]);
+            k = k + 1;
+        }
+    }
+    unbox_slice(heap, copy);
+    return had;
+}
+
+fn test_no_damage_to_a_module_reaches_a_trap_in_the_allocation[&h](heap: &!h Heap) -> [heap] int {
+    let had = damage(heap, swap(), " %0{,a\n@-1[i");
+    test.assert(had > 100);
+    test.assert(had < 13 * len(swap()));
+    let more = damage(heap, variables(), " %s\n:1d");
+    test.assert(more > 100);
+    return 0;
+}

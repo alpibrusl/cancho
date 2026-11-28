@@ -45,28 +45,23 @@ fn opnd[&m](m: &m [int], rec: int, k: int) -> [] int {
     return rec + lb.instr_head() + 4 * k;
 }
 
-// The result of the instruction at `rec`, in the general register `r`, stored in its slot as a value of type `ty`.
+// The result of the instruction at `rec`, in the general register `r`, to where it lives (its register or its slot) as a value of type `ty`; `put_clean`
+// when `r` holds it zero-extended from its width already (a compare's 0 or 1, a load).
 fn put[&m, &o](m: &m [int], o: &!o [int], rec: int, ty: int, r: int) -> [] int {
-    let id = result_of(m, rec);
-    if id < 0 {
-        return 0;
-    }
-    let size = fr.word_size(m, ty);
-    if size < 0 || out.slot(o, id) < 0 {
-        return out.fail(o, out.why_operand());
-    }
-    return fr.access(o, size, 0, 0, r, fr.sp(), out.slot(o, id));
+    return fr.set_result(m, o, result_of(m, rec), ty, r, false);
+}
+
+fn put_clean[&m, &o](m: &m [int], o: &!o [int], rec: int, ty: int, r: int) -> [] int {
+    return fr.set_result(m, o, result_of(m, rec), ty, r, true);
 }
 
 fn put_fp[&m, &o](m: &m [int], o: &!o [int], rec: int, ty: int, r: int) -> [] int {
-    let id = result_of(m, rec);
-    if id < 0 {
-        return 0;
-    }
-    if fr.float_kind(m, ty) < 0 || out.slot(o, id) < 0 {
-        return out.fail(o, out.why_operand());
-    }
-    return fr.access(o, 2 + fr.float_kind(m, ty), 1, 0, r, fr.sp(), out.slot(o, id));
+    return fr.set_result_fp(m, o, result_of(m, rec), ty, r);
+}
+
+// The register the result of the instruction at `rec` is worked out in: its own, or `scratch`.
+fn target[&m, &o](m: &m [int], o: &o [int], rec: int, scratch: int) -> [] int {
+    return fr.target(o, result_of(m, rec), scratch);
 }
 
 // Where the result of the instruction at `rec` lives, from the stack pointer: its slot, or the scratch bytes if nothing names it.
@@ -104,35 +99,38 @@ fn binary[&m, &o](m: &m [int], o: &!o [int], rec: int) -> [] int {
         return out.fail(o, out.why_operand());
     }
     let signed = op == 4 || op == 5 || op == 11;
-    fr.operand(m, o, opnd(m, rec, 0), 9, signed);
-    fr.operand(m, o, opnd(m, rec, 1), 10, signed);
+    // Each operand where it is (its register) or in a scratch register; the result straight into its own register, which one instruction may write as it
+    // reads the operands.
+    let a = fr.source(m, o, opnd(m, rec, 0), 9, signed);
+    let b = fr.source(m, o, opnd(m, rec, 1), 10, signed);
+    let d = target(m, o, rec, 9);
     if op == 1 {
-        out.emit(o, a64.addsub_shift(1, 0, 0, 9, 9, 10, 0, 0));
+        out.emit(o, a64.addsub_shift(1, 0, 0, d, a, b, 0, 0));
     } else if op == 2 {
-        out.emit(o, a64.addsub_shift(1, 1, 0, 9, 9, 10, 0, 0));
+        out.emit(o, a64.addsub_shift(1, 1, 0, d, a, b, 0, 0));
     } else if op == 3 {
-        out.emit(o, a64.madd(1, 0, 9, 9, 10, 31));
+        out.emit(o, a64.madd(1, 0, d, a, b, 31));
     } else if op == 4 {
-        out.emit(o, a64.dp2(1, 3, 9, 9, 10));
+        out.emit(o, a64.dp2(1, 3, d, a, b));
     } else if op == 5 {
-        out.emit(o, a64.dp2(1, 3, 11, 9, 10));
-        out.emit(o, a64.madd(1, 1, 9, 11, 10, 9));
+        out.emit(o, a64.dp2(1, 3, 11, a, b));
+        out.emit(o, a64.madd(1, 1, d, 11, b, a));
     } else if op == 6 {
-        out.emit(o, a64.dp2(1, 2, 9, 9, 10));
+        out.emit(o, a64.dp2(1, 2, d, a, b));
     } else if op == 7 {
-        out.emit(o, a64.logic_shift(1, 0, 0, 9, 9, 10, 0, 0));
+        out.emit(o, a64.logic_shift(1, 0, 0, d, a, b, 0, 0));
     } else if op == 8 {
-        out.emit(o, a64.logic_shift(1, 1, 0, 9, 9, 10, 0, 0));
+        out.emit(o, a64.logic_shift(1, 1, 0, d, a, b, 0, 0));
     } else if op == 9 {
-        out.emit(o, a64.logic_shift(1, 2, 0, 9, 9, 10, 0, 0));
+        out.emit(o, a64.logic_shift(1, 2, 0, d, a, b, 0, 0));
     } else if op == 10 {
-        out.emit(o, a64.dp2(1, 8, 9, 9, 10));
+        out.emit(o, a64.dp2(1, 8, d, a, b));
     } else if op == 11 {
-        out.emit(o, a64.dp2(1, 10, 9, 9, 10));
+        out.emit(o, a64.dp2(1, 10, d, a, b));
     } else {
-        out.emit(o, a64.dp2(1, 9, 9, 9, 10));
+        out.emit(o, a64.dp2(1, 9, d, a, b));
     }
-    return put(m, o, rec, ty, 9);
+    return put(m, o, rec, ty, d);
 }
 
 // An integer of 128 bits is two words in memory, the low one first. What the compiler writes of them is the multiply of two that were 64 bits, and the shift
@@ -188,12 +186,13 @@ fn binary_fp[&m, &o](m: &m [int], o: &!o [int], rec: int) -> [] int {
     if double < 0 {
         return out.fail(o, out.why_operand());
     }
-    fr.operand_fp(m, o, opnd(m, rec, 0), 16);
+    let a = fr.source_fp(m, o, opnd(m, rec, 0), 16);
+    let d = target(m, o, rec, 16);
     if op == lr.op_fneg() {
-        out.emit(o, a64.fp1(double, 2, 16, 16));
-        return put_fp(m, o, rec, ty, 16);
+        out.emit(o, a64.fp1(double, 2, d, a));
+        return put_fp(m, o, rec, ty, d);
     }
-    fr.operand_fp(m, o, opnd(m, rec, 1), 17);
+    let b = fr.source_fp(m, o, opnd(m, rec, 1), 17);
     // fadd, fsub, fmul, fdiv are 13 to 16; the encoder's numbers are fmul 0, fdiv 1, fadd 2, fsub 3.
     var which = 2;
     if op == 14 {
@@ -203,8 +202,8 @@ fn binary_fp[&m, &o](m: &m [int], o: &!o [int], rec: int) -> [] int {
     } else if op == 16 {
         which = 1;
     }
-    out.emit(o, a64.fp2(double, which, 16, 16, 17));
-    return put_fp(m, o, rec, ty, 16);
+    out.emit(o, a64.fp2(double, which, d, a, b));
+    return put_fp(m, o, rec, ty, d);
 }
 
 // The condition of each predicate of `icmp`, by its number: eq ne ugt uge ult ule sgt sge slt sle are eq ne hi hs lo ls gt ge lt le.
@@ -251,11 +250,12 @@ fn compare[&m, &o](m: &m [int], o: &!o [int], rec: int) -> [] int {
     }
     let predicate = aux_of(m, rec);
     let signed = predicate >= 7;
-    fr.operand(m, o, opnd(m, rec, 0), 9, signed);
-    fr.operand(m, o, opnd(m, rec, 1), 10, signed);
-    out.emit(o, a64.addsub_shift(1, 1, 1, 31, 9, 10, 0, 0));
-    cset(o, 9, int_condition(predicate));
-    return put(m, o, rec, lm.ty_i1(), 9);
+    let a = fr.source(m, o, opnd(m, rec, 0), 9, signed);
+    let b = fr.source(m, o, opnd(m, rec, 1), 10, signed);
+    out.emit(o, a64.addsub_shift(1, 1, 1, 31, a, b, 0, 0));
+    let d = target(m, o, rec, 9);
+    cset(o, d, int_condition(predicate));
+    return put_clean(m, o, rec, lm.ty_i1(), d);
 }
 
 // `fcmp`. After a compare of floating-point values the flags say less, equal, greater or unordered; each predicate is one condition of them, but the two
@@ -267,9 +267,9 @@ fn compare_fp[&m, &o](m: &m [int], o: &!o [int], rec: int) -> [] int {
         return out.fail(o, out.why_operand());
     }
     let predicate = aux_of(m, rec);
-    fr.operand_fp(m, o, opnd(m, rec, 0), 16);
-    fr.operand_fp(m, o, opnd(m, rec, 1), 17);
-    out.emit(o, a64.fcmp(double, 16, 17, 0));
+    let a = fr.source_fp(m, o, opnd(m, rec, 0), 16);
+    let b = fr.source_fp(m, o, opnd(m, rec, 1), 17);
+    out.emit(o, a64.fcmp(double, a, b, 0));
     var cond = 0;
     var second = 0 - 1;
     if predicate == 2 {
@@ -301,12 +301,13 @@ fn compare_fp[&m, &o](m: &m [int], o: &!o [int], rec: int) -> [] int {
     } else if predicate == 14 {
         cond = 6;
     }
-    cset(o, 9, cond);
+    let d = target(m, o, rec, 9);
+    cset(o, d, cond);
     if second >= 0 {
         cset(o, 10, second);
-        out.emit(o, a64.logic_shift(0, 1, 0, 9, 9, 10, 0, 0));
+        out.emit(o, a64.logic_shift(0, 1, 0, d, d, 10, 0, 0));
     }
-    return put(m, o, rec, lm.ty_i1(), 9);
+    return put_clean(m, o, rec, lm.ty_i1(), d);
 }
 
 // The conversions 22 to 31.
@@ -316,32 +317,48 @@ fn convert[&t, &m, &o](text: &t [byte], m: &m [int], o: &!o [int], rec: int) -> 
     let from = lm.cell(m, opnd(m, rec, 0));
     if op == 25 || op == 26 {
         // fptrunc, fpext: to the other precision.
-        fr.operand_fp(m, o, opnd(m, rec, 0), 16);
+        let a = fr.source_fp(m, o, opnd(m, rec, 0), 16);
         if fr.float_kind(m, from) < 0 || fr.float_kind(m, to) != 1 - fr.float_kind(m, from) {
             return out.fail(o, out.why_operand());
         }
-        out.emit(o, a64.fp1(fr.float_kind(m, from), 4, 16, 16));
-        return put_fp(m, o, rec, to, 16);
+        let d = target(m, o, rec, 16);
+        out.emit(o, a64.fp1(fr.float_kind(m, from), 4, d, a));
+        return put_fp(m, o, rec, to, d);
     }
     if op == 27 {
         // fptosi: toward zero, to 64 bits, stored at the width asked for.
-        fr.operand_fp(m, o, opnd(m, rec, 0), 16);
-        out.emit(o, a64.fp_int(1, fr.float_kind(m, from), 2, 9, 16));
-        return put(m, o, rec, to, 9);
+        let a = fr.source_fp(m, o, opnd(m, rec, 0), 16);
+        let d = target(m, o, rec, 9);
+        out.emit(o, a64.fp_int(1, fr.float_kind(m, from), 2, d, a));
+        return put(m, o, rec, to, d);
     }
     if op == 28 {
         // sitofp: the integer sign-extended to 64 bits first.
-        fr.operand(m, o, opnd(m, rec, 0), 9, true);
+        let a = fr.source(m, o, opnd(m, rec, 0), 9, true);
         if fr.float_kind(m, to) < 0 {
             return out.fail(o, out.why_operand());
         }
-        out.emit(o, a64.fp_int(1, fr.float_kind(m, to), 0, 16, 9));
-        return put_fp(m, o, rec, to, 16);
+        let d = target(m, o, rec, 16);
+        out.emit(o, a64.fp_int(1, fr.float_kind(m, to), 0, d, a));
+        return put_fp(m, o, rec, to, d);
     }
     if op == 29 && (fr.word_size(m, from) < 0 || fr.word_size(m, to) < 0) {
         // bitcast between an integer and a floating-point value of its size: the same bytes.
         if ly.size_of(m, from) != ly.size_of(m, to) || result_of(m, rec) < 0 {
             return out.fail(o, out.why_operand());
+        }
+        let size = ly.size_of(m, to);
+        if out.reg(o, result_of(m, rec)) >= 0 && (size == 4 || size == 8) {
+            // Into a register: the bits moved between the two kinds of register, `fmov`.
+            let wide = size / 8;
+            if fr.float_kind(m, from) >= 0 {
+                let a = fr.source_fp(m, o, opnd(m, rec, 0), 16);
+                out.emit(o, a64.fp_int(wide, wide, 4, out.reg(o, result_of(m, rec)), a));
+                return 0;
+            }
+            let a = fr.source(m, o, opnd(m, rec, 0), 9, false);
+            out.emit(o, a64.fp_int(wide, wide, 5, out.reg(o, result_of(m, rec)), a));
+            return 0;
         }
         fr.add_offset(o, 14, fr.sp(), result_place(m, o, rec));
         return fr.store_value(text, m, o, opnd(m, rec, 0), from, 0, 0);
@@ -365,41 +382,48 @@ fn convert[&t, &m, &o](text: &t [byte], m: &m [int], o: &!o [int], rec: int) -> 
         return put(m, o, rec, to, 9);
     }
     // trunc, zext, sext, inttoptr, ptrtoint, and bitcast of an integer: the value extended as the conversion says, stored at the new width.
-    fr.operand(m, o, opnd(m, rec, 0), 9, op == 24);
+    // An `i1` to be sign-extended is fetched as it is, 0 or 1, and negated: a constant fetched sign-extended would be -1 already, and its negation 1 (which
+    // the random differential of section 17.9 found). A local is fetched by a load that sign-extends a byte that is 0 or 1, the same.
+    let bit_constant = op == 24 && fr.int_bits(m, from) == 1 && lm.cell(m, opnd(m, rec, 0) + 1) != lr.o_local();
+    var r = fr.source(m, o, opnd(m, rec, 0), 9, op == 24 && !bit_constant);
     if op == 24 && fr.int_bits(m, from) == 1 {
         // An `i1` is kept as 0 or 1: sign-extended it is 0 or -1.
-        out.emit(o, a64.addsub_shift(1, 1, 0, 9, 31, 9, 0, 0));
+        out.emit(o, a64.addsub_shift(1, 1, 0, 9, 31, r, 0, 0));
+        r = 9;
     }
     if fr.int_bits(m, to) == 1 {
-        out.emit(o, a64.logic_imm(1, 0, 9, 9, 1));
+        out.emit(o, a64.logic_imm(1, 0, 9, r, 1));
+        r = 9;
     }
-    return put(m, o, rec, to, 9);
+    return put(m, o, rec, to, r);
 }
 
 // `select`: the condition's low bit chooses.
 fn select[&t, &m, &o](text: &t [byte], m: &m [int], o: &!o [int], rec: int) -> [] int {
     let ty = type_of(m, rec);
-    fr.operand(m, o, opnd(m, rec, 0), 11, false);
-    out.emit(o, a64.logic_imm(0, 3, 31, 11, 1));
+    let c = fr.source(m, o, opnd(m, rec, 0), 11, false);
+    out.emit(o, a64.logic_imm(0, 3, 31, c, 1));
     if fr.word_size(m, ty) >= 0 {
-        fr.operand(m, o, opnd(m, rec, 1), 9, false);
-        fr.operand(m, o, opnd(m, rec, 2), 10, false);
+        let a = fr.source(m, o, opnd(m, rec, 1), 9, false);
+        let b = fr.source(m, o, opnd(m, rec, 2), 10, false);
         // The loads above set no flags, but an address past the immediates is worked out with an add that does not either.
-        out.emit(o, a64.csel(1, 0, 0, 9, 9, 10, 1));
-        return put(m, o, rec, ty, 9);
+        let d = target(m, o, rec, 9);
+        out.emit(o, a64.csel(1, 0, 0, d, a, b, 1));
+        return put_clean(m, o, rec, ty, d);
     }
     if fr.float_kind(m, ty) >= 0 {
-        fr.operand_fp(m, o, opnd(m, rec, 1), 16);
-        fr.operand_fp(m, o, opnd(m, rec, 2), 17);
-        out.emit(o, a64.fcsel(fr.float_kind(m, ty), 16, 16, 17, 1));
-        return put_fp(m, o, rec, ty, 16);
+        let a = fr.source_fp(m, o, opnd(m, rec, 1), 16);
+        let b = fr.source_fp(m, o, opnd(m, rec, 2), 17);
+        let d = target(m, o, rec, 16);
+        out.emit(o, a64.fcsel(fr.float_kind(m, ty), d, a, b, 1));
+        return put_fp(m, o, rec, ty, d);
     }
     // A value in parts: one of two copies, the condition tested again where it is jumped on.
     let branch = out.emit(o, 0);
     fr.add_offset(o, 14, fr.sp(), result_place(m, o, rec));
     fr.store_value(text, m, o, opnd(m, rec, 1), ty, 0, 0);
     let skip = out.emit(o, 0);
-    out.patch(o, branch, a64.bit_branch(0, 11, 0, out.here(o) - branch));
+    out.patch(o, branch, a64.bit_branch(0, c, 0, out.here(o) - branch));
     fr.add_offset(o, 14, fr.sp(), result_place(m, o, rec));
     fr.store_value(text, m, o, opnd(m, rec, 2), ty, 0, 0);
     out.patch(o, skip, a64.branch(0, out.here(o) - skip));
@@ -412,23 +436,28 @@ fn select[&t, &m, &o](text: &t [byte], m: &m [int], o: &!o [int], rec: int) -> [
 fn load[&m, &o](m: &m [int], o: &!o [int], rec: int) -> [] int {
     let ty = type_of(m, rec);
     let ordering = flags_of(m, rec) >> lr.ordering_shift() & 7;
-    fr.operand(m, o, opnd(m, rec, 0), 13, false);
     let size = fr.word_size(m, ty);
     if size >= 0 {
+        // A load of fewer than eight bytes clears the bits above them: the register holds it as a register is to.
+        let a = fr.source(m, o, opnd(m, rec, 0), 13, false);
+        let d = target(m, o, rec, 9);
         if ordering >= 3 {
-            out.emit(o, a64.ordered(size, 1, 9, 13));
+            out.emit(o, a64.ordered(size, 1, d, a));
         } else {
-            out.emit(o, a64.load_store(size, 0, 1, 9, 13, 0));
+            out.emit(o, a64.load_store(size, 0, 1, d, a, 0));
         }
         if fr.int_bits(m, ty) == 1 {
-            out.emit(o, a64.logic_imm(1, 0, 9, 9, 1));
+            out.emit(o, a64.logic_imm(1, 0, d, d, 1));
         }
-        return put(m, o, rec, ty, 9);
+        return put_clean(m, o, rec, ty, d);
     }
     if fr.float_kind(m, ty) >= 0 {
-        out.emit(o, a64.load_store(2 + fr.float_kind(m, ty), 1, 1, 16, 13, 0));
-        return put_fp(m, o, rec, ty, 16);
+        let a = fr.source(m, o, opnd(m, rec, 0), 13, false);
+        let d = target(m, o, rec, 16);
+        out.emit(o, a64.load_store(2 + fr.float_kind(m, ty), 1, 1, d, a, 0));
+        return put_fp(m, o, rec, ty, d);
     }
+    fr.operand(m, o, opnd(m, rec, 0), 13, false);
     if lm.type_kind(m, lm.resolved(m, ty)) == lm.k_vector() {
         return out.fail(o, out.why_vector());
     }
@@ -443,10 +472,20 @@ fn store[&t, &m, &o](text: &t [byte], m: &m [int], o: &!o [int], rec: int) -> []
     let ordering = flags_of(m, rec) >> lr.ordering_shift() & 7;
     let size = fr.word_size(m, ty);
     if size >= 0 && ordering >= 3 {
-        fr.operand(m, o, value, 9, false);
-        fr.operand(m, o, opnd(m, rec, 1), 14, false);
-        out.emit(o, a64.ordered(size, 0, 9, 14));
+        let v = fr.source(m, o, value, 9, false);
+        let a = fr.source(m, o, opnd(m, rec, 1), 14, false);
+        out.emit(o, a64.ordered(size, 0, v, a));
         return 0;
+    }
+    if size >= 0 || fr.float_kind(m, ty) >= 0 {
+        // A scalar: the address, the value, one store.
+        let a = fr.source(m, o, opnd(m, rec, 1), 14, false);
+        if size >= 0 {
+            let v = fr.source(m, o, value, 9, false);
+            return fr.access(o, size, 0, 0, v, a, 0);
+        }
+        let v = fr.source_fp(m, o, value, 16);
+        return fr.access(o, 2 + fr.float_kind(m, ty), 1, 0, v, a, 0);
     }
     if fr.is_aggregate(m, ty) && lm.cell(m, value + 1) == lr.o_local() {
         // A value in parts from its slot: a copy in pieces the place it goes to is known to be aligned for.
@@ -466,7 +505,8 @@ fn store[&t, &m, &o](text: &t [byte], m: &m [int], o: &!o [int], rec: int) -> []
 fn element[&m, &o](m: &m [int], o: &!o [int], rec: int) -> [] int {
     let n = count_of(m, rec);
     var ty = lm.cell(m, opnd(m, rec, 0));
-    fr.operand(m, o, opnd(m, rec, 1), 9, false);
+    // The pointer where it is; it is copied to `x9` before the first index that is not a number is added to it.
+    var base = fr.source(m, o, opnd(m, rec, 1), 9, false);
     var fixed = 0;
     var k = 2;
     while k < n && !out.failed(o) {
@@ -494,20 +534,25 @@ fn element[&m, &o](m: &m [int], o: &!o [int], rec: int) -> [] int {
             if known.good && known.slot < 0 {
                 fixed = wrapping_add(fixed, wrapping_mul(known.offset, each));
             } else {
-                fr.operand(m, o, index, 10, true);
+                fr.mov(o, 9, base);
+                base = 9;
+                let i = fr.source(m, o, index, 10, true);
                 fr.mov_imm(o, 11, each);
-                out.emit(o, a64.madd(1, 0, 9, 10, 11, 9));
+                out.emit(o, a64.madd(1, 0, 9, i, 11, 9));
             }
         }
         k = k + 1;
     }
+    let d = target(m, o, rec, 9);
     if fixed > 0 && fixed < 1 << 24 {
-        fr.add_offset(o, 9, 9, fixed);
+        fr.add_offset(o, d, base, fixed);
     } else if fixed != 0 {
         fr.mov_imm(o, 10, fixed);
-        out.emit(o, a64.addsub_shift(1, 0, 0, 9, 9, 10, 0, 0));
+        out.emit(o, a64.addsub_shift(1, 0, 0, d, base, 10, 0, 0));
+    } else {
+        fr.mov(o, d, base);
     }
-    return put(m, o, rec, lm.ty_ptr(), 9);
+    return put_clean(m, o, rec, lm.ty_ptr(), d);
 }
 
 // Where the indices of an `extractvalue` or `insertvalue` (operands `from` on) lead in a value of type `ty`: the offset, and the type there.
@@ -536,6 +581,14 @@ fn extract[&t, &m, &o](text: &t [byte], m: &m [int], o: &!o [int], rec: int) -> 
     let source = fr.in_frame(text, m, o, opnd(m, rec, 0), whole, o[cc.h_scratch()]);
     if result_of(m, rec) < 0 || out.failed(o) {
         return 0;
+    }
+    let r = out.reg(o, result_of(m, rec));
+    if r >= 0 && fr.word_size(m, ty) >= 0 {
+        // A part that is a register's: loaded into it, which clears the bits above it.
+        return fr.access(o, fr.word_size(m, ty), 0, 1, r, fr.sp(), source + offset);
+    }
+    if r >= 0 && fr.float_kind(m, ty) >= 0 {
+        return fr.access(o, 2 + fr.float_kind(m, ty), 1, 1, r, fr.sp(), source + offset);
     }
     fr.add_offset(o, 13, fr.sp(), source + offset);
     fr.add_offset(o, 14, fr.sp(), result_place(m, o, rec));
@@ -780,9 +833,14 @@ fn call[&t, &m, &o](text: &t [byte], m: &m [int], o: &!o [int], rec: int) -> [] 
         let a = opnd(m, rec, k);
         if lm.cell(m, a + 1) != lr.o_align() {
             let of = lm.cell(m, a);
-            let place = fr.in_frame(text, m, o, a, of, scratch);
-            fr.add_offset(o, 14, fr.sp(), place);
-            cc.walk(m, o, of, 0, cc.w_argument(), 0);
+            let r = fr.register_of(m, o, a);
+            if r >= 0 && cc.one_register(m, of) {
+                cc.from_register(m, o, of, r, cc.w_argument());
+            } else {
+                let place = fr.in_frame(text, m, o, a, of, scratch);
+                fr.add_offset(o, 14, fr.sp(), place);
+                cc.walk(m, o, of, 0, cc.w_argument(), 0);
+            }
         }
         k = k + 1;
     }
@@ -803,6 +861,9 @@ fn call[&t, &m, &o](text: &t [byte], m: &m [int], o: &!o [int], rec: int) -> [] 
         return 0;
     }
     cc.reset(o);
+    if out.reg(o, result_of(m, rec)) >= 0 && cc.one_register(m, ty) {
+        return cc.from_register(m, o, ty, out.reg(o, result_of(m, rec)), cc.w_result_in());
+    }
     fr.add_offset(o, 14, fr.sp(), result_place(m, o, rec));
     return cc.walk(m, o, ty, 0, cc.w_result_in(), 0);
 }

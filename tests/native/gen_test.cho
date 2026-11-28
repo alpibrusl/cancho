@@ -2,7 +2,7 @@
 // of most of what it lowers; it refuses, and writes nothing outside its table, when the table is too small or the module was not read; and no damaged byte
 // and no truncation of the module, once read, reaches a trap in it. That the code is right is `tests/native/gen/tricky.s`, which was run.
 //
-//     cancho test --std compiler/native/llmod.cho compiler/native/llread.cho compiler/native/llbody.cho compiler/native/lltop.cho compiler/native/lllayout.cho compiler/native/llout.cho compiler/native/a64.cho compiler/native/a64sys.cho compiler/native/a64frame.cho compiler/native/a64call.cho compiler/native/a64gen.cho compiler/native/a64fn.cho compiler/native/mem2reg.cho tests/native/gen_test.cho
+//     cancho test --std compiler/native/llmod.cho compiler/native/llread.cho compiler/native/llbody.cho compiler/native/lltop.cho compiler/native/lllayout.cho compiler/native/llout.cho compiler/native/a64.cho compiler/native/a64sys.cho compiler/native/a64frame.cho compiler/native/a64call.cho compiler/native/a64gen.cho compiler/native/a64fn.cho compiler/native/mem2reg.cho compiler/native/regalloc.cho tests/native/gen_test.cho
 
 import std.test;
 import selfhost.llmod as lm;

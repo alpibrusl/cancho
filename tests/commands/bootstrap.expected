@@ -1,5 +1,5 @@
 ok the_compiler_in_cancho_compiles_itself_to_a_fixed_point
 ok the_builder_in_cancho_builds_itself_with_no_help
 ok the_file_list_of_the_standalone_build_is_the_import_closure_of_cli
-files in the closure of cli: 138
+files in the closure of cli: 139
 ok the_standalone_build_reproduces_itself

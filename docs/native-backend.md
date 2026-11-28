@@ -527,6 +527,7 @@ x29      ─▶ the caller's x29, the return address          stp x29, x30, [sp,
             the bytes of each alloca
             a slot for each value; a second for each phi
             the scratch bytes (as large as the largest value any instruction works on)
+            the registers x19-x28, d8-d15 the allocation uses (section 17.3; none with --no-registers)
 sp       ─▶ the arguments of this function's calls that do not fit registers
 ```
 
@@ -542,7 +543,9 @@ writes at both ends of each and was run.
 **The registers.** `x9` to `x15` hold what one instruction works on; `x16` is the address of a name and of what is called
 through a pointer; `x17` is an address the immediates do not reach, and a constant on its way to a floating-point register;
 `d16` and `d17` are the floating-point operands. All are registers a callee may overwrite, so a function saves nothing but
-`x29` and `x30`.
+`x29` and `x30`. *Since N9 slice 2* (section 17.3) a value may live in `x19` to `x28` or `d8` to `d15` instead of its slot; those
+are the callee's to keep, and a function saves exactly the ones it uses. The generator itself names none of them: the compiler's own object built with
+`--no-registers`, disassembled by `aarch64-linux-gnu-objdump`, has no instruction that does.
 
 ### 12.2 Values
 
@@ -991,7 +994,9 @@ says it and an entry of a pool at the end of the section otherwise, as clang doe
 ## 17. Values in registers (N9): the design
 
 This is the design N9's issue asks for before the code, and its numbers are the baseline the code is measured against. Slice 1
-(`mem2reg`, section 17.7) is built: `compiler/native/mem2reg.cho`, and what was measured of it is section 17.8. Where building it
+(`mem2reg`, section 17.7) is built: `compiler/native/mem2reg.cho`, and what was measured of it is section 17.8. Slice 2 (linear
+scan) is built: `compiler/native/regalloc.cho`, corrected in section 17.3 where building it showed the design short, and measured in
+section 17.9. Where building it
 showed the design wrong or short, the design is corrected below, and each correction says so.
 
 ### 17.1 Where the instructions go today
@@ -1096,6 +1101,48 @@ they read and write the register when the value has one, and the slot otherwise.
 between registers, in the order that a `phi` reading another's old value needs (the parallel copy is sequentialised; a cycle
 is broken through `x17`); a critical edge is split by a block of its own.
 
+*As built* (slice 2), which is different in these places:
+
+- **The positions.** A block begins at a position of its own; each instruction is two after the one before. An instruction
+  reads its operands at its position and defines its result at the one after, so an operand whose last use is an instruction
+  may give its register to that instruction's result. A `phi` (the module's or a new one) is defined where its block begins.
+  The values an edge gives the `phi`s of the block it goes to are used one after the last instruction of the block it leaves,
+  where the values live out of that block are too. An interval is the hull of a value's definition, its uses and the
+  beginnings and ends of the blocks it is live into and out of; "widened over every loop it is live across" needs nothing
+  more, because liveness already makes a value used in a loop live out of the block that goes back to its head.
+- **Two intervals that meet at a position overlap**: one is expired only when it ends before the other begins.
+- **A value with no use gets no register**, and a function where a value other than a parameter is live into the first block
+  (a module not in SSA form) gets none at all. A promoted `load` that is another local (section 17.2) is that local: its uses
+  are the local's, and it has the local's register as it has its slot.
+- **Which values never get a register** is decided by the value, not by the function. The type rule is the one above
+  (integers of at most 64 bits, `ptr`, `float`, `double`); then an `alloca`'s address, a label, a removed instruction. The
+  places section 12 lowered by addressing a value's slot directly were made to go through the operand and result functions
+  instead, so that no value is excluded for them: a call's arguments and result and a function's parameters and its result
+  move between the value's register and `x0`... or `d0`... (`a64call.from_register`, the same walk as section 12.4's, so a
+  ninth argument still goes to the stack); `extractvalue` of a scalar loads the part straight into the register; `bitcast`
+  between an integer and a floating-point value is an `fmov`; the copies of a value of the side table read the register; and
+  what still asks for a value's bytes (`a64frame.in_frame`) is given them in the scratch bytes.
+- **What is in a register** is what its slot would give back: a value of fewer than 64 bits zero-extended from the width of its
+  access (a byte for an `i1`), so that an instruction that reads it sees the same bits as before; a result of fewer bits is cut
+  (`uxtb`, `uxth`, `mov w`) unless what made it already cut it (a compare, a load). An operand to be sign-extended is
+  `sxtb`/`sxth`/`sxtw` into a scratch register; otherwise an instruction reads the value's register itself and writes its
+  result straight into its own register when the lowering is one instruction that reads before it writes.
+- **No edge is split.** The code of a jump is already the edge's own: a conditional branch is a test over one jump to another
+  and each case of a `switch` is a compare over its jump (section 12.3), and a `phi`'s value is given on that jump, after the
+  condition has been read and before the branch. So the moves for one edge run only when that edge is taken. On that edge a
+  register a `phi` is given may only hold, before it, a value that is dead on the edge or one the moves read: a value live into
+  the target block overlaps the `phi` where the block begins. The `phi`s that have registers are given their values as one
+  parallel copy: a move is made when no move left reads its register; when every move left is read by another, the moves left
+  are cycles of registers only (each register is written by one move at most; when no move can be made, the register each move
+  left writes is read by another move left, so following them from any move closes a cycle, and a move that reads a constant or
+  a slot cannot be on one), and the register of the first is copied into
+  `x17` (or `d17`), which the move that read it then reads. The `phi`s in memory are given theirs into their second slots
+  first, as section 12 does, and take them when their block begins.
+- **The table** is the allocator's part of `mem2reg`'s side table (its region `r_alloc`, sized by `mem2reg.alloc_room` from the
+  most names, instructions and blocks a function of the module has), so `--no-registers`, the empty table, runs neither.
+- **The registers kept for the caller** are saved just above the outgoing arguments (section 12.1), in pairs (`stp`, `ldp`)
+  where two of a kind are next to each other, and restored before each `ret`.
+
 ### 17.4 A compare and its branch
 
 An `icmp` whose only use is the `br` after it is not materialised: the branch is the `b.cond` of the compare's flags. 4.2 % of
@@ -1122,7 +1169,7 @@ image size of section 16.5, 1.71 MB for cancho-os, which must come under its 2 M
 
 1. `mem2reg`, the side table, its use by the generator, `--no-registers`, the differential run. Measured alone. **Done**:
    section 17.8.
-2. Liveness, intervals, linear scan over `x19`-`x28` and `d8`-`d15`, register moves for `phi`s.
+2. Liveness, intervals, linear scan over `x19`-`x28` and `d8`-`d15`, register moves for `phi`s. **Done**: section 17.9.
 3. The fused compare and branch.
 4. Caller-saved registers, if 2 leaves a third of the self-build time still to find.
 
@@ -1159,3 +1206,38 @@ Two mistakes running found and no review: `alloc` is a name of cancho's prelude,
 not as a name taken (the pass's allocation of the pool is `take`); and `--no-registers` was at first read as a file by the list
 of the program's files (`cliprog.files_of_args`), which only building a program with it showed.
 
+### 17.9 What was measured of slice 2
+
+Slices 1 and 2 together, at the commit that adds `compiler/native/regalloc.cho`, on Linux x86-64; AArch64 code under `qemu-aarch64`
+8.2.2 as in section 17.8. Nothing below was run on an AArch64 machine; stage `native` of the gate and the CI job
+`native-self-build` were not run for it.
+
+```sh
+cancho test --std compiler/native/{llmod,llread,llbody,lltop,lllayout,llout,a64,a64sys,a64frame,a64call,a64gen,a64fn,mem2reg,regalloc}.cho tests/native/regalloc_test.cho
+GEN_DUMP MODULE.ll registers counts     # tests/native/gen_dump.cho: the words, and what was promoted and allocated
+seq 1 100 | xargs -P 4 -I{} sh tests/native/regalloc_random.sh GEN_DUMP {} 50 WORK
+```
+
+| what | result |
+|---|---|
+| The compiler's own module (`--emit ll --host linux-aarch64 --backend native`, 3,988 functions) | 31,369 `alloca`s promoted; **106,602 values given a register, 5,268 that wanted one left in their slots** (4.7 %); no function left without. `gen_dump` over it takes 1.34 s with the allocation and 1.24 s with the pass alone (the reader, the pass, the code, the text) |
+| Its words: none, `mem2reg` alone, both | 2,034,653 · 1,575,416 · **1,206,999** (23.4 % fewer than slice 1, 40.7 % fewer than none). `mem2reg` alone is the build of this commit with the allocation made to do nothing, and its words for `vars.ll` are slice 1's `vars.s` exactly |
+| The compiler's object (`--emit obj`), with both and with `--no-registers` | `size`'s text 6,878,916 against 10,189,532 (**32.5 % less**; slice 1 alone was 17.9 % less); the files 9,111,656 and 12,421,800 bytes. Making it takes 13.3 s against 13.0 s |
+| **The natively built compiler building the compiler** (sources to linked program, `--backend native`, under qemu, one after the other, as in section 17.8) | **377 s with both slices, 710 s with `--no-registers`: 46.9 % less.** A third less is met. Slice 1's pair was 496 s and 633 s on another day; against its 633 s, 377 s is 40.4 % less. The compiler built with both, the two stage-3 compilers it and the `--no-registers` one built, have the same `.text`, `.data` and `.rodata` (by `md5sum` of each) |
+| `tests/accept` and `examples` (152 files), each built both ways and run under qemu, output and status compared | **150 the same**; `audio_hello` and `aliasing_in_a_slice_of_references` refused by the front end both ways, as in section 17.8. In a first run, before the fix below, `process_group_kill` ended by the 20 s limit with registers and 0 without, four at a time; alone it ended 0 five times of five both ways, and in the second whole run it was the same: the race of section 17.8 |
+| The same 152 built with `--no-registers` (`--emit obj`) by this compiler and by slice 1's | 150 the same bytes, the 2 refused by both; and the compiler's own object, the same bytes |
+| **The random differential**: 100 modules of `tests/native/regalloc_random.py` (seeds 1 to 100, 50 functions each: 5,000 functions, a third straight-line, a third loops of `phi`s that swap and rotate with a diamond inside, a third written as the front end writes, with calls of ten arguments and of a `double`), each built by clang and by the generator with and without the step, linked and run under qemu | **all 15,000 results the same three ways**; 280,241 values given registers, 17,089 left in slots. The first run differed on 52 of 100 modules, both builds of ours alike against clang's: `sext i1 true` was 1, a mistake of section 12's generator (the constant was fetched sign-extended, -1, and then negated) |
+| `tests/native/gen/vars.ll` and `tricky.ll` with both | 419 words (703 slice 1 alone, 722 none) and 1,162 (1,581); `vars.s` and `tricky-registers.s` are kept, and each, linked and run, printed what clang's build prints (`vars.printed`, `tricky.printed`). `--no-registers` writes `vars-no-registers.s` and `tricky.s` as before |
+| cancho-os's kernel (0.0.30) through `board/pi.layout` | **901,280 bytes** (slice 1 alone: 1,335,456; with `--no-registers` it is refused, 139,856 bytes past the 2 MB limit). Booted in QEMU's raspi3b and virt from a scratch copy of cancho-os's tree: `about`, `echo ci`, `ticks` answer, `crash` reports the trap and halts as the slice 1 image does; on virt, with a key built into the image, OpenSSH logged in and ran `about` |
+| cancho-os's kernel of 0.0.52 (its `main` after alpibrusl/cancho-os#67: the tools, the heap, the lent clock), with its own `build.sh`, `BACKEND=native` | **refused, 504,616 bytes past the 2 MB limit** (slice 1 alone: 1,200,936 past it); through LLVM it is 790,888 bytes. The kernel grew faster than this step shrank its code, so cancho-os's native boot stays allowed to fail |
+| The suite (`native_regalloc`, 9 tests) broken on purpose | intervals never ended (no register given back): 2 tests fail and `vars.s` differs, the code still right (the random run the same 20 of 20); the cycle not kept in `x17`: 1 test fails, 18 of 20 random modules differ; the values an edge uses not made live: the test of the inner loop fails, 3 of 20 random modules differ; the registers not saved at the entry: 1 test fails, every random module differs |
+
+Measured against section 17.6: the self-build falls by more than a third, so the step is kept. The image of the kernel 17.6 measured
+is under its limit by more than half, but cancho-os's kernel of today is not under it (the row above): N8 waits on more of N9. What is left is slice 3 (the fused compare and branch) and slice 4 (caller-saved registers), and these: a constant
+operand is still put in `x10` before an instruction that could take it as an immediate; a value given back to its slot is in
+memory for its whole life, since an interval is not split; and a value is moved into `x0`... for a call one argument at a time.
+
+Mistakes running found and no review: the `sext i1` above, by the random differential and by no test of section 12; `narrow` is a
+name of cancho's prelude, as `alloc` was in slice 1 (the function that cuts a result to its width is `a64frame.held`); and a test
+module written with `1.0` as a `double` constant, which the reader refuses (LLVM writes the sixteen hexadecimal digits), was seen
+only as a trap of the test, which a failed `test.assert` is.

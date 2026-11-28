@@ -388,17 +388,140 @@ pub fn constant[&m](m: &m [int], at: int, depth: int) -> [] Address {
 
 // ---- values into registers ----
 
-// The local `id`, of type `ty`, from its slot into the general register `rd`: zero-extended, or sign-extended to 64 bits (`signed`).
+// ---- values in registers (`regalloc.cho`, section 17.3) ----
+//
+// A value of at most 64 bits that has a register is kept there as its slot would give it back: zero-extended from the width of its access (a byte for an
+// `i1`), so that every instruction that reads it sees what a load of the slot would have given. A `float` is the low half of its `d` register, the rest zero.
+
+// `mov xd, xm`, and the same of floating-point registers (`fmov`).
+pub fn mov[&o](o: &!o [int], rd: int, rm: int) -> [] int {
+    if rd != rm {
+        out.emit(o, a64.logic_shift(1, 1, 0, rd, 31, rm, 0, 0));
+    }
+    return 0;
+}
+
+pub fn fmov[&o](o: &!o [int], rd: int, rm: int) -> [] int {
+    if rd != rm {
+        out.emit(o, a64.fp1(1, 0, rd, rm));
+    }
+    return 0;
+}
+
+// The value in `r`, of `1 << size` bytes, into the register `rd` as a register holds it: the bits above its width made zero (`clean`: they are already).
+pub fn held[&o](o: &!o [int], size: int, rd: int, r: int, clean: bool) -> [] int {
+    if clean || size == 3 {
+        return mov(o, rd, r);
+    }
+    if size == 2 {
+        out.emit(o, a64.logic_shift(0, 1, 0, rd, 31, r, 0, 0));
+        return 0;
+    }
+    out.emit(o, a64.extend(0, 0, 8 << size, rd, r));
+    return 0;
+}
+
+// The register of the operand at `at` when it is a local that has one, else -1.
+pub fn register_of[&m, &o](m: &m [int], o: &o [int], at: int) -> [] int {
+    if lm.cell(m, at + 1) != lr.o_local() {
+        return 0 - 1;
+    }
+    return out.reg(o, lm.cell(m, at + 2));
+}
+
+// The local `id`, of type `ty`, from its slot (or its register) into the general register `rd`: zero-extended, or sign-extended to 64 bits (`signed`).
 pub fn load_local[&m, &o](m: &m [int], o: &!o [int], ty: int, rd: int, id: int, signed: bool) -> [] int {
     let size = word_size(m, ty);
     let slot = out.slot(o, id);
     if size < 0 || slot < 0 {
         return out.fail(o, out.why_operand());
     }
+    let r = out.reg(o, id);
+    if r >= 0 {
+        if signed && size < 3 {
+            out.emit(o, a64.extend(1, 1, 8 << size, rd, r));
+            return 0;
+        }
+        return mov(o, rd, r);
+    }
     if signed && size < 3 {
         return access(o, size, 0, 2, rd, sp(), slot);
     }
     return access(o, size, 0, 1, rd, sp(), slot);
+}
+
+// The register the operand at `at` is in, for an instruction that reads it as `operand` would put it in `rd`: its own register when it has one and that is
+// what is wanted (a value of 64 bits, or one not to be sign-extended), else `rd`, with the operand in it.
+pub fn source[&m, &o](m: &m [int], o: &!o [int], at: int, rd: int, signed: bool) -> [] int {
+    let r = register_of(m, o, at);
+    if r >= 0 && word_size(m, lm.cell(m, at)) >= 0 && (!signed || word_size(m, lm.cell(m, at)) == 3) {
+        return r;
+    }
+    operand(m, o, at, rd, signed);
+    return rd;
+}
+
+pub fn source_fp[&m, &o](m: &m [int], o: &!o [int], at: int, rd: int) -> [] int {
+    let r = register_of(m, o, at);
+    if r >= 0 && float_kind(m, lm.cell(m, at)) >= 0 {
+        return r;
+    }
+    operand_fp(m, o, at, rd);
+    return rd;
+}
+
+// The register a result of the local `id` is best worked out in: its own, or `scratch` when it lives in its slot.
+pub fn target[&o](o: &o [int], id: int, scratch: int) -> [] int {
+    if id >= 0 && out.reg(o, id) >= 0 {
+        return out.reg(o, id);
+    }
+    return scratch;
+}
+
+// The result of the local `id` (-1: none), of type `ty`, from the general register `r` to where it lives: its register, cut to its width (unless `clean`:
+// what is in `r` is that already), or its slot, which the store cuts.
+pub fn set_result[&m, &o](m: &m [int], o: &!o [int], id: int, ty: int, r: int, clean: bool) -> [] int {
+    if id < 0 {
+        return 0;
+    }
+    let size = word_size(m, ty);
+    if size < 0 || out.slot(o, id) < 0 {
+        return out.fail(o, out.why_operand());
+    }
+    if out.reg(o, id) >= 0 {
+        return held(o, size, out.reg(o, id), r, clean);
+    }
+    return access(o, size, 0, 0, r, sp(), out.slot(o, id));
+}
+
+pub fn set_result_fp[&m, &o](m: &m [int], o: &!o [int], id: int, ty: int, r: int) -> [] int {
+    if id < 0 {
+        return 0;
+    }
+    if float_kind(m, ty) < 0 || out.slot(o, id) < 0 {
+        return out.fail(o, out.why_operand());
+    }
+    if out.reg(o, id) >= 0 {
+        return fmov(o, out.reg(o, id), r);
+    }
+    return access(o, 2 + float_kind(m, ty), 1, 0, r, sp(), out.slot(o, id));
+}
+
+// The local `id` of type `ty`, a scalar, from its register into memory at `base + offset`; false (and nothing written) when it has no register.
+pub fn spill[&m, &o](m: &m [int], o: &!o [int], id: int, ty: int, base: int, offset: int) -> [] bool {
+    let r = out.reg(o, id);
+    if r < 0 {
+        return false;
+    }
+    if word_size(m, ty) >= 0 {
+        access(o, word_size(m, ty), 0, 0, r, base, offset);
+        return true;
+    }
+    if float_kind(m, ty) >= 0 {
+        access(o, 2 + float_kind(m, ty), 1, 0, r, base, offset);
+        return true;
+    }
+    return false;
 }
 
 // The operand at `at`, a value a general register holds, into `rd`: zero-extended from its type's width, or sign-extended (`signed`).
@@ -445,6 +568,9 @@ pub fn operand_fp[&m, &o](m: &m [int], o: &!o [int], at: int, rd: int) -> [] int
         if slot < 0 {
             return out.fail(o, out.why_operand());
         }
+        if out.reg(o, a) >= 0 {
+            return fmov(o, rd, out.reg(o, a));
+        }
         return access(o, 2 + double, 1, 1, rd, sp(), slot);
     }
     var bits = 0;
@@ -476,12 +602,12 @@ pub fn store_value[&t, &m, &o](text: &t [byte], m: &m [int], o: &!o [int], at: i
         return out.fail(o, out.why_vector());
     }
     if word_size(m, ty) >= 0 {
-        operand(m, o, at, 9, false);
-        return access(o, word_size(m, ty), 0, 0, 9, 14, offset);
+        let r = source(m, o, at, 9, false);
+        return access(o, word_size(m, ty), 0, 0, r, 14, offset);
     }
     if float_kind(m, ty) >= 0 {
-        operand_fp(m, o, at, 16);
-        return access(o, 2 + float_kind(m, ty), 1, 0, 16, 14, offset);
+        let r = source_fp(m, o, at, 16);
+        return access(o, 2 + float_kind(m, ty), 1, 0, r, 14, offset);
     }
     if kind == lr.o_local() {
         // Its bytes, from its slot. The copy moves neither address when it is short, and a long one is of a whole value at offset 0 of a place the caller
@@ -595,6 +721,10 @@ pub fn in_frame[&t, &m, &o](text: &t [byte], m: &m [int], o: &!o [int], at: int,
         let slot = out.slot(o, lm.cell(m, at + 2));
         if slot < 0 {
             out.fail(o, out.why_operand());
+        }
+        if spill(m, o, lm.cell(m, at + 2), ty, sp(), scratch) {
+            // A value in a register, written where bytes are asked for.
+            return scratch;
         }
         return slot;
     }
