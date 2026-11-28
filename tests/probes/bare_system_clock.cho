@@ -1,0 +1,43 @@
+edition 7;
+
+// bare_system_clock.cho -- a program for no system that asks the time (`docs/bare-system.md`, the clock): `elapsed` is
+// written as any program is, with a `Clock`: it asks how long since some moment, twice, and what the date is. What
+// answers is the module `probe_clock`. tests/commands/freestanding.sh builds it for `aarch64-none-elf`.
+import probe_clock;
+
+fn elapsed[&c](clock: &c Clock) -> [clock] int {
+    let a = clock_ms(clock);
+    let b = clock_ms(clock);
+    let wall = clock_unix_ms(clock);
+    if b < a || wall < 1700000000000 {
+        return 0 - 1;
+    }
+    return b - a;
+}
+
+fn main(world: World) -> [] int {
+    let Split { io, ffi, fs, heap, args, net, clock, signals, exec } = split(world);
+    release(io);
+    release(ffi);
+    release(fs);
+    release(heap);
+    release(args);
+    release(net);
+    release(signals);
+    release(exec);
+    var status = 0;
+    region r {
+        let at = alloc_slice[r](1, 0);
+        borrow clock as &c in {
+            system probe_clock(at) in {
+                status = elapsed(c);
+            }
+        }
+        // two milliseconds went by between the two asks
+        if status != 2 || at[0] != 3 {
+            status = 0 - 2;
+        }
+    }
+    release(clock);
+    return status;
+}
