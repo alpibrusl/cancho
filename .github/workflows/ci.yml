@@ -38,10 +38,27 @@ jobs:
   gate-native:
     name: gate, stage native (linux-aarch64)
     runs-on: ubuntu-24.04-arm
+    # Unoptimised code is slow, and a run that lost its machine once left no log: past this the job is stopped, and says so.
+    timeout-minutes: 90
     steps:
       - uses: actions/checkout@v4
       - name: scripts/gate.sh --only native
         run: scripts/gate.sh --only native
+
+  # docs/native-backend.md section 15: the compiler built by its own backend. Stage 1 is built as always; stage 2 by stage 1 with `--backend native`, stage 3
+  # by stage 2 the same way, and the script fails unless the two are the same file. Stage `walk` of the gate is then run with that compiler: a compiler the
+  # native backend miscompiled would refuse, accept or build some fixture differently. The times and sizes it prints are the document's numbers for a real machine.
+  native-self-build:
+    name: the compiler built by its own backend (linux-aarch64)
+    runs-on: ubuntu-24.04-arm
+    steps:
+      - uses: actions/checkout@v4
+      - name: scripts/build-standalone.sh --backend native
+        run: |
+          time sh scripts/build-standalone.sh --seed --out target/native --rev "$(git rev-parse HEAD)" --backend native
+          ls -l target/native/stages/1/cancho target/native/stages/2/cancho
+      - name: the gate's walk, with the compiler the native backend built
+        run: time scripts/gate.sh --cancho target/native/cancho --only walk
 
   # docs/tls-performance.md §6: the cost of each primitive the TLS stack is made of, against the baseline recorded in
   # `benches/tls_baseline.json`. A change that makes a primitive 1.3 times dearer in instructions (counted under valgrind, so the

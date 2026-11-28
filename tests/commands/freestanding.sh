@@ -264,6 +264,27 @@ else
 fi
 end
 
+# The same object from the native backend (docs/native-backend.md section 13): no clang is started, the allocator in it is code the native backend made, and
+# the only names it leaves to the link are the heap's two ends, as for the object clang makes. `nm` is the judge: it is not the compiler's.
+begin a_native_object_for_no_system_leaves_the_heaps_two_ends_to_the_link
+if "$cancho" build tests/probes/bare_heap.cho --std --target aarch64-none-elf --emit obj --backend native --clang /nonexistent/clang -o "$work/heap.native.o" > "$work/heap.native.txt" 2>&1; then
+    same "$(nm -u "$work/heap.native.o" | awk '{ print $NF }' | LC_ALL=C sort | tr '\n' ' ')" "__cancho_heap_end __cancho_heap_start " "what the native object does not define"
+    same "$(nm "$work/heap.native.o" | awk '$2 == "T" && ($3 == "malloc" || $3 == "free" || $3 == "main") { print $3 }' | LC_ALL=C sort | tr '\n' ' ')" "free main malloc " "the allocator and the program, defined in it"
+    if "$cancho" build tests/probes/bare_heap.cho --std --target aarch64-none-elf --emit obj -o "$work/heap.llvm.o" > /dev/null 2>&1; then
+        same "$(nm -u "$work/heap.llvm.o" | awk '{ print $NF }' | LC_ALL=C sort | tr '\n' ' ')" "__cancho_heap_end __cancho_heap_start " "what clang's object does not define"
+    else
+        fail "the LLVM backend did not make the object to compare with"
+    fi
+else
+    fail "--emit obj --backend native said: $(head -c 300 "$work/heap.native.txt")"
+fi
+# A program for Linux leaves only functions of the C library: no name of the compiler's runtime, and no function of LLVM's.
+"$cancho" build tests/probes/bare_heap.cho --std --host linux-aarch64 --emit obj --backend native -o "$work/hosted.native.o" > "$work/hosted.native.txt" 2>&1
+same "$?" 0 "the status for Linux"
+same "$(nm -u "$work/hosted.native.o" | grep -c 'cancho\|llvm')" 0 "names of the runtime or of LLVM left to the link"
+case "$(nm -u "$work/hosted.native.o" | grep -c ' malloc$')" in 1) ;; *) fail "the object for Linux does not ask the C library for malloc" ;; esac
+end
+
 begin a_program_for_no_system_is_not_linked_by_the_compiler
 "$cancho" build tests/probes/freestanding.cho --std --target aarch64-none-elf -o "$work/bare.out" > "$work/exe.txt" 2>&1
 same "$?" 2 "the status without --emit"

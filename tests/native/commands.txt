@@ -1,0 +1,36 @@
+# The command tests stage `native` of the gate runs with the native backend (docs/native-backend.md section 14): one name a line, `tests/commands/NAME.cho`.
+# These are the tests that use the runtime hardest: files, directories, sockets, processes, terminals, the ciphers, certificates and TLS.
+# The first run with every command test (55) lost its machine after 71 minutes and left no log, so which test did it is not known; the ones that push
+# memory to a limit on purpose, or run for minutes as optimised code, are left out until they have been run one at a time on a real machine:
+# memory, region_cache, region_limit, global_state, traps, differential, backends_parallel, benchmarks and the rest not named below.
+# tls_scripts is left out by name: nineteen of its twenty scenarios pass, on a real machine too, and the last gives 64 TLS connections on one thread
+# thirty seconds, which code with every value in memory does not make (33 to 40 of the 64 under qemu, the rest `timeout`). It comes back with N9.
+aead
+gcm
+kdf
+io
+stdin_bulk
+filesystem
+file_writes
+directory_handles
+directory_links
+directory_listing
+directory_mkdir
+directory_modes
+directory_nlink
+directory_open_new_mode
+directory_rename_new
+directory_rmdir
+directory_writes
+close_on_exec
+process_group
+spawn_under
+spawn_detached_under
+tty
+net_bounds
+net_hosts
+net_split
+listen_host
+http_client
+x509
+x509_verify

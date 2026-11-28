@@ -13,7 +13,7 @@
 # tests/accept and every example built and run, every fixture of tests/reject refused by its rule; `--selfhost`, since the compiler is the one in cancho), reject
 # (scripts/reject-golden.cho check against tests/reject.golden), tests (every `cancho test` run listed in tests/cancho-tests.txt, with the number of tests it must pass; the scripts of
 # tests/commands run through tests/commands/script_tests.cho, which are what the Rust conformance suite was, G4).
-# Stage native (docs/native-backend.md section 13): the programs of stage walk and the `cancho test` runs of stage tests again, built by the native backend
+# Stage native (docs/native-backend.md sections 13 and 14): the programs of stage walk, the `cancho test` runs and the command tests of stage tests again, built by the native backend
 # (`--backend native`: no clang and no LLVM between the program and its object), each held to what its fixture says it prints. On a machine the native backend
 # writes no code for (it has Linux on AArch64) the stage says so and passes.
 # Run from anywhere; it works from the root of the repository. Exit status: 0 if every stage ran and passed, 1 if one failed, 2 for a bad call.
@@ -136,6 +136,19 @@ if wanted native; then
       echo "$result" | grep -q "test result: ok. $passed passed; 0 failed" || { echo "$result" >&2; echo "gate: $name: expected $passed passed" >&2; rm -rf "$scratch"; fail native; }
       stage "  $name: $passed passed"
     done < "$scratch/list"
+    # The command tests that use the runtime hardest (tests/native/commands.txt says which, and why not all): each test's own program is built as always, and
+    # is given the wrapper, so every program it builds and runs is the native backend's. Each is named before it runs and has twenty minutes: a test that
+    # takes the machine down, or never ends, is then known by its name.
+    count=0
+    for name in $(grep -v '^#' tests/native/commands.txt); do
+      source=tests/commands/$name.cho
+      [ -e "$source" ] || { echo "gate: tests/native/commands.txt names $name, and there is no $source" >&2; rm -rf "$scratch"; fail native; }
+      stage "  $name ($(date -u +%H:%M:%S))"
+      "$cancho" build "$source" tests/support/harness.cho --std -o "$scratch/$name" || { rm -rf "$scratch"; fail native; }
+      timeout 1200 "$scratch/$name" "$scratch/cancho" --cache "$scratch/command-cache" || { echo "gate: $name failed or did not end in twenty minutes, its programs built by the native backend" >&2; rm -rf "$scratch"; fail native; }
+      count=$((count + 1))
+    done
+    stage "  $count command tests"
     rm -rf "$scratch"
   else
     stage "native: the native backend writes no code for $(uname -sm): not run here (it runs on Linux on AArch64)"

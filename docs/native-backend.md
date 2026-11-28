@@ -739,3 +739,109 @@ ciphers' tests pass with no vector and no cipher instruction in the program.
 - **The linker.** It is still the system's; N7 writes an image for no system without one.
 - macOS and x86-64 (N15, N14): `--backend native` refuses them by the rule.
 
+---
+
+## 14. The runtime through the native backend (N5)
+
+Most of this task was done by N4 without being asked for: the hand-kept runtime is text the driver writes into the program's
+one module, so the native backend reads it with the rest and the object it writes is the whole program. Nothing of the runtime
+is given to clang. What N5 adds is the proof, and the gate.
+
+**What the runtime's files needed.** Nothing was widened for them and no line of them was rewritten: the reader of section 10
+and the lowering of section 12 already took every form the 16 files without vectors use (the census of section 3 was run over
+the module the driver writes, runtime included, which is why). A variadic function of the C library (`open`, `fcntl`,
+`syscall`, `printf`) is called as any other on AArch64 Linux, where a variadic argument goes where a named one would; on Apple's
+AArch64 it goes on the stack, and that is N15's.
+
+**The three cipher files are not written** for this backend (section 13.2): `hw_sha256` and `hw_aes_gcm` answer no, and the
+library's own code runs. `tests/commands/native_elf.sh` reads that in the module (no vector, none of the instructions, and the
+question's whole body is `ret i8 0`); that the answers are the published ones is every hash and cipher test of the gate, built
+by this backend in stage `native`.
+
+**What an object leaves to the link** is read by `nm`, in `tests/commands/freestanding.sh`: for `bare_heap` with no system, the
+heap's two ends and nothing else, with `malloc`, `free` and `main` defined in it by this backend; for a program of Linux, functions
+of the C library and no name of the runtime or of LLVM. The test failed on N4's first objects, which named twelve functions of
+LLVM's as symbols.
+
+**Stage `native` of the gate now runs command tests** too: the twenty-nine of `tests/native/commands.txt`, which are the ones that
+use the runtime hardest (files, directories, sockets, processes, terminals, the ciphers, certificates, TLS). Each test's own
+program is built as always and is handed a compiler that asks for the native backend, so every program the test builds and
+runs is this backend's; each is named before it runs and has twenty minutes.
+
+This section first said all 55 command tests, and the stage ran them all. **The first run of that on a real machine lost the
+machine**: 71 minutes in, the runner stopped answering and left no log, so which test did it is not known. Several command
+tests push memory to a limit on purpose, and unoptimised code is some 24 times slower (section 15.1). The list is what is left
+when those are taken out; the others wait to be run one at a time where a person can watch.
+
+**On a real machine** (CI, Linux on AArch64) the second run took the list in five minutes and **twenty-nine pass**:
+`aead`, `gcm`, `kdf`, `io`, `stdin_bulk`, `filesystem`, `file_writes`, the ten `directory_*`, `close_on_exec`, `process_group`,
+`spawn_under` and `spawn_detached_under` (which the emulator could not run), `tty`, `net_bounds`, `net_hosts`, `net_split`,
+`listen_host`, `http_client`, `x509`, `x509_verify`. The thirtieth was `tls_scripts`, and it fails there as it does under qemu,
+in one scenario of twenty: 64 TLS connections on one thread have thirty seconds between them, and this code does not make
+it. That is a deadline missed and not a wrong answer (under qemu the connections that fail all say `timeout`, and how many
+varies from run to run), but nothing here proves it, so the test is out of the list by name and comes back with N9.
+
+### 14.1 What was measured
+
+On Linux x86-64, the programs built for `linux-aarch64` by the native backend and run under `qemu-aarch64` 8.2.2 (section 13.4
+says how). Of the 55 command tests:
+
+| | |
+|---|---|
+| pass | **50**: `filesystem`, `file_writes`, the ten `directory_*`, `net_bounds`, `listen_host`, `http_client`, `process_group`, `close_on_exec`, `tty`, `stdin_bulk`, `aead`, `gcm`, `kdf`, `rsa`, `ecdh`, `ecdsa`, `ecdsa_sign`, `x25519`, `x509`, `x509_verify`, `traps`, `memory`, `word_scan` and the rest |
+| `spawn_under`, `spawn_detached_under` | fail under the emulator, which does not start a program by a directory and a name; clang's build fails there the same way (section 13.4) |
+| `global_state` | the test runs its program under a limit on memory, and qemu itself cannot start under it (`allocate 134217728 bytes for jit buffer`) |
+| `region_cache` | the test counts `malloc` with a library loaded before the program (`LD_PRELOAD`), built for the machine it runs on; under the emulator that library is loaded into the emulator |
+| `tls_scripts` | 19 of its 20 scenarios pass. The last opens 64 TLS connections on one thread with 30 s to finish; emulated, unoptimised code finishes 33 to 40 of them and the rest say `timeout` |
+
+None of the five is a wrong answer from a program; each is the emulator or the clock.
+
+### 14.2 Not done
+
+- **`tls_scripts` natively**: its scenario with a deadline (above).
+- **Twenty-five command tests on a real AArch64 machine** (above): `memory`, `region_cache`, `region_limit`, `global_state`,
+  `traps` and the rest that `tests/native/commands.txt` does not name.
+- Vector instructions, and the ciphers fast: N9 to N11 help the second, nothing here does.
+
+---
+
+## 15. The compiler builds itself with the native backend (N6)
+
+`scripts/build-standalone.sh --backend native`: stage 1 is built as always (by the seed, through clang); stage 2 by stage 1
+with `--backend native`; stage 3 by stage 2 the same way; and the script fails unless stage 2 and stage 3 are the same file.
+Between the compiler's sources and stage 2's object there is then no clang and no LLVM; `clang` is still the name the system's
+linker is started by. A job of CI on Linux on AArch64 (`native-self-build`) does this on every change, and then runs stage
+`walk` of the gate with the compiler it made: a compiler this backend miscompiled would refuse, accept or build some fixture
+differently.
+
+### 15.1 What was measured
+
+Under `qemu-aarch64` 8.2.2 on Linux x86-64, since that is the AArch64 machine there was; the compilers were cross-built and
+linked by `aarch64-linux-gnu-gcc`. The figures of a real machine are the CI job's, which prints them.
+
+| what | result |
+|---|---|
+| The natively built compiler builds itself natively, and that one again | the second object and the third are the same file (section 13.4), **and the same file the clang-built compiler writes**: the three compilers are one program |
+| The text each compiler writes for its own sources (29 MB), clang-built on x86-64, clang-built for AArch64, natively built for AArch64 | the same file, three times |
+| The time to write that text | clang-built (`-O2`): 41 s. Natively built: 7 min 19 s. **10.6 times slower**, both emulated, on a machine doing other work |
+| The size of the compiler | clang-built 4,262,248 bytes; natively built 10,066,960: 2.4 times |
+| The text for each program of `tests/accept` and `examples`, written by the clang-built compiler on x86-64 and by the natively built one under qemu (`--emit ll --host linux-aarch64`) | **150 the same file, none different**; two more are refused by both alike (they are not programs alone) |
+
+**On a real machine** (the CI job's first run: a GitHub runner, Linux on AArch64, at the commit that adds this section):
+
+| what | result |
+|---|---|
+| Stage 2 against stage 3, both built by the native backend | **the same file** (10,067,768 bytes); the clang-built stage 1 is 4,263,072 |
+| Stage 2: the clang-built compiler builds the compiler with the native backend, sources to linked program | 9 s |
+| Stage 3: the natively built compiler does the same | 3 min 33 s: **about 24 times slower**. Emulation flattered it: qemu costs optimised code more than it costs this code |
+| Stage `walk` of the gate with the natively built compiler | passes: 437 programs refused, 133 built and run, 16 examples. 52 minutes, where the clang-built compiler takes a few |
+
+The slowdown is the price of section 12's "every value in memory", with no instruction chosen for speed and none removed;
+N9 to N11 are where it is paid back, and this number is what they are measured against.
+
+### 15.2 Not done
+
+- The whole gate (not only `walk`) with the natively built compiler as the one under test: the job runs `walk`, which is
+  every fixture built, run and refused, and that alone is 52 minutes. Until N9 the job is the slowest of CI.
+- The seed is still built by clang (decision O3).
+
