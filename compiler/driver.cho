@@ -40,6 +40,7 @@ import selfhost.platform;
 import selfhost.instances;
 import selfhost.pass1;
 import selfhost.nativert;
+import selfhost.syscode;
 import selfhost.runtime;
 import selfhost.kinds;
 import selfhost.printing;
@@ -339,23 +340,16 @@ fn build_module[&s, &x](st: &!s [int], text: &x [byte]) -> [] int {
     emit.str(st, "declare void @llvm.trap()\n");
     // Every trap is one instruction on each target, as the Rust backend writes it, so that a program stops with the same
     // signal (SIGILL) whichever compiler built it: `llvm.trap` is `brk` on arm64, which is SIGTRAP.
-    // Where there is no system it is not written in line: each place that traps calls the one function, which a lent system
-    // can then make end the program and not the kernel (cancho-os docs/programs.md, sections 3 and 9).
-    if st[61] == 3 && st[55] & nativert.bit() == 0 {
-        // A program in a block that runs (docs/bare-system.md, 11e) fails alone: while it runs (`@cancho_sys_on` 1) its module's
-        // `@cancho_runs_failed` is the hook, and is told where the trap was called from. Otherwise the trap is the kernel's.
-        emit.str(st, "declare ptr @llvm.returnaddress(i32)\ndefine void @cancho_trap() noreturn noinline {\nentry:\n  %on = load i64, ptr @cancho_sys_on\n  %hook = load ptr, ptr @cancho_runs_hook\n  %running = icmp eq i64 %on, 1\n  %held = icmp ne ptr %hook, null\n  %program = and i1 %running, %held\n  br i1 %program, label %alone, label %kernel\nalone:\n  %at = call ptr @llvm.returnaddress(i32 0)\n  call void %hook(ptr %at)\n  unreachable\nkernel:\n  call void asm sideeffect \"");
-    } else if st[61] == 3 {
-        emit.str(st, "define void @cancho_trap() noreturn noinline {\nentry:\n  call void asm sideeffect \"");
-    } else {
+    // (Where there is no system it is written after the functions, below.)
+    if st[61] != 3 {
         emit.str(st, "define void @cancho_trap() noreturn {\nentry:\n  call void asm sideeffect \"");
+        if st[61] == 0 {
+            emit.str(st, "ud2");
+        } else {
+            emit.str(st, "udf #0xc11f");
+        }
+        emit.str(st, "\", \"\"()\n  unreachable\n}\n");
     }
-    if st[61] == 0 {
-        emit.str(st, "ud2");
-    } else {
-        emit.str(st, "udf #0xc11f");
-    }
-    emit.str(st, "\", \"\"()\n  unreachable\n}\n");
     if st[61] != 3 {
         // (Where there is no system these are the module's own, if it has a `system` block: `docs/bare-system.md`.)
         emit.str(st, "declare i32 @putchar(i32)\n");
@@ -513,6 +507,15 @@ fn build_module[&s, &x](st: &!s [int], text: &x [byte]) -> [] int {
         emit.str(st, runtime.process_text());
     }
     if st[61] == 3 {
+        // Where there is no system the trap is not written in line: each place that traps calls the one function, so that the
+        // address it is called from names the function. In a module with a block that runs (written once its functions are, so that
+        // it is known) it ends the program and not the kernel while one runs (`@cancho_sys_on` 1 and a hook: docs/bare-system.md,
+        // 11e), and says where it was called from; in every other module it is the one instruction it was.
+        if syscode.runs_seen(st) {
+            emit.str(st, "declare ptr @llvm.returnaddress(i32)\ndefine void @cancho_trap() noreturn noinline {\nentry:\n  %on = load i64, ptr @cancho_sys_on\n  %hook = load ptr, ptr @cancho_runs_hook\n  %running = icmp eq i64 %on, 1\n  %held = icmp ne ptr %hook, null\n  %program = and i1 %running, %held\n  br i1 %program, label %alone, label %kernel\nalone:\n  %at = call ptr @llvm.returnaddress(i32 0)\n  call void %hook(ptr %at)\n  unreachable\nkernel:\n  call void asm sideeffect \"udf #0xc11f\", \"\"()\n  unreachable\n}\n");
+        } else {
+            emit.str(st, "define void @cancho_trap() noreturn noinline {\nentry:\n  call void asm sideeffect \"udf #0xc11f\", \"\"()\n  unreachable\n}\n");
+        }
         // No system: the chunks of the regions and the fills and copies are the program's own (`runtime/bare.ll`).
         emit.str(st, runtime.bare_text());
     } else if st[55] & 32 != 0 {

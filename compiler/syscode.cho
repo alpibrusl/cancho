@@ -31,6 +31,23 @@ pub fn system_seen[&s](st: &!s [int]) -> [] bool {
     return false;
 }
 
+// Has a block that runs been written into this module (`@cancho_runs_body` is among the constants)?
+pub fn runs_seen[&s](st: &!s [int]) -> [] bool {
+    let mark = "define internal i64 @cancho_runs_body(";
+    var at = 0;
+    while at + len(mark) <= st[57] {
+        var k = 0;
+        while k < len(mark) && st[st[56] + at + k] == int_of(mark[k]) {
+            k = k + 1;
+        }
+        if k == len(mark) {
+            return true;
+        }
+        at = at + 1;
+    }
+    return false;
+}
+
 // The globals: what is lent, and room for sixty-four arguments of 255 bytes. (Whether something is lent, `@cancho_sys_on`, is
 // `runtime/bare.ll`'s, since the trap reads it in every module of this target.)
 pub fn system_globals[&s](st: &!s [int]) -> [] int {

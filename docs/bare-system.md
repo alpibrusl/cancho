@@ -588,9 +588,10 @@ nothing outside the block's stack first.
 **The trap** (`driver.cho`, the target with no system) becomes: if `@cancho_sys_on` is 1 and `@cancho_runs_hook` is
 not null, the hook is called with where the trap was called from (`llvm.returnaddress`), and it stores the state 3,
 why from `@cancho_sys_why` (1 unless the place that traps stored 2 or 3) and where, and does
-`@cancho_switch(<the program's registers>, @cancho_sys_back)`; otherwise `udf #0xc11f` as now. The trap is in every
-module of this target and the switch only in one with a block that runs, so the trap reaches it through the hook,
-and `@cancho_sys_on`, the hook, the stack's end and why are `runtime/bare.ll`'s. A `system` block without `runs`
+`@cancho_switch(<the program's registers>, @cancho_sys_back)`; otherwise `udf #0xc11f` as now. The trap is written
+after the module's functions, so that whether it has a block that runs is known: one without keeps the trap of one
+instruction, and so the forms the backend of cancho's own reads (`tests/native/subset.txt`) do not change. The
+switch is reached through the hook, and `@cancho_sys_on`, the hook, the stack's end and why are `runtime/bare.ll`'s. A `system` block without `runs`
 never sets the hook, so its traps stay the kernel's. The allocator's traps for no memory (`bare.ll`) store 2 first.
 
 **The stack's end, at every function** (cancho-os `docs/programs.md`, decision 2): on this target each function

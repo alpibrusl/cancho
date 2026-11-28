@@ -26,7 +26,7 @@ declare void @llvm.memset.p0.i64(ptr, i8, i64, i1)
 ; The check every function makes first, after its frame is taken: the stack pointer (here, the address of a cell of this
 ; function's own frame) below the end is a trap, why 3. One call, so that a function LLVM writes into another does not bring a
 ; copy of the comparison.
-define void @cancho_stack_check() noinline nounwind {
+define void @cancho_stack_check() noinline {
 entry:
   %cell = alloca i64
   %sp = ptrtoint ptr %cell to i64
