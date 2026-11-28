@@ -425,6 +425,10 @@ pub fn test_command[&h, &i, &a, &f, &x, &c](heap: &!h Heap, io: &!i Io, args: &a
             if n >= arg_count(args) {
                 return clibase.usage_error(heap, io, "`-l` and `-L` need a value");
             }
+        } else if bytes.equal(word, "--no-registers") {
+            if clibase.backend_asked(args) != 1 {
+                return clibase.usage_error(heap, io, "`--no-registers` keeps every value of the native backend in memory: it goes with `--backend native`");
+            }
         } else if bytes.equal(word, "--clang") {
             n = n + 1;
             if n >= arg_count(args) {

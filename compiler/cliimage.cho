@@ -144,7 +144,7 @@ pub fn make[&h, &i, &a, &f, &r, &o, &p](heap: &!h Heap, io: &!i Io, args: &a Arg
         buffer.drop(heap, named);
         if status == 0 {
             borrow page as &sb in {
-                let made = llback.bare_image(heap, ir, plan, buffer.bytes(sb), boot, executable(args));
+                let made = llback.bare_image(heap, ir, plan, buffer.bytes(sb), boot, executable(args), clibase.registers(args));
                 let llback.Imaged { file, stage, line, why, space, from, size, number } = made;
                 if stage == 1 {
                     status = clibase.refuse_backend(heap, io, path, false, line, why);

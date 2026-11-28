@@ -111,6 +111,15 @@ pub fn h_func() -> [] int {
     return 22;
 }
 
+// With the variables made values (`mem2reg.cho`): how many allocas were promoted, and how many functions with one to promote were left as they were.
+pub fn h_promoted() -> [] int {
+    return 28;
+}
+
+pub fn h_left() -> [] int {
+    return 29;
+}
+
 pub fn header() -> [] int {
     return 32;
 }
@@ -419,7 +428,7 @@ pub fn room[&m](m: &m [int]) -> [] int {
     let records = lm.cell(m, lm.h_top()) - lm.cell(m, lm.h_rec());
     let instructions = lm.cell(m, lm.h_ninstr());
     let functions_n = lm.cell(m, lm.h_nfuncs());
-    return header() + 96 * instructions + 2 * records + 64 * functions_n + 4096 + 3 * (lm.cell(m, lm.h_li_cap()) + 8) + 3 * functions_n + 3;
+    return header() + 96 * instructions + 2 * records + 64 * functions_n + 4096 + 3 * (2 * lm.cell(m, lm.h_li_cap()) + 8) + 3 * functions_n + 3;
 }
 
 // The table `o` laid out for the module in `m`, empty. A table smaller than `room(m)` is a refusal, as is every write after it.
@@ -440,7 +449,8 @@ pub fn layout[&m, &o](m: &m [int], o: &!o [int]) -> [] int {
     let functions_n = lm.cell(m, lm.h_nfuncs());
     var next = header();
     o[h_loc()] = next;
-    o[h_loc_cap()] = lm.cell(m, lm.h_li_cap()) + 8;
+    // As many again for the new `phi`s of `mem2reg.cho`.
+    o[h_loc_cap()] = 2 * lm.cell(m, lm.h_li_cap()) + 8;
     next = next + 3 * o[h_loc_cap()];
     o[h_fn()] = next;
     o[h_fn_top()] = next;

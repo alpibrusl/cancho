@@ -18,6 +18,7 @@ import selfhost.a64;
 import selfhost.a64frame as fr;
 import selfhost.a64call as cc;
 import selfhost.a64gen as gen;
+import selfhost.mem2reg as m2;
 
 fn op_of[&m](m: &m [int], rec: int) -> [] int {
     return lm.cell(m, rec + 2);
@@ -29,11 +30,7 @@ fn opnd[&m](m: &m [int], rec: int, k: int) -> [] int {
 
 // The record after `rec`.
 fn next[&m](m: &m [int], rec: int) -> [] int {
-    let size = lm.cell(m, rec + 1);
-    if size < 2 {
-        return lm.cell(m, lm.h_top());
-    }
-    return rec + size;
+    return m2.next(m, rec);
 }
 
 // The first instruction at or after `rec` (constants are records too, and come before what uses them): its record, or 0 at the end of the block.
@@ -50,9 +47,24 @@ fn instruction_at[&m](m: &m [int], rec: int) -> [] int {
 
 // ---- the frame ----
 
+// Is local `id` one that has no slot of its own once the variables are values (`promoted`): a promoted `alloca`, or a promoted `load` that is another local,
+// whose slot it shares (section 17.2)?
+fn shared[&s](s: &s [int], id: int, promoted: bool) -> [] bool {
+    if !promoted {
+        return false;
+    }
+    let i = m2.instruction_of(s, id);
+    if i < 0 {
+        return false;
+    }
+    let what = m2.action(s, i);
+    return what == m2.a_removed() || what == m2.a_replaced() && m2.kind(m2.replacement(s, i)) == m2.v_local();
+}
+
 // The frame of the function at `func`: a slot for every value, the bytes of every `alloca`, the stack its calls need, and the scratch bytes, which are as
-// large as the largest value any instruction works on.
-fn frame[&m, &o](m: &m [int], o: &!o [int], func: int) -> [] int {
+// large as the largest value any instruction works on. With the variables made values (`promoted`, the side table `s`), a promoted `alloca` has neither, a
+// promoted `load` that is another local has that local's slot, and each new `phi` has two slots as the module's own do.
+fn frame[&m, &s, &o](m: &m [int], s: &s [int], o: &!o [int], func: int, promoted: bool) -> [] int {
     let names = lm.cell(m, func + 9);
     let n = lm.cell(m, names + 2);
     var stack = 0;
@@ -91,7 +103,7 @@ fn frame[&m, &o](m: &m [int], o: &!o [int], func: int) -> [] int {
         let info = names + 3 + 4 * id;
         let ty = lm.cell(m, info + 2);
         let def = lm.cell(m, info + 1);
-        if lm.cell(m, info + 3) == 0 && ty != lm.ty_void() {
+        if lm.cell(m, info + 3) == 0 && ty != lm.ty_void() && !shared(s, id, promoted) {
             if lm.type_kind(m, lm.resolved(m, ty)) == lm.k_vector() {
                 o[out.h_line()] = lm.cell(m, def + 8);
                 return out.fail(o, out.why_vector());
@@ -125,6 +137,23 @@ fn frame[&m, &o](m: &m [int], o: &!o [int], func: int) -> [] int {
             }
         }
         id = id + 1;
+    }
+    if promoted {
+        var k = 0;
+        while k < m2.phis(s) && !out.failed(o) {
+            let ty = m2.phi_type(s, k);
+            out.set_slot(o, n + k, out.reserve(o, ly.size_of(m, ty), ly.align_of(m, ty)));
+            out.set_phi_slot(o, n + k, out.reserve(o, ly.size_of(m, ty), ly.align_of(m, ty)));
+            k = k + 1;
+        }
+        id = 0;
+        while id < n && !out.failed(o) {
+            let i = m2.instruction_of(s, id);
+            if i >= 0 && m2.action(s, i) == m2.a_replaced() && m2.kind(m2.replacement(s, i)) == m2.v_local() {
+                out.set_slot(o, id, out.slot(o, m2.value_of(m2.replacement(s, i))));
+            }
+            id = id + 1;
+        }
     }
     o[out.h_frame()] = (o[out.h_frame()] + 15) / 16 * 16;
     return 0;
@@ -186,9 +215,33 @@ fn block_of[&m](m: &m [int], func: int, id: int) -> [] int {
     return lm.cell(m, names + 3 + 4 * id + 1);
 }
 
-// A jump from the block being written to the block of label `id`: each `phi` of that block is given the value it has when it is come to from here (into its
-// second slot: the block moves them all into the first when it begins, so that one `phi` may read another's old value), and then the branch.
-fn jump[&t, &m, &o](text: &t [byte], m: &m [int], o: &!o [int], func: int, id: int) -> [] int {
+// A value of the side table (`mem2reg.cho`) of type `ty`, a scalar, written at `x14`: a local's from its slot, an operand of the module, or zero.
+fn put_value[&t, &m, &o](text: &t [byte], m: &m [int], o: &!o [int], value: int, ty: int) -> [] int {
+    var size = fr.word_size(m, ty);
+    if size < 0 && fr.float_kind(m, ty) >= 0 {
+        size = 2 + fr.float_kind(m, ty);
+    }
+    if size < 0 {
+        return out.fail(o, out.why_operand());
+    }
+    if m2.kind(value) == m2.v_local() {
+        let slot = out.slot(o, m2.value_of(value));
+        if slot < 0 {
+            return out.fail(o, out.why_operand());
+        }
+        fr.access(o, size, 0, 1, 9, fr.sp(), slot);
+        return fr.access(o, size, 0, 0, 9, 14, 0);
+    }
+    if m2.kind(value) == m2.v_operand() {
+        return fr.store_value(text, m, o, m2.value_of(value), ty, 0, 0);
+    }
+    return fr.access(o, size, 0, 0, 31, 14, 0);
+}
+
+// A jump from the block being written (number `from`) to the block of label `id`: each `phi` of that block is given the value it has when it is come to from
+// here (into its second slot: the block moves them all into the first when it begins, so that one `phi` may read another's old value), the new `phi`s of the
+// side table too, and then the branch.
+fn jump[&t, &m, &s, &o](text: &t [byte], m: &m [int], s: &s [int], o: &!o [int], func: int, id: int, promoted: bool, from: int) -> [] int {
     let block = block_of(m, func, id);
     if block == 0 || lm.cell(m, block) != lr.r_block() {
         return out.fail(o, out.why_operand());
@@ -212,13 +265,27 @@ fn jump[&t, &m, &o](text: &t [byte], m: &m [int], o: &!o [int], func: int, id: i
         }
         at = instruction_at(m, next(m, at));
     }
+    if promoted {
+        let to = m2.block_of(s, id);
+        var j = 0;
+        while j < m2.block_phis(s, to) && !out.failed(o) {
+            let k = m2.block_phi(s, to, j);
+            let value = m2.phi_value_from(s, k, from);
+            if value < 0 {
+                return out.fail(o, out.why_operand());
+            }
+            fr.add_offset(o, 14, fr.sp(), out.phi_slot(o, m2.names(s) + k));
+            put_value(text, m, o, value, m2.phi_type(s, k));
+            j = j + 1;
+        }
+    }
     out.fixup(o, out.here(o), id);
     out.emit(o, a64.branch(0, 0));
     return 0;
 }
 
-// A block begins: its label is here, and each of its `phi`s takes the value the jump left for it.
-fn begin_block[&m, &o](m: &m [int], o: &!o [int], block: int) -> [] int {
+// A block begins (number `b`): its label is here, and each of its `phi`s, and of its new `phi`s, takes the value the jump left for it.
+fn begin_block[&m, &s, &o](m: &m [int], s: &s [int], o: &!o [int], block: int, promoted: bool, b: int) -> [] int {
     let id = lm.cell(m, block + 2);
     o[cc.h_block()] = id;
     if id >= 0 {
@@ -232,11 +299,35 @@ fn begin_block[&m, &o](m: &m [int], o: &!o [int], block: int) -> [] int {
         fr.copy(o, ly.size_of(m, lm.cell(m, at + 6)), 8);
         at = instruction_at(m, next(m, at));
     }
+    if promoted {
+        var j = 0;
+        while j < m2.block_phis(s, b) && !out.failed(o) {
+            let k = m2.block_phi(s, b, j);
+            fr.add_offset(o, 13, fr.sp(), out.phi_slot(o, m2.names(s) + k));
+            fr.add_offset(o, 14, fr.sp(), out.slot(o, m2.names(s) + k));
+            fr.copy(o, ly.size_of(m, m2.phi_type(s, k)), 8);
+            j = j + 1;
+        }
+    }
     return 0;
 }
 
+// A promoted `load` (instruction `i`) is its value: nothing to do when that is another local, whose slot it has; a constant or zero is written to its slot.
+fn replaced[&t, &m, &s, &o](text: &t [byte], m: &m [int], s: &s [int], o: &!o [int], rec: int, i: int) -> [] int {
+    let value = m2.replacement(s, i);
+    let id = lm.cell(m, rec + 4);
+    if m2.kind(value) == m2.v_local() || id < 0 {
+        return 0;
+    }
+    if out.slot(o, id) < 0 {
+        return out.fail(o, out.why_operand());
+    }
+    fr.add_offset(o, 14, fr.sp(), out.slot(o, id));
+    return put_value(text, m, o, value, lm.cell(m, rec + 6));
+}
+
 // The instruction that ends a block, or one whose meaning is the frame's.
-fn control[&t, &m, &o](text: &t [byte], m: &m [int], o: &!o [int], func: int, rec: int) -> [] int {
+fn control[&t, &m, &s, &o](text: &t [byte], m: &m [int], s: &s [int], o: &!o [int], func: int, rec: int, promoted: bool, b: int) -> [] int {
     let op = op_of(m, rec);
     let n = lm.cell(m, rec + 9);
     if op == lr.op_phi() {
@@ -268,14 +359,14 @@ fn control[&t, &m, &o](text: &t [byte], m: &m [int], o: &!o [int], func: int, re
     }
     if op == lr.op_br() {
         if n == 1 {
-            return jump(text, m, o, func, lm.cell(m, opnd(m, rec, 0) + 2));
+            return jump(text, m, s, o, func, lm.cell(m, opnd(m, rec, 0) + 2), promoted, b);
         }
         // The condition's low bit: clear, over the jump to the first block and its `phi` values, to the jump to the second.
         fr.operand(m, o, opnd(m, rec, 0), 9, false);
         let test = out.emit(o, 0);
-        jump(text, m, o, func, lm.cell(m, opnd(m, rec, 1) + 2));
+        jump(text, m, s, o, func, lm.cell(m, opnd(m, rec, 1) + 2), promoted, b);
         out.patch(o, test, a64.bit_branch(0, 9, 0, out.here(o) - test));
-        return jump(text, m, o, func, lm.cell(m, opnd(m, rec, 2) + 2));
+        return jump(text, m, s, o, func, lm.cell(m, opnd(m, rec, 2) + 2), promoted, b);
     }
     if op == lr.op_switch() {
         // A compare a case, in the order written; then the default.
@@ -289,33 +380,60 @@ fn control[&t, &m, &o](text: &t [byte], m: &m [int], o: &!o [int], func: int, re
             fr.operand(m, o, opnd(m, rec, k), 10, false);
             out.emit(o, a64.addsub_shift(1, 1, 1, 31, 9, 10, 0, 0));
             let skip = out.emit(o, 0);
-            jump(text, m, o, func, lm.cell(m, opnd(m, rec, k + 1) + 2));
+            jump(text, m, s, o, func, lm.cell(m, opnd(m, rec, k + 1) + 2), promoted, b);
             out.patch(o, skip, a64.branch_cond(1, out.here(o) - skip));
             k = k + 2;
         }
-        return jump(text, m, o, func, lm.cell(m, opnd(m, rec, 1) + 2));
+        return jump(text, m, s, o, func, lm.cell(m, opnd(m, rec, 1) + 2), promoted, b);
     }
     return gen.lower(text, m, o, rec);
 }
 
-// The function whose record is at `func`.
-fn function[&t, &m, &o](text: &t [byte], m: &m [int], o: &!o [int], func: int) -> [] int {
+// The function whose record is at `func`; with a side table `s` that is not empty, its variables made values first (`mem2reg.cho`), unless the pass left it
+// as it is or the new `phi`s do not fit the output's table, which is then counted.
+fn function[&t, &m, &s, &o](text: &t [byte], m: &m [int], s: &!s [int], o: &!o [int], func: int) -> [] int {
     let names = lm.cell(m, func + 9);
-    out.begin_function(o, func, lm.cell(m, names + 2));
+    let n = lm.cell(m, names + 2);
     o[out.h_line()] = lm.cell(m, func + 13);
-    frame(m, o, func);
+    var promoted = false;
+    if len(s) > 0 {
+        let status = m2.promote(m, s, func);
+        if status == 1 {
+            return out.fail(o, out.why_room());
+        }
+        if status == 0 && m2.promoted(s) > 0 && n + m2.phis(s) <= o[out.h_loc_cap()] {
+            promoted = true;
+            o[out.h_promoted()] = o[out.h_promoted()] + m2.promoted(s);
+        } else if status != 0 || m2.promoted(s) > 0 {
+            o[out.h_left()] = o[out.h_left()] + 1;
+        }
+    }
+    var locals = n;
+    if promoted {
+        locals = n + m2.phis(s);
+    }
+    out.begin_function(o, func, locals);
+    frame(m, s, o, func, promoted);
     if out.failed(o) {
         return 0;
     }
     entry(m, o, func);
     var at = next(m, func);
+    var b = 0 - 1;
+    var i = 0;
     while at < lm.cell(m, lm.h_top()) && lm.cell(m, at) != lr.r_end() && !out.failed(o) {
         let kind = lm.cell(m, at);
         if kind == lr.r_block() {
-            begin_block(m, o, at);
+            b = b + 1;
+            begin_block(m, s, o, at, promoted, b);
         } else if kind == lr.r_instr() {
             o[out.h_line()] = lm.cell(m, at + 8);
-            control(text, m, o, func, at);
+            if !promoted || m2.action(s, i) == m2.a_keep() {
+                control(text, m, s, o, func, at, promoted, b);
+            } else if m2.action(s, i) == m2.a_replaced() {
+                replaced(text, m, s, o, at, i);
+            }
+            i = i + 1;
         }
         at = next(m, at);
     }
@@ -334,8 +452,9 @@ fn function[&t, &m, &o](text: &t [byte], m: &m [int], o: &!o [int], func: int) -
 }
 
 // The code of every function of the module in `m` (read from `text` with no refusal), into `o`, which has `llout.room(m)` cells: 0, or 1 for a refusal, its
-// line and its reason in the header of `o`.
-pub fn generate[&t, &m, &o](text: &t [byte], m: &m [int], o: &!o [int]) -> [] int {
+// line and its reason in the header of `o`. `s` is the side table of `mem2reg.cho`, with `mem2reg.room(m)` cells; empty, the pass is not run and every
+// value has its slot as in section 12 (`--no-registers`, section 17.5).
+pub fn generate[&t, &m, &s, &o](text: &t [byte], m: &m [int], s: &!s [int], o: &!o [int]) -> [] int {
     out.layout(m, o);
     if len(o) < out.header() {
         return 1;
@@ -344,10 +463,14 @@ pub fn generate[&t, &m, &o](text: &t [byte], m: &m [int], o: &!o [int]) -> [] in
         out.fail(o, out.why_room());
         return 1;
     }
+    if len(s) > 0 && m2.layout(m, s) != 0 {
+        out.fail(o, out.why_room());
+        return 1;
+    }
     var at = lm.cell(m, lm.h_rec());
     while at < lm.cell(m, lm.h_top()) && !out.failed(o) {
         if lm.cell(m, at) == lr.r_func() {
-            function(text, m, o, at);
+            function(text, m, s, o, at);
         }
         at = next(m, at);
     }

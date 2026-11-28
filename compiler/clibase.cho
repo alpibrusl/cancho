@@ -196,6 +196,18 @@ pub fn backend_of[&a](args: &a Args, n: int) -> [args] int {
     return 0 - 1;
 }
 
+// Are the native backend's variables to be made values (`docs/native-backend.md` section 17)? Yes, unless the command line says `--no-registers`.
+pub fn registers[&a](args: &a Args) -> [args] bool {
+    var n = 2;
+    while n < arg_count(args) {
+        if bytes.equal(arg(args, n), "--no-registers") {
+            return false;
+        }
+        n = n + 1;
+    }
+    return true;
+}
+
 // The backend the command line asks for: the value of its last `--backend`, as `backend_of`; 0 with none.
 pub fn backend_asked[&a](args: &a Args) -> [args] int {
     var asked = 0;

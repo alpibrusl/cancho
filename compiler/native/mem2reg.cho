@@ -1,0 +1,1555 @@
+edition 7;
+module selfhost.mem2reg;
+
+// mem2reg.cho -- the variables of a function made values (`docs/native-backend.md` section 17.2): an `alloca` that only `load`s and `store`s of its own type
+// use is no longer memory. Per function: its blocks and their edges, the dominators (Cooper, Harvey and Kennedy's iteration over reverse postorder), the
+// dominance frontiers, a `phi` where the iterated frontier of the blocks that store a variable meets the blocks it is live into (Cytron et al., pruned), and
+// the renaming, a walk of the dominator tree with the value each variable has on top. The reader's table is not changed: what the pass makes is a side table
+// the code generator reads, one `[int]` the caller allocates with `room(m)` cells and lays out once with `layout(m, s)`; then `promote(m, s, func)` fills it for
+// one function. Pure, and no trap on any module the reader read: a table too small is a refusal, and a function the pass cannot make sense of (a block with no
+// end, an edge to no block, a use its definition does not come before) or whose phis do not fit the table is left as it is, which is always right.
+//
+// What it says, for the function last given: for each instruction (by its place in the function, from 0) whether it stays, is removed (a promoted `alloca`
+// or `store`), or is replaced by a value (a promoted `load`); for each block (by its place, from 0) its new `phi`s, each with one value for each block that
+// jumps to it. A value is a number: `kind` 0 zero (what a variable read before any store holds), 1 a local of the function (the new `phi` `k` is local
+// `names + k`), 2 an operand of the module (a constant a `store` stored), with where it is in `value`.
+
+import selfhost.llmod as lm;
+import selfhost.llread as lr;
+import selfhost.llbody as lb;
+
+// ---- the header ----
+
+fn h_fail() -> [] int {
+    return 0;
+}
+
+// A write past a region during the function being done (it is then left as it is).
+fn h_over() -> [] int {
+    return 1;
+}
+
+fn h_status() -> [] int {
+    return 2;
+}
+
+fn h_func() -> [] int {
+    return 3;
+}
+
+// The function's names, instructions and blocks; its new phis; the allocas promoted; the variables looked at.
+fn h_names() -> [] int {
+    return 4;
+}
+
+fn h_instrs() -> [] int {
+    return 5;
+}
+
+fn h_blocks() -> [] int {
+    return 6;
+}
+
+fn h_phis() -> [] int {
+    return 7;
+}
+
+fn h_promoted() -> [] int {
+    return 8;
+}
+
+fn h_vars() -> [] int {
+    return 9;
+}
+
+fn h_ready() -> [] int {
+    return 10;
+}
+
+// The next free cell of the pool; where the phis' records begin in it, their values, and the index of them by block; the log of the renaming.
+fn h_pool_top() -> [] int {
+    return 11;
+}
+
+fn h_phi_base() -> [] int {
+    return 12;
+}
+
+fn h_index() -> [] int {
+    return 13;
+}
+
+fn h_log() -> [] int {
+    return 14;
+}
+
+fn h_log_top() -> [] int {
+    return 15;
+}
+
+// How many blocks the first reaches.
+fn h_reached() -> [] int {
+    return 16;
+}
+
+// The capacities the module asks for: names, instructions, blocks, edges of a function.
+fn h_ncap() -> [] int {
+    return 17;
+}
+
+fn h_icap() -> [] int {
+    return 18;
+}
+
+fn h_bcap() -> [] int {
+    return 19;
+}
+
+fn h_ecap() -> [] int {
+    return 20;
+}
+
+// Where the pool's cells are used most, over every function done (what `room` is measured by).
+fn h_pool_most() -> [] int {
+    return 21;
+}
+
+// ---- the regions: a base and a length each, in the header from cell 32 ----
+
+// By name: the instruction that defines it, the block it labels, the variable it is.
+fn r_id_instr() -> [] int {
+    return 0;
+}
+
+fn r_id_block() -> [] int {
+    return 1;
+}
+
+fn r_var_of() -> [] int {
+    return 2;
+}
+
+// By instruction: its record, what becomes of it, and the value that replaces it.
+fn r_rec() -> [] int {
+    return 3;
+}
+
+fn r_act() -> [] int {
+    return 4;
+}
+
+fn r_ref() -> [] int {
+    return 5;
+}
+
+// By variable: its `alloca`, its type, whether it is promoted, the value it has on top in the renaming, its lists of blocks that use and that store it, and
+// the last block each of these was noted for.
+fn r_v_alloca() -> [] int {
+    return 6;
+}
+
+fn r_v_type() -> [] int {
+    return 7;
+}
+
+fn r_v_ok() -> [] int {
+    return 8;
+}
+
+fn r_v_cur() -> [] int {
+    return 9;
+}
+
+fn r_v_use() -> [] int {
+    return 10;
+}
+
+fn r_v_def() -> [] int {
+    return 11;
+}
+
+fn r_v_stored() -> [] int {
+    return 12;
+}
+
+fn r_v_used() -> [] int {
+    return 13;
+}
+
+fn r_v_defd() -> [] int {
+    return 14;
+}
+
+// The lists of blocks that load a variable before they store it, and that store it: two cells an entry (the block, the next entry).
+fn r_uses() -> [] int {
+    return 15;
+}
+
+fn r_defs() -> [] int {
+    return 16;
+}
+
+// By block: its record, its first instruction, its successors and predecessors (where in their list, how many), its number in reverse postorder (-1: it
+// is not reached), its immediate dominator, the blocks in reverse postorder, its first child and next sibling in the dominator tree, its new phis (where
+// in the index, how many), four stamps for one variable at a time, its dominance frontier (a list in the pool), a stack, a list, and a mark.
+fn r_b_rec() -> [] int {
+    return 17;
+}
+
+fn r_b_first() -> [] int {
+    return 18;
+}
+
+fn r_b_succ() -> [] int {
+    return 19;
+}
+
+fn r_b_nsucc() -> [] int {
+    return 20;
+}
+
+fn r_b_pred() -> [] int {
+    return 21;
+}
+
+fn r_b_npred() -> [] int {
+    return 22;
+}
+
+fn r_b_rpo() -> [] int {
+    return 23;
+}
+
+fn r_b_idom() -> [] int {
+    return 24;
+}
+
+fn r_order() -> [] int {
+    return 25;
+}
+
+fn r_b_child() -> [] int {
+    return 26;
+}
+
+fn r_b_sib() -> [] int {
+    return 27;
+}
+
+fn r_b_phi() -> [] int {
+    return 28;
+}
+
+fn r_b_nphi() -> [] int {
+    return 29;
+}
+
+fn r_b_live() -> [] int {
+    return 30;
+}
+
+fn r_b_defm() -> [] int {
+    return 31;
+}
+
+fn r_b_phim() -> [] int {
+    return 32;
+}
+
+fn r_b_work() -> [] int {
+    return 33;
+}
+
+fn r_b_df() -> [] int {
+    return 34;
+}
+
+fn r_stack() -> [] int {
+    return 35;
+}
+
+fn r_list() -> [] int {
+    return 36;
+}
+
+fn r_b_mark() -> [] int {
+    return 37;
+}
+
+// The edges: each block's successors, then each block's predecessors, one cell each.
+fn r_succs() -> [] int {
+    return 38;
+}
+
+fn r_preds() -> [] int {
+    return 39;
+}
+
+// The rest: frontiers, phis, their values, their index, the log.
+fn r_pool() -> [] int {
+    return 40;
+}
+
+fn regions() -> [] int {
+    return 41;
+}
+
+pub fn header() -> [] int {
+    return 32 + 2 * regions();
+}
+
+// How long region `r` is, for a module whose functions have at most `n` names, `i` instructions, `b` blocks and `e` edges.
+fn region_len(r: int, n: int, i: int, b: int, e: int) -> [] int {
+    if r <= r_var_of() {
+        return n;
+    }
+    if r <= r_v_defd() {
+        return i;
+    }
+    if r <= r_defs() {
+        return 2 * i;
+    }
+    if r == r_stack() {
+        return 3 * b;
+    }
+    if r <= r_b_mark() {
+        return b;
+    }
+    if r <= r_preds() {
+        return e;
+    }
+    // The pool: measured on the compiler's own module, where no function used more than (section 17.8).
+    return 6 * i + 4 * e + 4 * b + 256;
+}
+
+// ---- cells ----
+
+fn base[&s](s: &s [int], r: int) -> [] int {
+    return lm.cell(s, 32 + 2 * r);
+}
+
+fn length[&s](s: &s [int], r: int) -> [] int {
+    return lm.cell(s, 33 + 2 * r);
+}
+
+// Cell `k` of region `r`: -1 outside it.
+fn get[&s](s: &s [int], r: int, k: int) -> [] int {
+    if k < 0 || k >= length(s, r) {
+        return 0 - 1;
+    }
+    return lm.cell(s, base(s, r) + k);
+}
+
+// Cell `k` of region `r` written; past its end, the function is marked as not done.
+fn put[&s](s: &!s [int], r: int, k: int, value: int) -> [] int {
+    let at = base(s, r) + k;
+    if k < 0 || k >= length(s, r) || at < header() || at >= len(s) {
+        if len(s) > h_over() {
+            s[h_over()] = 1;
+        }
+        return 0;
+    }
+    s[at] = value;
+    return 0;
+}
+
+// `n` cells of the pool: where they begin in it, or -1 with the function marked as not done.
+fn take[&s](s: &!s [int], n: int) -> [] int {
+    let top = s[h_pool_top()];
+    if n < 0 || top + n > length(s, r_pool()) {
+        s[h_over()] = 1;
+        return 0 - 1;
+    }
+    s[h_pool_top()] = top + n;
+    if top + n > s[h_pool_most()] {
+        s[h_pool_most()] = top + n;
+    }
+    return top;
+}
+
+fn fill[&s](s: &!s [int], r: int, n: int, value: int) -> [] int {
+    var k = 0;
+    while k < n {
+        put(s, r, k, value);
+        k = k + 1;
+    }
+    return 0;
+}
+
+// ---- the module ----
+
+fn op_of[&m](m: &m [int], rec: int) -> [] int {
+    return lm.cell(m, rec + 2);
+}
+
+fn opnd(rec: int, k: int) -> [] int {
+    return rec + lb.instr_head() + 4 * k;
+}
+
+fn count_of[&m](m: &m [int], rec: int) -> [] int {
+    return lm.cell(m, rec + 9);
+}
+
+// The record after `rec` (the code generator walks the module with it too).
+pub fn next[&m](m: &m [int], rec: int) -> [] int {
+    let size = lm.cell(m, rec + 1);
+    if size < 2 {
+        return lm.cell(m, lm.h_top());
+    }
+    return rec + size;
+}
+
+fn is_end(op: int) -> [] bool {
+    return op == lr.op_br() || op == lr.op_switch() || op == lr.op_ret() || op == lr.op_unreachable();
+}
+
+// A type the code generator keeps in one register-sized slot: an integer of at most 64 bits, a pointer, `float` or `double`.
+fn scalar[&m](m: &m [int], ty: int) -> [] bool {
+    let t = lm.resolved(m, ty);
+    let kind = lm.type_kind(m, t);
+    if kind == lm.k_int() {
+        return lm.type_count(m, t) >= 1 && lm.type_count(m, t) <= 64;
+    }
+    return kind == lm.k_ptr() || kind == lm.k_float() || kind == lm.k_double();
+}
+
+// ---- the room ----
+
+pub struct Most {
+    names: int,
+    instrs: int,
+    blocks: int,
+    edges: int,
+}
+
+// The most names, instructions, blocks and edges (label operands) any function of the module has.
+fn most[&m](m: &m [int]) -> [] Most {
+    var names = 1;
+    var instrs = 1;
+    var blocks = 1;
+    var edges = 1;
+    if len(m) < lm.header() {
+        return Most { names: names, instrs: instrs, blocks: blocks, edges: edges };
+    }
+    var e = 0;
+    var i = 0;
+    var b = 0;
+    var at = lm.cell(m, lm.h_rec());
+    while at < lm.cell(m, lm.h_top()) && at > 0 {
+        let kind = lm.cell(m, at);
+        if kind == lr.r_func() {
+            e = 0;
+            i = 0;
+            b = 0;
+            let n = lm.cell(m, lm.cell(m, at + 9) + 2);
+            if lm.cell(m, lm.cell(m, at + 9)) == lr.r_locals() && n > names {
+                names = n;
+            }
+        } else if kind == lr.r_block() {
+            b = b + 1;
+            if b > blocks {
+                blocks = b;
+            }
+        } else if kind == lr.r_instr() {
+            i = i + 1;
+            if i > instrs {
+                instrs = i;
+            }
+            var k = 0;
+            while k < count_of(m, at) {
+                if lm.cell(m, opnd(at, k) + 1) == lr.o_label() {
+                    e = e + 1;
+                }
+                k = k + 1;
+            }
+            if e > edges {
+                edges = e;
+            }
+        }
+        at = next(m, at);
+    }
+    return Most { names: names, instrs: instrs, blocks: blocks, edges: edges };
+}
+
+fn room_of(c: Most) -> [] int {
+    var total = header();
+    var r = 0;
+    while r < regions() {
+        total = total + region_len(r, c.names, c.instrs, c.blocks, c.edges);
+        r = r + 1;
+    }
+    return total;
+}
+
+// How many cells the side table of the module in `m` needs.
+pub fn room[&m](m: &m [int]) -> [] int {
+    return room_of(most(m));
+}
+
+// The table `s` laid out for the module in `m`: 0, or 1 when it is smaller than `room(m)` (a refusal, and every `promote` after it is one too).
+pub fn layout[&m, &s](m: &m [int], s: &!s [int]) -> [] int {
+    var i = 0;
+    while i < len(s) && i < header() {
+        s[i] = 0;
+        i = i + 1;
+    }
+    if len(s) < header() {
+        if len(s) > 0 {
+            s[h_fail()] = 1;
+        }
+        return 1;
+    }
+    let c = most(m);
+    if len(s) < room_of(c) || len(m) < lm.header() || lm.failed(m) {
+        s[h_fail()] = 1;
+        return 1;
+    }
+    s[h_ncap()] = c.names;
+    s[h_icap()] = c.instrs;
+    s[h_bcap()] = c.blocks;
+    s[h_ecap()] = c.edges;
+    var at = header();
+    var r = 0;
+    while r < regions() {
+        var size = region_len(r, c.names, c.instrs, c.blocks, c.edges);
+        if r == r_pool() {
+            // The pool is the rest of the table.
+            size = len(s) - at;
+        }
+        s[32 + 2 * r] = at;
+        s[33 + 2 * r] = size;
+        at = at + size;
+        r = r + 1;
+    }
+    s[h_ready()] = 1;
+    return 0;
+}
+
+pub fn failed[&s](s: &s [int]) -> [] bool {
+    return len(s) < header() || s[h_fail()] != 0 || s[h_ready()] != 1;
+}
+
+// ---- what it says ----
+
+// For the function last given: its names (the first new phi is the local of this number), its instructions, its blocks, its new phis, and the allocas
+// promoted.
+pub fn names[&s](s: &s [int]) -> [] int {
+    return lm.cell(s, h_names());
+}
+
+pub fn instructions[&s](s: &s [int]) -> [] int {
+    return lm.cell(s, h_instrs());
+}
+
+pub fn blocks[&s](s: &s [int]) -> [] int {
+    return lm.cell(s, h_blocks());
+}
+
+pub fn phis[&s](s: &s [int]) -> [] int {
+    return lm.cell(s, h_phis());
+}
+
+pub fn promoted[&s](s: &s [int]) -> [] int {
+    return lm.cell(s, h_promoted());
+}
+
+// The most cells of the pool any function done so far used, and how many it has.
+pub fn pool_most[&s](s: &s [int]) -> [] int {
+    return lm.cell(s, h_pool_most());
+}
+
+pub fn pool_size[&s](s: &s [int]) -> [] int {
+    return length(s, r_pool());
+}
+
+pub fn a_keep() -> [] int {
+    return 0;
+}
+
+pub fn a_removed() -> [] int {
+    return 1;
+}
+
+pub fn a_replaced() -> [] int {
+    return 2;
+}
+
+// What becomes of instruction `i`, and the value that replaces it.
+pub fn action[&s](s: &s [int], i: int) -> [] int {
+    if i < 0 || i >= instructions(s) {
+        return a_keep();
+    }
+    return get(s, r_act(), i);
+}
+
+pub fn replacement[&s](s: &s [int], i: int) -> [] int {
+    return get(s, r_ref(), i);
+}
+
+// A value: its kind (0 zero, 1 a local, 2 an operand of the module) and the local's number or the operand's place.
+pub fn kind(value: int) -> [] int {
+    return value & 3;
+}
+
+pub fn value_of(value: int) -> [] int {
+    return value >> 2;
+}
+
+pub fn v_zero() -> [] int {
+    return 0;
+}
+
+pub fn v_local() -> [] int {
+    return 1;
+}
+
+pub fn v_operand() -> [] int {
+    return 2;
+}
+
+fn local(id: int) -> [] int {
+    return id * 4 + 1;
+}
+
+fn operand(at: int) -> [] int {
+    return at * 4 + 2;
+}
+
+// The instruction that defines local `id`, and the block that local `id` labels: -1 for none.
+pub fn instruction_of[&s](s: &s [int], id: int) -> [] int {
+    if id < 0 || id >= names(s) {
+        return 0 - 1;
+    }
+    return get(s, r_id_instr(), id);
+}
+
+pub fn block_of[&s](s: &s [int], id: int) -> [] int {
+    if id < 0 || id >= names(s) {
+        return 0 - 1;
+    }
+    return get(s, r_id_block(), id);
+}
+
+// The new phis of block `b`: how many, and the number of the `j`th.
+pub fn block_phis[&s](s: &s [int], b: int) -> [] int {
+    if b < 0 || b >= blocks(s) || phis(s) == 0 {
+        return 0;
+    }
+    return get(s, r_b_nphi(), b);
+}
+
+pub fn block_phi[&s](s: &s [int], b: int, j: int) -> [] int {
+    if j < 0 || j >= block_phis(s, b) {
+        return 0 - 1;
+    }
+    return get(s, r_pool(), lm.cell(s, h_index()) + get(s, r_b_phi(), b) + j);
+}
+
+// Phi `k`: its block, the alloca it is the variable of (an instruction), its type, how many values it has, and the `j`th's block and value.
+fn phi_cell[&s](s: &s [int], k: int, c: int) -> [] int {
+    if k < 0 || k >= phis(s) {
+        return 0 - 1;
+    }
+    return get(s, r_pool(), lm.cell(s, h_phi_base()) + 5 * k + c);
+}
+
+pub fn phi_block[&s](s: &s [int], k: int) -> [] int {
+    return phi_cell(s, k, 0);
+}
+
+pub fn phi_alloca[&s](s: &s [int], k: int) -> [] int {
+    return get(s, r_v_alloca(), phi_cell(s, k, 1));
+}
+
+pub fn phi_type[&s](s: &s [int], k: int) -> [] int {
+    return phi_cell(s, k, 2);
+}
+
+pub fn phi_values[&s](s: &s [int], k: int) -> [] int {
+    return phi_cell(s, k, 4);
+}
+
+pub fn phi_from[&s](s: &s [int], k: int, j: int) -> [] int {
+    if j < 0 || j >= phi_values(s, k) {
+        return 0 - 1;
+    }
+    return get(s, r_pool(), phi_cell(s, k, 3) + 2 * j);
+}
+
+pub fn phi_value[&s](s: &s [int], k: int, j: int) -> [] int {
+    if j < 0 || j >= phi_values(s, k) {
+        return 0;
+    }
+    return get(s, r_pool(), phi_cell(s, k, 3) + 2 * j + 1);
+}
+
+// The value phi `k` has when its block is come to from block `from`: -1 if that block does not jump to it.
+pub fn phi_value_from[&s](s: &s [int], k: int, from: int) -> [] int {
+    var j = 0;
+    while j < phi_values(s, k) {
+        if phi_from(s, k, j) == from {
+            return phi_value(s, k, j);
+        }
+        j = j + 1;
+    }
+    return 0 - 1;
+}
+
+// ---- the pass ----
+
+// The function at `func` (a record of the module in `m`, which the reader read) into the table `s`, laid out by `layout`: 0 when it is done (nothing may have
+// been promoted), 1 for a table too small (a refusal), 2 when the function is left as it is (nothing promoted: the module made no sense to the pass here,
+// or its phis did not fit the table).
+pub fn promote[&m, &s](m: &m [int], s: &!s [int], func: int) -> [] int {
+    if failed(s) {
+        return 1;
+    }
+    s[h_over()] = 0;
+    s[h_status()] = 0;
+    s[h_func()] = func;
+    s[h_names()] = 0;
+    s[h_instrs()] = 0;
+    s[h_blocks()] = 0;
+    s[h_phis()] = 0;
+    s[h_promoted()] = 0;
+    s[h_vars()] = 0;
+    s[h_reached()] = 0;
+    s[h_pool_top()] = 0;
+    s[h_phi_base()] = 0;
+    s[h_index()] = 0;
+    s[h_log()] = 0;
+    s[h_log_top()] = 0;
+    var status = 2;
+    if lm.cell(m, func) == lr.r_func() {
+        status = run(m, s, func);
+    }
+    if s[h_over()] != 0 {
+        status = 2;
+    }
+    if status != 0 {
+        // Left as it is: every instruction stays, and there is no new phi.
+        let n = s[h_instrs()];
+        fill(s, r_act(), n, a_keep());
+        s[h_phis()] = 0;
+        s[h_promoted()] = 0;
+        status = 2;
+    }
+    s[h_status()] = status;
+    return status;
+}
+
+// The variable the access at `rec` (a `load` from it or a `store` to it) is of, if it is promoted: -1 for none.
+fn accessed[&m, &s](m: &m [int], s: &s [int], rec: int) -> [] int {
+    let op = op_of(m, rec);
+    var k = 0 - 1;
+    if op == lr.op_load() && count_of(m, rec) == 1 {
+        k = 0;
+    }
+    if op == lr.op_store() && count_of(m, rec) == 2 {
+        k = 1;
+    }
+    if k < 0 || lm.cell(m, opnd(rec, k) + 1) != lr.o_local() {
+        return 0 - 1;
+    }
+    let id = lm.cell(m, opnd(rec, k) + 2);
+    if id < 0 || id >= s[h_names()] {
+        return 0 - 1;
+    }
+    let v = get(s, r_var_of(), id);
+    if v < 0 || get(s, r_v_ok(), v) != 1 {
+        return 0 - 1;
+    }
+    return v;
+}
+
+// May operand `k` of the instruction at `rec` be a use of a variable of type `ty`? Only as the address of a `load` of `ty` or of a `store` of `ty`, neither
+// volatile nor atomic.
+fn legal[&m](m: &m [int], rec: int, k: int, ty: int) -> [] bool {
+    let op = op_of(m, rec);
+    if lm.cell(m, rec + 3) & (lr.f_volatile() | lr.f_atomic()) != 0 {
+        return false;
+    }
+    if op == lr.op_load() {
+        return k == 0 && count_of(m, rec) == 1 && lm.cell(m, rec + 6) == ty;
+    }
+    if op == lr.op_store() {
+        return k == 1 && count_of(m, rec) == 2 && lm.cell(m, opnd(rec, 0)) == ty;
+    }
+    return false;
+}
+
+fn run[&m, &s](m: &m [int], s: &!s [int], func: int) -> [] int {
+    let names_rec = lm.cell(m, func + 9);
+    let n = lm.cell(m, names_rec + 2);
+    if lm.cell(m, names_rec) != lr.r_locals() || n < 0 || n > s[h_ncap()] {
+        return 2;
+    }
+    s[h_names()] = n;
+    fill(s, r_id_instr(), n, 0 - 1);
+    fill(s, r_id_block(), n, 0 - 1);
+    fill(s, r_var_of(), n, 0 - 1);
+    // The blocks and the instructions, in the order of the text.
+    var b = 0 - 1;
+    var i = 0;
+    var at = next(m, func);
+    while at < lm.cell(m, lm.h_top()) && at > func && lm.cell(m, at) != lr.r_end() {
+        let kind = lm.cell(m, at);
+        if kind == lr.r_block() {
+            b = b + 1;
+            if b >= s[h_bcap()] {
+                return 2;
+            }
+            put(s, r_b_rec(), b, at);
+            put(s, r_b_first(), b, i);
+            let id = lm.cell(m, at + 2);
+            if id >= 0 && id < n {
+                put(s, r_id_block(), id, b);
+            }
+        } else if kind == lr.r_instr() {
+            if b < 0 || i >= s[h_icap()] {
+                return 2;
+            }
+            put(s, r_rec(), i, at);
+            put(s, r_act(), i, a_keep());
+            put(s, r_ref(), i, 0);
+            let id = lm.cell(m, at + 4);
+            if id >= 0 && id < n {
+                put(s, r_id_instr(), id, i);
+            }
+            i = i + 1;
+            s[h_instrs()] = i;
+        }
+        at = next(m, at);
+    }
+    let nb = b + 1;
+    s[h_blocks()] = nb;
+    s[h_instrs()] = i;
+    if nb == 0 {
+        return 0;
+    }
+    if edges(m, s, nb, i) != 0 {
+        return 2;
+    }
+    order(s, nb);
+    if dominators(s, nb) != 0 {
+        return 2;
+    }
+    frontiers(s, nb);
+    if candidates(m, s, i) == 0 {
+        return 0;
+    }
+    if s[h_over()] != 0 {
+        return 2;
+    }
+    let stores = accesses(m, s, nb, i);
+    place(s, nb);
+    if s[h_over()] != 0 {
+        return 2;
+    }
+    values(s, nb);
+    if rename(m, s, nb, stores) != 0 {
+        return 2;
+    }
+    return 0;
+}
+
+// Where block `b`'s instructions end (the first of the next).
+fn block_end[&s](s: &s [int], b: int, nb: int, ni: int) -> [] int {
+    if b + 1 < nb {
+        return get(s, r_b_first(), b + 1);
+    }
+    return ni;
+}
+
+// The label at operand `at` as the block it names, added to `b`'s successors once: 0, or 1 when it names no block.
+fn successor[&m, &s](m: &m [int], s: &!s [int], b: int, at: int, top: int) -> [] int {
+    if lm.cell(m, at + 1) != lr.o_label() {
+        return 1;
+    }
+    let id = lm.cell(m, at + 2);
+    if id < 0 || id >= s[h_names()] {
+        return 1;
+    }
+    let t = get(s, r_id_block(), id);
+    if t < 0 {
+        return 1;
+    }
+    let from = get(s, r_b_succ(), b);
+    var k = from;
+    while k < top {
+        if get(s, r_succs(), k) == t {
+            return 0;
+        }
+        k = k + 1;
+    }
+    put(s, r_succs(), top, t);
+    put(s, r_b_nsucc(), b, top + 1 - from);
+    return 0;
+}
+
+// Each block's successors, from the instruction that ends it, and then its predecessors: 0, or 1 when a block does not end with a `br`, `switch`, `ret` or
+// `unreachable`, has one before its end, or jumps to what is no block, or when the first block is jumped to.
+fn edges[&m, &s](m: &m [int], s: &!s [int], nb: int, ni: int) -> [] int {
+    var top = 0;
+    var b = 0;
+    while b < nb {
+        let first = get(s, r_b_first(), b);
+        let last = block_end(s, b, nb, ni) - 1;
+        if last < first {
+            return 1;
+        }
+        var j = first;
+        while j < last {
+            if is_end(op_of(m, get(s, r_rec(), j))) {
+                return 1;
+            }
+            j = j + 1;
+        }
+        let rec = get(s, r_rec(), last);
+        let op = op_of(m, rec);
+        let count = count_of(m, rec);
+        put(s, r_b_succ(), b, top);
+        put(s, r_b_nsucc(), b, 0);
+        if op == lr.op_br() && count == 1 {
+            if successor(m, s, b, opnd(rec, 0), top) != 0 {
+                return 1;
+            }
+        } else if op == lr.op_br() && count == 3 {
+            if successor(m, s, b, opnd(rec, 1), top) != 0 {
+                return 1;
+            }
+            if successor(m, s, b, opnd(rec, 2), top + get(s, r_b_nsucc(), b)) != 0 {
+                return 1;
+            }
+        } else if op == lr.op_switch() && count >= 2 {
+            var k = 1;
+            while k < count {
+                if successor(m, s, b, opnd(rec, k), top + get(s, r_b_nsucc(), b)) != 0 {
+                    return 1;
+                }
+                k = k + 2;
+            }
+        } else if op != lr.op_ret() && op != lr.op_unreachable() {
+            return 1;
+        }
+        top = top + get(s, r_b_nsucc(), b);
+        if top > s[h_ecap()] {
+            return 1;
+        }
+        b = b + 1;
+    }
+    // The predecessors: counted, placed, filled.
+    fill(s, r_b_npred(), nb, 0);
+    b = 0;
+    while b < nb {
+        var k = 0;
+        while k < get(s, r_b_nsucc(), b) {
+            let t = get(s, r_succs(), get(s, r_b_succ(), b) + k);
+            put(s, r_b_npred(), t, get(s, r_b_npred(), t) + 1);
+            k = k + 1;
+        }
+        b = b + 1;
+    }
+    if get(s, r_b_npred(), 0) != 0 {
+        return 1;
+    }
+    var start = 0;
+    b = 0;
+    while b < nb {
+        put(s, r_b_pred(), b, start);
+        put(s, r_list(), b, start);
+        start = start + get(s, r_b_npred(), b);
+        b = b + 1;
+    }
+    b = 0;
+    while b < nb {
+        var k = 0;
+        while k < get(s, r_b_nsucc(), b) {
+            let t = get(s, r_succs(), get(s, r_b_succ(), b) + k);
+            let place_at = get(s, r_list(), t);
+            put(s, r_preds(), place_at, b);
+            put(s, r_list(), t, place_at + 1);
+            k = k + 1;
+        }
+        b = b + 1;
+    }
+    return 0;
+}
+
+fn succ[&s](s: &s [int], b: int, k: int) -> [] int {
+    return get(s, r_succs(), get(s, r_b_succ(), b) + k);
+}
+
+fn pred[&s](s: &s [int], b: int, k: int) -> [] int {
+    return get(s, r_preds(), get(s, r_b_pred(), b) + k);
+}
+
+fn reached[&s](s: &s [int], b: int) -> [] bool {
+    return get(s, r_b_rpo(), b) >= 0;
+}
+
+// The blocks reached from the first, in reverse postorder (a depth-first walk with a stack of its own): `order` and each block's number in it.
+fn order[&s](s: &!s [int], nb: int) -> [] int {
+    fill(s, r_b_mark(), nb, 0);
+    fill(s, r_b_rpo(), nb, 0 - 1);
+    var post = 0;
+    var depth = 1;
+    put(s, r_stack(), 0, 0);
+    put(s, r_stack(), 1, 0);
+    put(s, r_b_mark(), 0, 1);
+    while depth > 0 {
+        let top = 3 * (depth - 1);
+        let b = get(s, r_stack(), top);
+        let k = get(s, r_stack(), top + 1);
+        if k < get(s, r_b_nsucc(), b) {
+            put(s, r_stack(), top + 1, k + 1);
+            let t = succ(s, b, k);
+            if t >= 0 && get(s, r_b_mark(), t) == 0 {
+                put(s, r_b_mark(), t, 1);
+                put(s, r_stack(), 3 * depth, t);
+                put(s, r_stack(), 3 * depth + 1, 0);
+                depth = depth + 1;
+            }
+        } else {
+            put(s, r_order(), post, b);
+            post = post + 1;
+            depth = depth - 1;
+        }
+        if depth > nb {
+            s[h_over()] = 1;
+            depth = 0;
+        }
+    }
+    // The postorder, turned around.
+    var j = 0;
+    while j < post / 2 {
+        let a = get(s, r_order(), j);
+        put(s, r_order(), j, get(s, r_order(), post - 1 - j));
+        put(s, r_order(), post - 1 - j, a);
+        j = j + 1;
+    }
+    j = 0;
+    while j < post {
+        put(s, r_b_rpo(), get(s, r_order(), j), j);
+        j = j + 1;
+    }
+    s[h_reached()] = post;
+    return post;
+}
+
+// The block where the dominators of `a` and `c` meet, climbing by the immediate dominators in reverse postorder; -1 if the climb goes nowhere.
+fn intersect[&s](s: &s [int], a: int, c: int, nb: int) -> [] int {
+    var x = a;
+    var y = c;
+    var steps = 0;
+    while x != y && x >= 0 && y >= 0 && steps <= 2 * nb {
+        while x >= 0 && y >= 0 && get(s, r_b_rpo(), x) > get(s, r_b_rpo(), y) && steps <= 2 * nb {
+            x = get(s, r_b_idom(), x);
+            steps = steps + 1;
+        }
+        while x >= 0 && y >= 0 && get(s, r_b_rpo(), y) > get(s, r_b_rpo(), x) && steps <= 2 * nb {
+            y = get(s, r_b_idom(), y);
+            steps = steps + 1;
+        }
+        steps = steps + 1;
+    }
+    if x != y {
+        return 0 - 1;
+    }
+    return x;
+}
+
+// The immediate dominator of each block reached (Cooper, Harvey and Kennedy): 0, or 1 if it does not settle.
+fn dominators[&s](s: &!s [int], nb: int) -> [] int {
+    let reached_n = s[h_reached()];
+    fill(s, r_b_idom(), nb, 0 - 1);
+    put(s, r_b_idom(), 0, 0);
+    var changed = true;
+    var rounds = 0;
+    while changed {
+        changed = false;
+        rounds = rounds + 1;
+        if rounds > reached_n + 2 {
+            return 1;
+        }
+        var j = 1;
+        while j < reached_n {
+            let b = get(s, r_order(), j);
+            var chosen = 0 - 1;
+            var k = 0;
+            while k < get(s, r_b_npred(), b) {
+                let p = pred(s, b, k);
+                if reached(s, p) && get(s, r_b_idom(), p) >= 0 {
+                    if chosen < 0 {
+                        chosen = p;
+                    } else {
+                        chosen = intersect(s, chosen, p, nb);
+                        if chosen < 0 {
+                            return 1;
+                        }
+                    }
+                }
+                k = k + 1;
+            }
+            if chosen >= 0 && get(s, r_b_idom(), b) != chosen {
+                put(s, r_b_idom(), b, chosen);
+                changed = true;
+            }
+            j = j + 1;
+        }
+    }
+    return 0;
+}
+
+// The dominance frontier of each block, as a list in the pool (two cells an entry: the block, the next entry): each block reached that two or more
+// reached blocks jump to is in the frontier of each block on the way up from those to its immediate dominator.
+fn frontiers[&s](s: &!s [int], nb: int) -> [] int {
+    fill(s, r_b_df(), nb, 0 - 1);
+    fill(s, r_b_mark(), nb, 0 - 1);
+    var b = 0;
+    while b < nb {
+        var preds_reached = 0;
+        var k = 0;
+        while k < get(s, r_b_npred(), b) {
+            if reached(s, pred(s, b, k)) {
+                preds_reached = preds_reached + 1;
+            }
+            k = k + 1;
+        }
+        if reached(s, b) && preds_reached >= 2 {
+            let up = get(s, r_b_idom(), b);
+            k = 0;
+            while k < get(s, r_b_npred(), b) {
+                var runner = pred(s, b, k);
+                var steps = 0;
+                if !reached(s, runner) {
+                    runner = 0 - 1;
+                }
+                while runner >= 0 && runner != up && steps <= nb {
+                    if get(s, r_b_mark(), runner) != b {
+                        put(s, r_b_mark(), runner, b);
+                        let e = take(s, 2);
+                        if e < 0 {
+                            return 1;
+                        }
+                        put(s, r_pool(), e, b);
+                        put(s, r_pool(), e + 1, get(s, r_b_df(), runner));
+                        put(s, r_b_df(), runner, e);
+                    }
+                    runner = get(s, r_b_idom(), runner);
+                    steps = steps + 1;
+                }
+                k = k + 1;
+            }
+        }
+        b = b + 1;
+    }
+    return 0;
+}
+
+// The allocas that may be promoted: each is a variable, of a type a slot holds, counted once if at all; then each loses its place if anything but its own
+// `load`s and `store`s uses it. How many are left.
+fn candidates[&m, &s](m: &m [int], s: &!s [int], ni: int) -> [] int {
+    let n = s[h_names()];
+    var vars = 0;
+    var i = 0;
+    while i < ni {
+        let rec = get(s, r_rec(), i);
+        let id = lm.cell(m, rec + 4);
+        if op_of(m, rec) == lr.op_alloca() && id >= 0 && id < n {
+            let of = lm.cell(m, opnd(rec, 0));
+            var once = true;
+            if lm.cell(m, rec + 3) & lr.f_counted() != 0 {
+                once = count_of(m, rec) == 2 && lm.cell(m, opnd(rec, 1) + 1) == lr.o_int() && lm.cell(m, opnd(rec, 1) + 2) == 1;
+            }
+            if once && scalar(m, of) {
+                put(s, r_var_of(), id, vars);
+                put(s, r_v_alloca(), vars, i);
+                put(s, r_v_type(), vars, of);
+                put(s, r_v_ok(), vars, 1);
+                put(s, r_v_cur(), vars, v_zero());
+                put(s, r_v_use(), vars, 0 - 1);
+                put(s, r_v_def(), vars, 0 - 1);
+                put(s, r_v_stored(), vars, 0 - 1);
+                put(s, r_v_used(), vars, 0 - 1);
+                put(s, r_v_defd(), vars, 0 - 1);
+                vars = vars + 1;
+            }
+        }
+        i = i + 1;
+    }
+    s[h_vars()] = vars;
+    if vars == 0 {
+        return 0;
+    }
+    i = 0;
+    while i < ni {
+        let rec = get(s, r_rec(), i);
+        var k = 0;
+        while k < count_of(m, rec) {
+            let at = opnd(rec, k);
+            if lm.cell(m, at + 1) == lr.o_local() {
+                let id = lm.cell(m, at + 2);
+                if id >= 0 && id < n {
+                    let v = get(s, r_var_of(), id);
+                    if v >= 0 && !legal(m, rec, k, get(s, r_v_type(), v)) {
+                        put(s, r_v_ok(), v, 0);
+                    }
+                }
+            }
+            k = k + 1;
+        }
+        i = i + 1;
+    }
+    var left = 0;
+    var v = 0;
+    while v < vars {
+        if get(s, r_v_ok(), v) == 1 {
+            left = left + 1;
+        }
+        v = v + 1;
+    }
+    s[h_promoted()] = left;
+    return left;
+}
+
+// For each promoted variable, the blocks that load it before they store it and the blocks that store it, once each: how many stores there are.
+fn accesses[&m, &s](m: &m [int], s: &!s [int], nb: int, ni: int) -> [] int {
+    var uses = 0;
+    var defs = 0;
+    var stores = 0;
+    var b = 0;
+    while b < nb {
+        var i = get(s, r_b_first(), b);
+        let end = block_end(s, b, nb, ni);
+        while i < end {
+            let rec = get(s, r_rec(), i);
+            let v = accessed(m, s, rec);
+            if v >= 0 && op_of(m, rec) == lr.op_load() {
+                if get(s, r_v_stored(), v) != b && get(s, r_v_used(), v) != b {
+                    put(s, r_v_used(), v, b);
+                    put(s, r_uses(), 2 * uses, b);
+                    put(s, r_uses(), 2 * uses + 1, get(s, r_v_use(), v));
+                    put(s, r_v_use(), v, uses);
+                    uses = uses + 1;
+                }
+            } else if v >= 0 {
+                stores = stores + 1;
+                put(s, r_v_stored(), v, b);
+                if get(s, r_v_defd(), v) != b {
+                    put(s, r_v_defd(), v, b);
+                    put(s, r_defs(), 2 * defs, b);
+                    put(s, r_defs(), 2 * defs + 1, get(s, r_v_def(), v));
+                    put(s, r_v_def(), v, defs);
+                    defs = defs + 1;
+                }
+            }
+            i = i + 1;
+        }
+        b = b + 1;
+    }
+    return stores;
+}
+
+// The new phis: for each promoted variable, the blocks it is live into (from those that load it first, back through those that do not store it), and of
+// those the ones in the iterated dominance frontier of the blocks that store it. Five cells a phi in the pool: its block, its variable, its type, where its
+// values are, how many.
+fn place[&s](s: &!s [int], nb: int) -> [] int {
+    fill(s, r_b_live(), nb, 0 - 1);
+    fill(s, r_b_defm(), nb, 0 - 1);
+    fill(s, r_b_phim(), nb, 0 - 1);
+    fill(s, r_b_work(), nb, 0 - 1);
+    s[h_phi_base()] = s[h_pool_top()];
+    var count = 0;
+    var v = 0;
+    while v < s[h_vars()] && s[h_over()] == 0 {
+        if get(s, r_v_ok(), v) == 1 {
+            // Where it is stored.
+            var e = get(s, r_v_def(), v);
+            while e >= 0 {
+                put(s, r_b_defm(), get(s, r_defs(), 2 * e), v);
+                e = get(s, r_defs(), 2 * e + 1);
+            }
+            // Where it is live in.
+            var depth = 0;
+            e = get(s, r_v_use(), v);
+            while e >= 0 {
+                let b = get(s, r_uses(), 2 * e);
+                if reached(s, b) && get(s, r_b_live(), b) != v {
+                    put(s, r_b_live(), b, v);
+                    put(s, r_list(), depth, b);
+                    depth = depth + 1;
+                }
+                e = get(s, r_uses(), 2 * e + 1);
+            }
+            while depth > 0 {
+                depth = depth - 1;
+                let b = get(s, r_list(), depth);
+                var k = 0;
+                while k < get(s, r_b_npred(), b) {
+                    let p = pred(s, b, k);
+                    if reached(s, p) && get(s, r_b_live(), p) != v && get(s, r_b_defm(), p) != v {
+                        put(s, r_b_live(), p, v);
+                        put(s, r_list(), depth, p);
+                        depth = depth + 1;
+                    }
+                    k = k + 1;
+                }
+            }
+            // The iterated frontier of where it is stored, kept where it is live in.
+            e = get(s, r_v_def(), v);
+            while e >= 0 {
+                let b = get(s, r_defs(), 2 * e);
+                if reached(s, b) && get(s, r_b_work(), b) != v {
+                    put(s, r_b_work(), b, v);
+                    put(s, r_list(), depth, b);
+                    depth = depth + 1;
+                }
+                e = get(s, r_defs(), 2 * e + 1);
+            }
+            while depth > 0 {
+                depth = depth - 1;
+                let x = get(s, r_list(), depth);
+                var f = get(s, r_b_df(), x);
+                while f >= 0 {
+                    let y = get(s, r_pool(), f);
+                    if get(s, r_b_phim(), y) != v {
+                        put(s, r_b_phim(), y, v);
+                        if get(s, r_b_live(), y) == v {
+                            let p = take(s, 5);
+                            if p >= 0 {
+                                put(s, r_pool(), p, y);
+                                put(s, r_pool(), p + 1, v);
+                                put(s, r_pool(), p + 2, get(s, r_v_type(), v));
+                                put(s, r_pool(), p + 3, 0);
+                                put(s, r_pool(), p + 4, 0);
+                                count = count + 1;
+                            }
+                        }
+                        if get(s, r_b_work(), y) != v {
+                            put(s, r_b_work(), y, v);
+                            put(s, r_list(), depth, y);
+                            depth = depth + 1;
+                        }
+                    }
+                    f = get(s, r_pool(), f + 1);
+                }
+            }
+        }
+        v = v + 1;
+    }
+    s[h_phis()] = count;
+    return count;
+}
+
+// The index of the new phis by block, and for each phi a value for each block that jumps to its block, zero until the renaming gives it one.
+fn values[&s](s: &!s [int], nb: int) -> [] int {
+    let count = s[h_phis()];
+    let phi_base = s[h_phi_base()];
+    fill(s, r_b_nphi(), nb, 0);
+    var k = 0;
+    while k < count {
+        let b = get(s, r_pool(), phi_base + 5 * k);
+        put(s, r_b_nphi(), b, get(s, r_b_nphi(), b) + 1);
+        k = k + 1;
+    }
+    let index = take(s, count);
+    if index < 0 {
+        return 1;
+    }
+    s[h_index()] = index;
+    var start = 0;
+    var b = 0;
+    while b < nb {
+        put(s, r_b_phi(), b, start);
+        put(s, r_list(), b, start);
+        start = start + get(s, r_b_nphi(), b);
+        b = b + 1;
+    }
+    k = 0;
+    while k < count {
+        let p = phi_base + 5 * k;
+        let y = get(s, r_pool(), p);
+        let place_at = get(s, r_list(), y);
+        put(s, r_pool(), index + place_at, k);
+        put(s, r_list(), y, place_at + 1);
+        let n = get(s, r_b_npred(), y);
+        let at = take(s, 2 * n);
+        if at < 0 {
+            return 1;
+        }
+        put(s, r_pool(), p + 3, at);
+        put(s, r_pool(), p + 4, n);
+        var j = 0;
+        while j < n {
+            put(s, r_pool(), at + 2 * j, pred(s, y, j));
+            put(s, r_pool(), at + 2 * j + 1, v_zero());
+            j = j + 1;
+        }
+        k = k + 1;
+    }
+    return 0;
+}
+
+// What a `store` stores, at operand `at`: the value that replaces it if it is a promoted `load` (which comes first in the walk, since it dominates the
+// store), a local, or the operand itself. -1 when it is a promoted `load` not yet seen: its definition does not come before its use.
+fn stored[&m, &s](m: &m [int], s: &s [int], at: int) -> [] int {
+    if lm.cell(m, at + 1) != lr.o_local() {
+        return operand(at);
+    }
+    let id = lm.cell(m, at + 2);
+    let d = instruction_of(s, id);
+    if d >= 0 && op_of(m, get(s, r_rec(), d)) == lr.op_load() && accessed(m, s, get(s, r_rec(), d)) >= 0 {
+        if get(s, r_act(), d) != a_replaced() {
+            return 0 - 1;
+        }
+        return get(s, r_ref(), d);
+    }
+    return local(id);
+}
+
+// Variable `v` takes the value `value`; what it had is logged, to be given back when the walk leaves the block.
+fn assign[&s](s: &!s [int], v: int, value: int) -> [] int {
+    let top = s[h_log_top()];
+    put(s, r_pool(), s[h_log()] + 2 * top, v);
+    put(s, r_pool(), s[h_log()] + 2 * top + 1, get(s, r_v_cur(), v));
+    s[h_log_top()] = top + 1;
+    put(s, r_v_cur(), v, value);
+    return 0;
+}
+
+// Block `b` in the renaming: its new phis are what their variables hold; its loads take the value on top, its stores put one there; and the phis of the
+// blocks it jumps to are given, for it, the value each variable has at its end. 1 when a use comes before its definition.
+fn rename_block[&m, &s](m: &m [int], s: &!s [int], b: int, nb: int) -> [] int {
+    var j = 0;
+    while j < block_phis(s, b) {
+        let k = block_phi(s, b, j);
+        assign(s, phi_cell(s, k, 1), local(s[h_names()] + k));
+        j = j + 1;
+    }
+    var i = get(s, r_b_first(), b);
+    let end = block_end(s, b, nb, s[h_instrs()]);
+    while i < end {
+        let rec = get(s, r_rec(), i);
+        let op = op_of(m, rec);
+        if op == lr.op_alloca() {
+            let id = lm.cell(m, rec + 4);
+            if id >= 0 && id < s[h_names()] && get(s, r_var_of(), id) >= 0 && get(s, r_v_ok(), get(s, r_var_of(), id)) == 1 {
+                put(s, r_act(), i, a_removed());
+            }
+        } else {
+            let v = accessed(m, s, rec);
+            if v >= 0 && op == lr.op_load() {
+                put(s, r_act(), i, a_replaced());
+                put(s, r_ref(), i, get(s, r_v_cur(), v));
+            } else if v >= 0 {
+                let value = stored(m, s, opnd(rec, 0));
+                if value < 0 {
+                    return 1;
+                }
+                assign(s, v, value);
+                put(s, r_act(), i, a_removed());
+            }
+        }
+        i = i + 1;
+    }
+    var k = 0;
+    while k < get(s, r_b_nsucc(), b) {
+        let t = succ(s, b, k);
+        j = 0;
+        while j < block_phis(s, t) {
+            let p = block_phi(s, t, j);
+            var c = 0;
+            while c < phi_values(s, p) {
+                if phi_from(s, p, c) == b {
+                    put(s, r_pool(), phi_cell(s, p, 3) + 2 * c + 1, get(s, r_v_cur(), phi_cell(s, p, 1)));
+                }
+                c = c + 1;
+            }
+            j = j + 1;
+        }
+        k = k + 1;
+    }
+    return 0;
+}
+
+// The renaming: the dominator tree walked from the first block with a stack (the block, the next child to go to, where the log was), and what each block
+// changed given back when it is left. The blocks not reached are not walked: their loads read zero, and their stores and allocas go.
+fn rename[&m, &s](m: &m [int], s: &!s [int], nb: int, stores: int) -> [] int {
+    let log = take(s, 2 * (stores + s[h_phis()]) + 2);
+    if log < 0 {
+        return 1;
+    }
+    s[h_log()] = log;
+    s[h_log_top()] = 0;
+    fill(s, r_b_child(), nb, 0 - 1);
+    fill(s, r_b_sib(), nb, 0 - 1);
+    var b = nb - 1;
+    while b > 0 {
+        if reached(s, b) {
+            let up = get(s, r_b_idom(), b);
+            if up >= 0 && up != b {
+                put(s, r_b_sib(), b, get(s, r_b_child(), up));
+                put(s, r_b_child(), up, b);
+            }
+        }
+        b = b - 1;
+    }
+    var depth = 1;
+    put(s, r_stack(), 0, 0);
+    put(s, r_stack(), 1, get(s, r_b_child(), 0));
+    put(s, r_stack(), 2, 0);
+    if rename_block(m, s, 0, nb) != 0 {
+        return 1;
+    }
+    while depth > 0 {
+        let top = 3 * (depth - 1);
+        let c = get(s, r_stack(), top + 1);
+        if c >= 0 {
+            if depth >= nb {
+                return 1;
+            }
+            put(s, r_stack(), top + 1, get(s, r_b_sib(), c));
+            put(s, r_stack(), 3 * depth, c);
+            put(s, r_stack(), 3 * depth + 1, get(s, r_b_child(), c));
+            put(s, r_stack(), 3 * depth + 2, s[h_log_top()]);
+            depth = depth + 1;
+            if rename_block(m, s, c, nb) != 0 {
+                return 1;
+            }
+        } else {
+            // Left: each variable it changed has its old value again.
+            let saved = get(s, r_stack(), top + 2);
+            while s[h_log_top()] > saved && s[h_log_top()] > 0 {
+                let t = s[h_log_top()] - 1;
+                put(s, r_v_cur(), get(s, r_pool(), log + 2 * t), get(s, r_pool(), log + 2 * t + 1));
+                s[h_log_top()] = t;
+            }
+            depth = depth - 1;
+        }
+    }
+    // The blocks not reached.
+    b = 0;
+    while b < nb {
+        if !reached(s, b) {
+            var i = get(s, r_b_first(), b);
+            let end = block_end(s, b, nb, s[h_instrs()]);
+            while i < end {
+                let rec = get(s, r_rec(), i);
+                let id = lm.cell(m, rec + 4);
+                let v = accessed(m, s, rec);
+                if v >= 0 && op_of(m, rec) == lr.op_load() {
+                    put(s, r_act(), i, a_replaced());
+                    put(s, r_ref(), i, v_zero());
+                } else if v >= 0 {
+                    put(s, r_act(), i, a_removed());
+                } else if op_of(m, rec) == lr.op_alloca() && id >= 0 && id < s[h_names()] && get(s, r_var_of(), id) >= 0 && get(s, r_v_ok(), get(s, r_var_of(), id)) == 1 {
+                    put(s, r_act(), i, a_removed());
+                }
+                i = i + 1;
+            }
+        }
+        b = b + 1;
+    }
+    return 0;
+}

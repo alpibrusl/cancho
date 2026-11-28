@@ -11,6 +11,7 @@ import selfhost.lltop as lt;
 import selfhost.llprint as lp;
 import selfhost.llout as out;
 import selfhost.a64fn;
+import selfhost.mem2reg as m2;
 import selfhost.elf;
 import selfhost.layout as la;
 import selfhost.a64asm as asm;
@@ -33,8 +34,8 @@ pub fn roundtrip() -> [] int {
 }
 
 // The module `ir`, written for the target `target` of the driver (0 Linux on x86-64, 1 Darwin, 2 Linux on AArch64, 3 AArch64 with no system), through the
-// backend `backend`.
-pub fn through[&h, &r](heap: &!h Heap, ir: &r [byte], backend: int, target: int) -> [heap] Judged {
+// backend `backend`; for the native one with its variables made values (`registers`, section 17) or not (`--no-registers`).
+pub fn through[&h, &r](heap: &!h Heap, ir: &r [byte], backend: int, target: int, registers: bool) -> [heap] Judged {
     var strict = 0;
     if backend == native() {
         strict = 1;
@@ -59,28 +60,40 @@ pub fn through[&h, &r](heap: &!h Heap, ir: &r [byte], backend: int, target: int)
         } else {
             // The module is read: its code (`docs/native-backend.md` section 12), and the object the code and the module's values are (section 13).
             let code = box_slice(heap, out.room(m), 0);
+            let side = box_slice(heap, side_room(m, registers), 0);
             borrow mut code as &!cw in {
-                let o = contents(cw);
-                if a64fn.generate(ir, m, o) != 0 {
-                    line = lm.cell(o, out.h_fail_line());
-                    why = lm.cell(o, out.h_fail_why());
-                    if why == 0 {
-                        why = out.why_room();
-                    }
-                } else {
-                    let (file, bad) = elf.object(heap, ir, m, o);
-                    buffer.drop(heap, text);
-                    text = file;
-                    if bad != 0 {
-                        why = out.why_constant();
+                borrow mut side as &!sw in {
+                    let o = contents(cw);
+                    if a64fn.generate(ir, m, contents(sw), o) != 0 {
+                        line = lm.cell(o, out.h_fail_line());
+                        why = lm.cell(o, out.h_fail_why());
+                        if why == 0 {
+                            why = out.why_room();
+                        }
+                    } else {
+                        let (file, bad) = elf.object(heap, ir, m, o);
+                        buffer.drop(heap, text);
+                        text = file;
+                        if bad != 0 {
+                            why = out.why_constant();
+                        }
                     }
                 }
             }
             unbox_slice(heap, code);
+            unbox_slice(heap, side);
         }
     }
     unbox_slice(heap, table);
     return Judged { text: text, line: line, why: why };
+}
+
+// The cells of the side table of `mem2reg.cho` for the module in `m`: none when the variables stay in memory.
+fn side_room[&m](m: &m [int], registers: bool) -> [] int {
+    if registers {
+        return m2.room(m);
+    }
+    return 0;
 }
 
 // What became of a program for no system that was to be an image (`docs/native-backend.md` section 16): the file, or where it was refused. `stage` is 0
@@ -99,7 +112,7 @@ pub res struct Imaged {
 
 // The module `ir` with the boot page `page` (`boot` false for none), placed as the layout `plan` says: the flat image, or with `executable` an ELF
 // executable that holds it.
-pub fn bare_image[&h, &r, &q, &s](heap: &!h Heap, ir: &r [byte], plan: &q [byte], page: &s [byte], boot: bool, executable: bool) -> [heap] Imaged {
+pub fn bare_image[&h, &r, &q, &s](heap: &!h Heap, ir: &r [byte], plan: &q [byte], page: &s [byte], boot: bool, executable: bool, registers: bool) -> [heap] Imaged {
     let table = box_slice(heap, lm.room(ir), 0);
     var result = buffer.empty(heap, 0);
     var stage = 0;
@@ -120,6 +133,7 @@ pub fn bare_image[&h, &r, &q, &s](heap: &!h Heap, ir: &r [byte], plan: &q [byte]
             }
         } else {
             let code = box_slice(heap, out.room(m), 0);
+            let side = box_slice(heap, side_room(m, registers), 0);
             let lines = box_slice(heap, la.room(plan), 0);
             let labels = box_slice(heap, asm.room(page), 0);
             var assembled = buffer.empty(heap, 4096);
@@ -129,7 +143,11 @@ pub fn bare_image[&h, &r, &q, &s](heap: &!h Heap, ir: &r [byte], plan: &q [byte]
                         let o = contents(cw);
                         let l = contents(lw);
                         let a = contents(aw);
-                        if a64fn.generate(ir, m, o) != 0 {
+                        var status = 0;
+                        borrow mut side as &!sw in {
+                            status = a64fn.generate(ir, m, contents(sw), o);
+                        }
+                        if status != 0 {
                             stage = 1;
                             line = lm.cell(o, out.h_fail_line());
                             reason = lm.cell(o, out.h_fail_why());
@@ -167,6 +185,7 @@ pub fn bare_image[&h, &r, &q, &s](heap: &!h Heap, ir: &r [byte], plan: &q [byte]
             }
             buffer.drop(heap, assembled);
             unbox_slice(heap, code);
+            unbox_slice(heap, side);
             unbox_slice(heap, lines);
             unbox_slice(heap, labels);
         }

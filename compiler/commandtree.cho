@@ -11,10 +11,10 @@ fn usage_0[&h](heap: &!h Heap, out: buffer.Buffer) -> [heap] buffer.Buffer {
     b = buffer.append(heap, b, "cancho — the bootstrap compiler for the cancho systems dialect\n");
     b = buffer.append(heap, b, "\n");
     b = buffer.append(heap, b, "usage:\n");
-    b = buffer.append(heap, b, "    cancho build <file.cho>... [-o <output>] [--emit exe|obj|ll|image] [--std] [--backend llvm|native] [--target <triple>] [--layout <file>] [-l <name>]... [-L <path>]... [--clang <path>]\n");
-    b = buffer.append(heap, b, "    cancho check <file.cho>... [--std] [--output json] [--backend llvm|native] [--target <triple>]\n");
-    b = buffer.append(heap, b, "    cancho run   <file.cho>... [--std] [--backend llvm|native] [--target <triple>] [-l <name>]... [-L <path>]...\n");
-    b = buffer.append(heap, b, "    cancho test  <file.cho>... [--std] [--backend llvm|native] [-l <name>]... [-L <path>]...\n");
+    b = buffer.append(heap, b, "    cancho build <file.cho>... [-o <output>] [--emit exe|obj|ll|image] [--std] [--backend llvm|native [--no-registers]] [--target <triple>] [--layout <file>] [-l <name>]... [-L <path>]... [--clang <path>]\n");
+    b = buffer.append(heap, b, "    cancho check <file.cho>... [--std] [--output json] [--backend llvm|native [--no-registers]] [--target <triple>]\n");
+    b = buffer.append(heap, b, "    cancho run   <file.cho>... [--std] [--backend llvm|native [--no-registers]] [--target <triple>] [-l <name>]... [-L <path>]...\n");
+    b = buffer.append(heap, b, "    cancho test  <file.cho>... [--std] [--backend llvm|native [--no-registers]] [-l <name>]... [-L <path>]...\n");
     b = buffer.append(heap, b, "    cancho satisfy <contract.cho> <candidate.cho> [--std]\n");
     b = buffer.append(heap, b, "    cancho fmt   <file.cho|dir>... [--check]\n");
     b = buffer.append(heap, b, "    cancho ids   <file.cho>... [--std] [--edges]\n");
@@ -52,6 +52,7 @@ fn usage_1[&h](heap: &!h Heap, out: buffer.Buffer) -> [heap] buffer.Buffer {
     b = buffer.append(heap, b, "    --output json   `check` and `authority` as data rather than prose\n");
     b = buffer.append(heap, b, "    --backend llvm|native  the backend that generates code: `llvm` (the default, docs/llvm-backend.md) or `native`, cancho's own, with no clang and no LLVM, for AArch64 on Linux and with no system; what it does not build it refuses by `unsupported-by-backend` (docs/native-backend.md).\n");
     b = buffer.append(heap, b, "                    A program it cannot compile is refused with an ordinary located error, not a crash.\n");
+    b = buffer.append(heap, b, "    --no-registers  (with `--backend native`) keep every value in memory, as before values were put in registers: to tell whether a program that runs wrongly does so because of them (docs/native-backend.md section 17)\n");
     b = buffer.append(heap, b, "    --target <triple>\n");
     b = buffer.append(heap, b, "                    the triple of the machine this binary runs on, or `aarch64-none-elf` (`build --emit obj|ll`\n                    and `check`: a program with no system under it, docs/freestanding.md); `build`, `check` and `run`\n");
     b = buffer.append(heap, b, "                    refuse any other triple. `authority --target`\n");
