@@ -26,6 +26,12 @@ fn a_loop() -> [] &static [byte] {
     return "define i64 @f(i64 %n, i64 %k) {\nentry:\n  %m = mul i64 %k, 3\n  br label %head\nhead:\n  %i = phi i64 [ 0, %entry ], [ %i2, %body ]\n  %s = phi i64 [ 0, %entry ], [ %s2, %body ]\n  %c = icmp slt i64 %i, %n\n  br i1 %c, label %body, label %done\nbody:\n  %s2 = add i64 %s, %m\n  %i2 = add i64 %i, 1\n  br label %head\ndone:\n  ret i64 %s\n}\n";
 }
 
+// A value used only by an edge, of an inner loop back to its own head: it must live around the outer loop as well, through a block that comes after
+// that edge in the order.
+fn nested() -> [] &static [byte] {
+    return "define i64 @f(i64 %n, i64 %k) {\nentry:\n  %v = mul i64 %k, 7\n  br label %outer\nouter:\n  %i = phi i64 [ 0, %entry ], [ %i2, %next ]\n  %c = icmp slt i64 %i, %n\n  br i1 %c, label %inner, label %done\ninner:\n  %j = phi i64 [ 0, %outer ], [ %v, %inner ]\n  %d = icmp eq i64 %j, 0\n  br i1 %d, label %inner, label %next\nnext:\n  %i2 = add i64 %i, 1\n  br label %outer\ndone:\n  ret i64 %i\n}\n";
+}
+
 fn a_call() -> [] &static [byte] {
     return "declare i64 @g(i64)\ndefine i64 @f(i64 %a) {\nentry:\n  %b = add i64 %a, 1\n  %c = call i64 @g(i64 %a)\n  %d = add i64 %b, %c\n  ret i64 %d\n}\n";
 }
@@ -179,8 +185,11 @@ fn test_a_diamond_keeps_what_both_arms_use_and_what_comes_after[&h](heap: &!h He
             test.assert_eq(ra.start(s, v), ra.block_start(s, join));
             test.assert(!ra.live_in(s, join, v));
             // What the arms make is used by the edge out of each, after its last instruction.
-            test.assert(end_of(text, m, s, func, "y") > ra.block_start(s, then_b));
+            test.assert(end_of(text, m, s, func, "y") > start_of(text, m, s, func, "y"));
+            test.assert(end_of(text, m, s, func, "z") > start_of(text, m, s, func, "z"));
             test.assert(!ra.live_out(s, then_b, id_of(text, m, func, "y")));
+            // Used by nothing but the edge, they have registers all the same.
+            test.assert(general(reg_of(text, m, s, func, "y")) && general(reg_of(text, m, s, func, "z")));
             test.assert(general(ra.register(s, x)) && general(ra.register(s, b)) && general(ra.register(s, v)));
             test.assert(ra.register(s, x) != ra.register(s, b));
             test.assert(ra.register(s, x) != ra.register(s, v));
@@ -226,6 +235,33 @@ fn test_a_value_live_across_the_edge_back_holds_its_register_through_the_loop[&h
             test.assert(ra.register(s, mv) != ra.register(s, sv) && ra.register(s, mv) != ra.register(s, iv) && ra.register(s, mv) != ra.register(s, n));
             test.assert(ra.register(s, sv) != ra.register(s, iv) && ra.register(s, n) != ra.register(s, sv) && ra.register(s, n) != ra.register(s, iv));
             test.assert_eq(ra.spilled(s), 0);
+        }
+        unbox_slice(heap, side);
+    }
+    unbox_slice(heap, table);
+    return 0;
+}
+
+fn test_a_value_an_inner_edge_uses_lives_around_the_outer_loop[&h](heap: &!h Heap) -> [heap] int {
+    let text = nested();
+    let table = box_slice(heap, lm.room(text), 0);
+    borrow mut table as &!tw in {
+        let m = contents(tw);
+        test.assert_eq(lt.read(text, m, 0), 0);
+        let func = last_function(m);
+        let side = box_slice(heap, m2.room(m), 0);
+        borrow mut side as &!sw in {
+            let s = contents(sw);
+            test.assert_eq(m2.layout(m, s), 0);
+            test.assert_eq(m2.promote(m, s, func), 0);
+            test.assert(ra.allocate(m, s, func, true) > 0);
+            let v = id_of(text, m, func, "v");
+            let inner = block_named(text, m, s, func, "inner");
+            let next_b = block_named(text, m, s, func, "next");
+            test.assert(ra.live_in(s, inner, v) && ra.live_out(s, next_b, v));
+            test.assert(ra.block_start(s, inner) < ra.block_start(s, next_b));
+            test.assert(ra.end(s, v) > ra.block_start(s, next_b));
+            test.assert(ra.register(s, v) != ra.register(s, id_of(text, m, func, "i2")));
         }
         unbox_slice(heap, side);
     }
