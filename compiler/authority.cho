@@ -270,7 +270,7 @@ fn performed_labels[&h, &s, &x, &k](heap: &!h Heap, st: &!s [int], text: &x [byt
         }
         var row = 0;
         while row < instances.label_rows(st) {
-            if instances.label_item(st, row) == item && instances.label_name(st, row) < 100 && !(instances.label_name(st, row) == 1 && lent / effects.arg_flag(st) % 2 == 1) {
+            if instances.label_item(st, row) == item && instances.label_name(st, row) < 100 && !(instances.label_name(st, row) < 16 && lent / effects.arg_flag(st) % 2 == 1 && instances.lent_args(st) / effects.two_to(st, instances.label_name(st, row)) % 2 == 1) {
                 var arg = buffer.empty(heap, 16);
                 if instances.label_literal(st, row) >= 0 {
                     arg = identity.decoded_text(heap, arg, st, text, instances.label_literal(st, row));

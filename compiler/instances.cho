@@ -501,7 +501,7 @@ pub fn forget_labels[&s](st: &!s [int], item: int, label: int, from: int) -> [] 
     return 0;
 }
 
-// What the `system` block of the program discharges (`docs/bare-system.md` 12), in slot 2 of the header: a bit for each plain label as `effects.cho` numbers them, bit 60 for
+// What the `system` block of the program discharges (`docs/bare-system.md` 12), in slot 2 of the header: a bit for each plain label as `effects.cho` numbers them, bits 40 on for the labels with an argument (`lent_args`), bit 60 for
 // `fs_read` whatever its argument, and bit 59 while the body of the block is being walked. 0 while nothing is built, and where there is a system under the program.
 pub fn lent[&s](st: &!s [int]) -> [] int {
     if st[40] == 0 {
@@ -515,6 +515,18 @@ pub fn set_lent[&s](st: &!s [int], labels: int) -> [] int {
         st[base(st) + 2] = labels;
     }
     return 0;
+}
+
+// Which labels with an argument that block discharges, whatever their argument: bits 40 on of slot 2, a bit for each by its number (`effects.arg_label_name`), so
+// 2 for `fs_read` and 8 for `net_out`. Bit 60 is set when any is.
+pub fn lent_args[&s](st: &!s [int]) -> [] int {
+    var v = lent(st);
+    var i = 0;
+    while i < 40 {
+        v = v / 2;
+        i = i + 1;
+    }
+    return v % 1024;
 }
 
 // The function that contains that block, as its item plus one, in slot 15 of the header: 0 if there is none.

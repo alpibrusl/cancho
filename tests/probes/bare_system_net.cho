@@ -1,0 +1,85 @@
+edition 11;
+
+// bare_system_net.cho -- a program for no system that connects out (`docs/bare-system.md`, the network): `ask` is written
+// as any program is, with an `Out` narrowed to one host and port: it connects, sends four bytes, reads until the other
+// end closes, and closes. What answers is the module `probe_net`. tests/commands/freestanding.sh builds it for
+// `aarch64-none-elf`.
+import probe_net;
+
+fn ask[&o](up: &o Out("10.0.0.1:80")) -> [net_out("10.0.0.1:80"), conn_read, conn_write] int {
+    var got = 0;
+    match tcp_connect(up, "10.0.0.1", 80) {
+        Dialed::Ok(c) => {
+            region r {
+                let into = alloc_slice[r](8, byte_of(0));
+                var conn = c;
+                borrow mut conn as &!ch in {
+                    match conn_write(ch, "ping") {
+                        Sent::Wrote(n) => {
+                            got = got + n;
+                        }
+                        Sent::Again => {
+                            got = 0 - 100;
+                        }
+                        Sent::Failed(e) => {
+                            got = 0 - e;
+                        }
+                    }
+                    var more = true;
+                    while more {
+                        match conn_read(ch, into) {
+                            Received::Data(n) => {
+                                got = got + 10 * n;
+                            }
+                            Received::End => {
+                                more = false;
+                            }
+                            Received::Again => {
+                                more = false;
+                            }
+                            Received::Failed(e) => {
+                                got = 0 - e;
+                                more = false;
+                            }
+                        }
+                    }
+                }
+                conn_close(conn);
+            }
+        }
+        Dialed::Failed(e) => {
+            got = 0 - 1000 - e;
+        }
+    }
+    return got;
+}
+
+fn main(world: World) -> [] int {
+    let Split { io, ffi, fs, heap, args, out, ports, clock, signals, exec, tty } = split(world);
+    release(io);
+    release(ffi);
+    release(fs);
+    release(heap);
+    release(args);
+    release(ports);
+    release(clock);
+    release(signals);
+    release(exec);
+    release(tty);
+    let up = narrow(out, "10.0.0.1:80");
+    var status = 0;
+    region r {
+        let at = alloc_slice[r](4, 0);
+        borrow up as &u in {
+            system probe_net(at) in {
+                status = ask(u);
+            }
+        }
+        // four bytes went, three came twice, and the connection was closed once
+        if status != 64 || at[3] != 1 {
+            status = 0 - 2;
+        }
+    }
+    release(up);
+    return status;
+}

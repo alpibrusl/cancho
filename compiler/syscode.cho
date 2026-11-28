@@ -8,7 +8,7 @@ module selfhost.syscode;
 import selfhost.emit;
 
 fn system_at[&s](st: &!s [int], i: int) -> [] int {
-    emit.str(st, "ptr getelementptr inbounds ([16 x i64], ptr @cancho_sys_lent, i64 0, i64 ");
+    emit.str(st, "ptr getelementptr inbounds ([32 x i64], ptr @cancho_sys_lent, i64 0, i64 ");
     emit.nat(st, i);
     return emit.str(st, ")");
 }
@@ -34,7 +34,7 @@ pub fn system_seen[&s](st: &!s [int]) -> [] bool {
 pub fn system_globals[&s](st: &!s [int]) -> [] int {
     let keep = st[49];
     st[49] = 3;
-    emit.str(st, "@cancho_sys_on = global i64 0\n@cancho_sys_lent = global [16 x i64] zeroinitializer\n@cancho_sys_args = global [64 x [256 x i8]] zeroinitializer\n");
+    emit.str(st, "@cancho_sys_on = global i64 0\n@cancho_sys_lent = global [32 x i64] zeroinitializer\n@cancho_sys_args = global [64 x [256 x i8]] zeroinitializer\n");
     st[49] = keep;
     return 0;
 }
@@ -184,6 +184,9 @@ fn system_triple[&s](st: &!s [int]) -> [] int {
 // 20 `rename` (a name under a directory to another under the same one; `fresh` 1 refuses a name that is taken),
 // 21 `remove` (a name under a directory), 22 a directory kept, which is `sync` again. And the time: 23 `clock`
 // (`wall` 0: milliseconds since a moment of the system's choosing, which only go up; 1: milliseconds since 1970).
+// And the network: 24 `dial` (a host and a port, held to the bound of the `Out` first), 25 `receive` (bytes from a
+// connection: how many came, 0 at its end) and 26 `send` (bytes to one: how many were taken); a connection is closed by
+// `close`, as a file is, so the handles of both are the system's to tell apart.
 // Each of the program's functions answers a whole number: a handle or a count, or minus the reason it failed, which is
 // what the runtime's own answer. A path was held to the capability's prefix, and a name to being one component, before
 // the program's function is asked: those are the language's promises, not the system's.
@@ -224,6 +227,13 @@ pub fn system_files[&s](st: &!s [int], op: int, callee: int, n: int) -> [] int {
         emit.str(st, "define void @cancho_dir_sync(ptr %dir, ptr %out) {\nentry:\n");
     } else if op == 23 {
         emit.str(st, "define i64 @cancho_clock_ms(i64 %wall) {\nentry:\n");
+    } else if op == 24 {
+        // the host and the port are held to the capability's bound first, on every target the same: a trap if not
+        emit.str(st, "define void @cancho_net_tcp_connect(ptr %name, i64 %len, i64 %port, ptr %bound, i64 %bound_len, ptr %out) {\nentry:\n  call void @cancho_sys_dial_check(ptr %name, i64 %len, i64 %port, ptr %bound, i64 %bound_len)\n");
+    } else if op == 25 {
+        emit.str(st, "define void @cancho_net_conn_read(ptr %conn, ptr %buf, i64 %len, ptr %out) {\nentry:\n");
+    } else if op == 26 {
+        emit.str(st, "define void @cancho_net_conn_write(ptr %conn, ptr %buf, i64 %len, ptr %out) {\nentry:\n");
     } else {
         emit.str(st, "define i64 @cancho_fd_close(i64 %fd) {\nentry:\n");
     }
@@ -311,6 +321,22 @@ pub fn system_files[&s](st: &!s [int], op: int, callee: int, n: int) -> [] int {
         // `clock_ms` (0) and `clock_unix_ms` (1): milliseconds, since some moment or since 1970
         system_call(st, callee, n, true);
         emit.str(st, "i64 %wall)\n  ret i64 %r\n}\n");
+    } else if op == 24 {
+        // what `tcp_connect` reads: whether it failed, the connection's handle, and why
+        system_call(st, callee, n, true);
+        emit.str(st, "ptr %name, i64 %len, i64 %port)\n");
+        system_triple(st);
+    } else if op == 25 {
+        // what `conn_read` reads: 0 bytes came, 1 the other end closed, 3 a failure (2, not yet, is never answered: a
+        // connection here waits); how many; why. Reading into no room is refused as the runtime refuses it: 22 is EINVAL
+        emit.str(st, "  %h = load i64, ptr %conn\n  %o1 = getelementptr inbounds i64, ptr %out, i64 1\n  %o2 = getelementptr inbounds i64, ptr %out, i64 2\n  %nothing = icmp eq i64 %len, 0\n  br i1 %nothing, label %no, label %go\nno:\n  store i64 3, ptr %out\n  store i64 -1, ptr %o1\n  store i64 22, ptr %o2\n  ret void\ngo:\n");
+        system_call(st, callee, n, true);
+        emit.str(st, "i64 %h, ptr %buf, i64 %len)\n  %bad = icmp slt i64 %r, 0\n  %end = icmp eq i64 %r, 0\n  %t1 = select i1 %end, i64 1, i64 0\n  %tag = select i1 %bad, i64 3, i64 %t1\n  store i64 %tag, ptr %out\n  store i64 %r, ptr %o1\n  %neg = sub i64 0, %r\n  %why = select i1 %bad, i64 %neg, i64 0\n  store i64 %why, ptr %o2\n  ret void\n}\n");
+    } else if op == 26 {
+        // what `conn_write` reads: 0 so many were taken, 2 a failure (1, not yet, is never answered); how many; why
+        emit.str(st, "  %h = load i64, ptr %conn\n");
+        system_call(st, callee, n, true);
+        emit.str(st, "i64 %h, ptr %buf, i64 %len)\n  %bad = icmp slt i64 %r, 0\n  %tag = select i1 %bad, i64 2, i64 0\n  store i64 %tag, ptr %out\n  %o1 = getelementptr inbounds i64, ptr %out, i64 1\n  store i64 %r, ptr %o1\n  %neg = sub i64 0, %r\n  %why = select i1 %bad, i64 %neg, i64 0\n  %o2 = getelementptr inbounds i64, ptr %out, i64 2\n  store i64 %why, ptr %o2\n  ret void\n}\n");
     } else if op == 9 || op == 17 {
         system_call(st, callee, n, true);
         emit.str(st, "i64 %fd, ptr %p, i64 %n)\n  ret i64 %r\n}\n");
