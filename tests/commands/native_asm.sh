@@ -24,7 +24,7 @@ if "$cancho" build tests/native/asm_check.cho compiler/native/a64asm.cho compile
         same "$(cmp "$work/$source.txt" "tests/native/asm/$source.expected" 2>&1)" "" "$source.S"
     done
     same "$(grep -c '^section ' tests/native/asm/forms.expected)" 3 "the sections of forms.S"
-    same "$(cut -d' ' -f2 tests/native/asm/forms.expected | grep -c '^abs64$\|^call26$\|^jump26$\|^adr21$\|^cond19$\|^literal19$')" "$(grep -c '^relocation ' tests/native/asm/forms.expected)" "the relocations of forms.S whose kind is one of the six"
+    same "$(cut -d' ' -f2 tests/native/asm/forms.expected | grep -cE '^(abs64|call26|jump26|adr21|cond19|literal19)$')" "$(grep -c '^relocation ' tests/native/asm/forms.expected)" "the relocations of forms.S whose kind is one of the six"
     same "$(grep '^relocation ' tests/native/asm/forms.expected | cut -d' ' -f2 | LC_ALL=C sort -u | wc -l | tr -d ' ')" 6 "the kinds of relocation forms.S has"
 else
     fail "building the check said: $(head -c 300 "$work/build.txt")"

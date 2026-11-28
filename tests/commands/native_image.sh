@@ -21,7 +21,7 @@ build --layout $layout --emit exe -o "$work/probe.elf" > "$work/elf.txt" 2>&1
 same "$?" 0 "the status for the executable ($(head -c 200 "$work/elf.txt"))"
 same "$(od -An -tx1 -N4 "$work/probe.elf" | tr -d ' \n')" "7f454c46" "the executable's magic"
 same "$(od -An -tx1 -j16 -N4 "$work/probe.elf" | tr -d ' \n')" "0200b700" "an executable for AArch64"
-same "$(od -An -tx8 -j24 -N8 "$work/probe.elf" | tr -d ' \n')" "0000000040080000" "where it starts"
+same "$(od -An -tx1 -j24 -N8 "$work/probe.elf" | tr -d ' \n')" "0000084000000000" "where it starts (0x40080000, the low byte first)"
 # The executable's one loaded part is the flat image, byte for byte, 4096 bytes into the file.
 tail -c +4097 "$work/probe.elf" > "$work/part.img"
 same "$(cmp -s "$work/part.img" "$work/probe.img"; echo $?)" 0 "the executable's part against the flat image"
