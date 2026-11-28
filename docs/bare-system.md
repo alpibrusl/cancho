@@ -500,6 +500,147 @@ growing buffers, a block of 64 KiB made and given back 20,000 times, 0 bytes wro
 `netout.sh`, `keys.sh`, `agents.sh`, `authority.sh` and a listing of 5,000 names over SSH pass as before.
 `freestanding`, `native_subset`, `duplication` and `regen` pass.
 
+## 11e. A block that runs on its own stack, and is left by a trap
+
+The second slice of cancho-os's `docs/programs.md` (its section 9), designed here before it is built, as that
+document's decision 1 asks. Nothing of it is in the compiler yet. What a program that fails does to the kernel is
+that document's business; this is what the language and the compiler do.
+
+### The statement
+
+```
+system ksys(con, vio, dma, k, line, h) runs (mem, at, size) as (heap: Heap, args: Args, fs: Fs(""), io: Io) in {
+    return which_tool.run(heap, args, fs, io);
+}
+```
+
+- **`runs (mem, at, size)`**: `mem` is a name of the function, an `Mmio` capability; `at` and `size` are whole
+  numbers. The block of memory `at .. at + size` is the program's: its stack, its heap, and the compiler's record of
+  it. `size` must be a power of two of at least 64 KiB, `at` a multiple of 16, and the block inside one range of
+  `mem`'s bound. Each is checked where the statement is reached; one that fails is a trap with nothing lent, which is
+  the kernel's (it is the kernel that chose them).
+- **`as (name: Type, ...)`**: the capabilities the block makes, which exist in it and nowhere else (§4 proposed
+  `as (args, fs, io)` by position; the types are written, since the list has grown with §11b and §11c and will grow
+  again). Each type is one the system answers: `Heap`, `Args`, `Io`, `Fs("..")`, `Clock`, `Out("..")`. In the block
+  each is a unique borrow (`Heap`, `Io`) or a shared one (the others) whose region is the block's, so none can leave it.
+  None has any bytes in the code.
+- **What the body may name of the function around it**: whole numbers and booleans, which are copied into the
+  block when the program starts, and nothing else. It assigns to none of them. The lent values are frozen as they are
+  now. So the body can be run on another stack, and (in the next slice) across several calls of the function, whose
+  own variables are gone by the second.
+- **`return e`** in the body, `e` a whole number, ends the program with `e`. It leaves the body, not the function,
+  and runs no `defer` of the function. A body that reaches its end ends with 0. Without `runs` a `return` in a
+  `system` block is refused, as now.
+- **After the statement** nothing is lent, in every case. The kernel reads what happened from the block, through
+  `mem` (`mmio_read64`), at fixed places:
+
+  | bytes from `at` | |
+  |---|---|
+  | 0 | the state: 0 fresh, 1 running, 2 ended, 3 failed |
+  | 8 | the value it ended with, or why it failed: 1 a check of the language, 2 no memory left, 3 no stack left |
+  | 16 | where it failed: the address `cancho_trap` was called from |
+  | 24 to 191 | the program's saved registers (21 words) |
+  | 192 to 607 | its allocator's record (52 words, §11d) |
+  | 608 to 863 | the whole numbers and booleans the body names, copied (at most 32) |
+  | 1024 | its heap begins, growing up |
+  | `at + size * 3 / 4` | its stack's end: below it the heap stops, and 4 KiB above it the stack does |
+  | `at + size` | its stack's top, growing down |
+
+  A statement reached with a state that is not 0 runs nothing (the next slice gives 1 its meaning: a program that
+  waits goes on). The kernel writes 0 there before it starts a program in a block.
+
+### What it compiles to
+
+The checker writes code as it walks a function (`emit.cho`), into the function's body (buffer 1) and its entry
+block's `alloca`s (buffer 2). The body of the block is written there as any block is, and **cut out** when it ends:
+what was added to the two buffers since it began is the body's, and becomes a function of its own,
+`@cancho_runs_body`, with an `alloca` for each binding the body named outside it, filled from the block's copies. Its
+temporaries, labels and slots are numbered on from the function's, so nothing in it collides with what stays. A
+variable of the function that the body reads is a load of its slot (`%s<n>`), so the checker records which slots the
+body reached outside itself; that list is what is copied.
+
+In the function, where the body was, the statement becomes:
+
+1. the checks of `at` and `size`; the state read, and if it is not 0, on to step 6;
+2. the copies stored at `at + 608`; the allocator's record cleared, its two ends set to `at + 1024` and the stack's
+   end; the program's saved stack pointer set to the top and its return address to `@cancho_runs_start`;
+3. what is lent stored, as now; `@cancho_sys_block` set to `at`, the allocator's pointer (`@cancho_bare_arena`) to
+   the block's record, `@cancho_stack_end` to the stack's end plus 4 KiB; `@cancho_sys_on` to 1;
+4. `call void @cancho_switch(ptr @cancho_sys_back, ptr <the program's registers>)`;
+5. (back here when the program has ended or failed) `@cancho_sys_on` 0, the three pointers back to null and 0;
+6. nothing lent.
+
+`@cancho_runs_start` is written once per module: the state 1, a call of `@cancho_runs_body`, its value and the state
+2 stored, and `@cancho_switch(<the program's registers>, @cancho_sys_back)`, which does not come back. The switch is
+one function in the module's `module asm`: the 21 words of the processor's calling rules (x19 to x30, the stack
+pointer, d8 to d15) stored where the first argument says and loaded from where the second says, and `ret`. It is
+the run of instructions the probe of cancho-os's `docs/programs.md` section 8 measured. LLVM sees an ordinary call
+that keeps what a call keeps, which is true.
+
+**The functions of the system** (§5) gain, for a block with `runs`, around the call of the module's function: room
+for the kernel's answer (the stack pointer less 16 KiB not below the end, or a trap, which at 1 is the program's,
+why 3), `@cancho_sys_on` to 2 and the allocator to the kernel's, the call, and back. The stack's end stays the
+program's while the kernel answers: an answer that overran it would trap at 2, which resets the board, and writes
+nothing outside the block's stack first.
+
+**The trap** (`driver.cho`, the target with no system) becomes: if `@cancho_sys_on` is 1 and `@cancho_sys_block`
+is not null, the state 3, why from `@cancho_sys_why` (1 unless the place that traps stored 2 or 3), where from
+`llvm.returnaddress`, and `@cancho_switch(<the program's registers>, @cancho_sys_back)`; otherwise `udf #0xc11f`
+as now. A `system` block without `runs` never sets `@cancho_sys_block`, so its traps stay the kernel's. The
+allocator's three traps (`bare.ll`) store 2 first.
+
+**The stack's end, at every function** (cancho-os `docs/programs.md`, decision 2): on this target each function
+begins with `call void @cancho_stack_check()`, which compares the stack pointer with `@cancho_stack_end` and below
+it stores 3 in `@cancho_sys_why` and traps. The end is 0, which nothing is below, until a block that `runs` sets it.
+The call comes after the function's own frame is taken, so a frame of up to 4 KiB that went past the end is caught
+before anything is written below the stack.
+
+Measured on cancho-os 0.0.54 with a compiler that has only this check (not kept, and not in this change):
+
+- *As one call*: the image goes from 808,544 to 849,440 bytes (+5.1%), with 6,153 calls of the check
+  (`llvm-objdump -d`). The check itself is eight instructions, one of them a load the global's being `internal`
+  would save.
+- *Written in line* (the comparison at the start of each function, not a call): 906,976 bytes (+12.2%). LLVM
+  writes small functions into their callers, and each copy keeps its comparison. So it is a call.
+- *What it costs a command*: during one `hash` of a file of 300,000 bytes the check ran about 65,000 times (QEMU as
+  `virt`, `-d exec,nochain` with `-dfilter` on its first instruction, counted against a run with `tell` in its place:
+  65,035 and 64,887 in two runs), so about 0.5 million instructions more. The command took 36 to 42 ms of QEMU's time
+  under `-icount shift=0` with and without the check, about 39 million instructions: the check is near 1.4% of it,
+  inside what the disk's waits move the time by. The hash was the one `shasum -a 256` gives, both times.
+- *Frames*: the largest of the image takes 2,960 bytes of the stack (`sub sp, sp, #...`). The 4 KiB above the end
+  covers it; a test of the image should fail when a frame is larger.
+
+**The allocator in the block**: `@cancho_bare_arena` points at the block's record while the program runs, and at
+null (the kernel's) while the kernel answers; the record's ends keep its heap below the stack's end. So no memory of
+the program is ever in the kernel's lists, and a program that fails leaves nothing there to give back.
+
+**The arguments** stay in `@cancho_sys_args` in this slice: a program runs from its start to its end or its trap
+before anything else does. The next slice, where a program waits while others run, moves them into the block.
+
+**Refused**: `runs` on any other target (`runs-target`), and with the backend of cancho's own until it writes the
+switch and the check (`runs-native`; cancho-os `docs/programs.md`, decision 9); a body that names anything of the
+function but a whole number or a boolean, or assigns to one (`runs-names-outside`); more than 32 names copied; a
+`return` with no whole number.
+
+### Tests that can fail
+
+- In this repository, freestanding cases in QEMU as `virt`: a body that ends with a value (the value is read back);
+  one that traps (state 3, why 1, and the kernel prints after it); one that asks for more memory than the block has
+  (why 2); one that calls itself until the stack ends (why 3, and nothing outside the block changed: a pattern
+  written around it is read back whole); a hundred of each in one boot, the kernel's own heap not moved; a trap in a
+  function of the system (state 2 of `@cancho_sys_on`) still the kernel's.
+- The checker's refusals, each with a probe that must be refused and one beside it that must not.
+- In cancho-os, what its section 9 says for slice 2, judged by OpenSSH, `checklog.py` and `fsck.fat -n`.
+
+### Open, for the owner
+
+1. `return e` as the program's value, which reads as leaving the function. The other way is a value the block has,
+   `let said = system ... in { .. }`, which the language has nowhere else.
+2. `as` with the types written. Without it the body would name the function's own capabilities (they have no bytes,
+   so the code would not change), which decision 1's rule excludes.
+3. The stack as a quarter of the block, fixed by the compiler. cancho-os's table of programs (#49) wanting another
+   size would need a fourth word in `runs`.
+
 ## 12. The discharge of §6, designed against the checker
 
 Built as written here; what was learned building it is marked "(built)". Written before the code, after
