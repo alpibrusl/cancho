@@ -1838,6 +1838,11 @@ pub fn header_end[&s](st: &!s [int]) -> [] int {
     st[42] = 0;
     st[52] = 0;
     aim(st, 1);
+    if st[61] == 3 && st[55] & 1048576 == 0 {
+        // Where there is no system, every function first asks whether the stack it runs on has room (`@cancho_stack_check` of
+        // `runtime/bare.ll`, docs/bare-system.md 11e). Not with the backend of cancho's own (`nativert.bit()`), which refuses `runs`.
+        str(st, "  call void @cancho_stack_check()\n");
+    }
     return 0;
 }
 

@@ -1,0 +1,28 @@
+edition 14;
+module probe_runs;
+
+// bare_runs_sys.cho -- the system of tests/probes/bare_runs.cho (`docs/bare-system.md`, 11e): what a program writes goes to the
+// PL011 of QEMU's `virt` machine, and `used[0]` counts how many times the kernel answered. A `!` makes the answer trap, which must stop the machine.
+
+pub fn out[&m, &u, &p](con: &!m Mmio("0x9000000..0x9000048"), used: &!u [int], p: &p [byte]) -> [mmio("0x9000000..0x9000048")] int {
+    var i = 0;
+    while i < len(p) {
+        if int_of(p[i]) == '!' {
+            // a trap in the kernel's own answer: the machine's, not the program's
+            let none = "";
+            return int_of(none[i]);
+        }
+        mmio_write8(con, 0x9000000, int_of(p[i]));
+        i = i + 1;
+    }
+    used[0] = used[0] + 1;
+    return i;
+}
+
+pub fn err[&m, &u, &p](con: &!m Mmio("0x9000000..0x9000048"), used: &!u [int], p: &p [byte]) -> [mmio("0x9000000..0x9000048")] int {
+    return out(con, used, p);
+}
+
+pub fn flush[&m, &u](con: &!m Mmio("0x9000000..0x9000048"), used: &!u [int]) -> [] int {
+    return 0;
+}

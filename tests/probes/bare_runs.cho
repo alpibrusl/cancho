@@ -1,0 +1,140 @@
+edition 14;
+
+// bare_runs.cho -- a program for no system with a block that runs (`docs/bare-system.md`, 11e): the body is a program in a block of
+// memory of its own, on its own stack, and a trap in it ends it and not the machine. Each of four programs runs a hundred times in
+// the same block: one that ends with 42, one that reads past a string (a check of the language), one that asks for more memory
+// than the block has, and one that calls itself until its stack ends. After the first of each the kernel prints which, the state
+// and the value or why, and `s` once the other ninety-nine failed where the first did. Then how many times the kernel answered,
+// `g` if the words on each side of the block are as they were, and `d`; last, a program whose answer traps in the kernel's own
+// code, which stops the machine. tests/commands/freestanding.sh boots it in QEMU as `virt`.
+import probe_runs;
+
+fn deep(n: int) -> [] int {
+    if n == 0 {
+        return 0;
+    }
+    return 1 + deep(n - 1) + deep(0);
+}
+
+// 64,000 bytes of the block's heap kept for each call, until there is none.
+fn greedy[&h](heap: &!h Heap, depth: int) -> [heap] int {
+    let b = box_slice(heap, 8000, depth);
+    let deeper = greedy(heap, depth + 1);
+    unbox_slice(heap, b);
+    return deeper + 1;
+}
+
+fn program[&i, &h](io: &!i Io, heap: &!h Heap, which: int, n: int) -> [io_write, heap] int {
+    if which == 1 {
+        if n == 0 {
+            write_bytes(io, "it runs\n");
+            flush_out(io);
+        }
+        return 42;
+    }
+    if which == 2 {
+        let four = "four";
+        return int_of(four[n + 4]);
+    }
+    if which == 3 {
+        return greedy(heap, 0);
+    }
+    if which == 4 {
+        return deep(1000000);
+    }
+    write_bytes(io, "!");
+    return 0;
+}
+
+fn put[&m](con: &!m Mmio("0x9000000..0x9000048"), c: int) -> [mmio("0x9000000..0x9000048")] int {
+    mmio_write8(con, 0x9000000, c);
+    return 0;
+}
+
+fn number[&m](con: &!m Mmio("0x9000000..0x9000048"), v: int) -> [mmio("0x9000000..0x9000048")] int {
+    if v >= 10 {
+        number(con, v / 10);
+    }
+    return put(con, '0' + v % 10);
+}
+
+fn main(world: World) -> [] int {
+    let Split { io, ffi, fs, heap, args, out, ports, clock, signals, exec, tty, camera, mic, speaker, mmio, cpu } = split(world);
+    release(io);
+    release(ffi);
+    release(fs);
+    release(heap);
+    release(args);
+    release(out);
+    release(ports);
+    release(clock);
+    release(signals);
+    release(exec);
+    release(tty);
+    release(camera);
+    release(mic);
+    release(speaker);
+    release(cpu);
+    let (con, mem) = narrow(mmio, "0x9000000..0x9000048", "0x48000000..0x48400000");
+    borrow mut con as &!c in {
+        borrow mut mem as &!m in {
+            let block = 0x48100000;
+            // a word on each side of the block, which nothing a program does may change
+            mmio_write64(m, block - 8, 0x5ca1ab1e);
+            mmio_write64(m, block + 1048576, 0x5ca1ab1e);
+            region r {
+                let used = alloc_slice[r](1, 0);
+                var which = 1;
+                while which <= 5 {
+                    var times = 100;
+                    if which == 5 {
+                        // what was seen so far; then a program whose answer traps in the kernel's own code, which stops the
+                        // machine, so that `x` is never printed
+                        number(c, used[0]);
+                        put(c, 10);
+                        if mmio_read64(m, block - 8) == 0x5ca1ab1e && mmio_read64(m, block + 1048576) == 0x5ca1ab1e {
+                            put(c, 'g');
+                            put(c, 10);
+                        }
+                        put(c, 'd');
+                        put(c, 10);
+                        times = 1;
+                    }
+                    var n = 0;
+                    var first = 0;
+                    var same = true;
+                    while n < times {
+                        mmio_write64(m, block, 0);
+                        system probe_runs(c, used) runs (m, block, 1048576) as (io: Io, heap: Heap) in {
+                            return program(io, heap, which, n);
+                        }
+                        let state = mmio_read64(m, block);
+                        let at = mmio_read64(m, block + 16);
+                        if n == 0 {
+                            first = at;
+                            number(c, which);
+                            put(c, ' ');
+                            number(c, state);
+                            put(c, ' ');
+                            number(c, mmio_read64(m, block + 8));
+                            put(c, 10);
+                        } else if at != first {
+                            same = false;
+                        }
+                        n = n + 1;
+                    }
+                    if same && which < 5 {
+                        put(c, 's');
+                        put(c, 10);
+                    }
+                    which = which + 1;
+                }
+                put(c, 'x');
+                put(c, 10);
+            }
+        }
+    }
+    release(con);
+    release(mem);
+    return 0;
+}

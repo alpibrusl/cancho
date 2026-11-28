@@ -64,11 +64,11 @@ pub fn size_for(tokens: int, nodes: int, imports: int) -> [] int {
 }
 
 fn body_end(tokens: int, nodes: int, imports: int) -> [] int {
-    return 65 + 3 * tokens + imports + 8 + 4 + 16 * nodes;
+    return 136 + 3 * tokens + imports + 8 + 4 + 16 * nodes;
 }
 
 pub fn layout[&s](st: &!s [int], tokens: int, nodes: int, imports: int) -> [] int {
-    st[19] = 65 + 3 * tokens;
+    st[19] = 136 + 3 * tokens;
     st[16] = st[19] + imports;
     st[18] = st[16] + 8;
     st[14] = st[18] + 4;
@@ -133,9 +133,9 @@ fn token_at[&s, &t](st: &!s [int], tx: &!t [byte], code: int, from: int, n: int)
     }
     tx[from + n] = byte_of(' ');
     st[0] = from + n + 1;
-    st[65 + 3 * id] = code;
-    st[65 + 3 * id + 1] = from;
-    st[65 + 3 * id + 2] = from + n;
+    st[136 + 3 * id] = code;
+    st[136 + 3 * id + 1] = from;
+    st[136 + 3 * id + 2] = from + n;
     st[8] = id + 1;
     return id;
 }
@@ -242,9 +242,9 @@ fn string_token[&s, &t, &x, &j](st: &!s [int], tx: &!t [byte], src: &x [byte], j
     at = at + 1;
     tx[at] = byte_of(' ');
     let id = st[8];
-    st[65 + 3 * id] = lc.code(lc.Tok::Str);
-    st[65 + 3 * id + 1] = from;
-    st[65 + 3 * id + 2] = at;
+    st[136 + 3 * id] = lc.code(lc.Tok::Str);
+    st[136 + 3 * id + 1] = from;
+    st[136 + 3 * id + 2] = at;
     st[8] = id + 1;
     st[0] = at + 1;
     return id;
@@ -1192,6 +1192,16 @@ fn stmt[&s, &t, &x, &j](st: &!s [int], tx: &!t [byte], src: &x [byte], jm: &!j [
     if jsonread.is_string(jm, src, kv, "system") {
         let unit = name_token(st, tx, src, jm, required(st, src, jm, v, "module"));
         let lent = expr_list(st, tx, src, jm, required(st, src, jm, v, "lent"));
+        let rv = field(st, src, jm, v, "runs");
+        let av = field(st, src, jm, v, "as");
+        var runs = ast.empty_list();
+        var made = ast.empty_list();
+        if rv >= 0 {
+            runs = expr_list(st, tx, src, jm, rv);
+        }
+        if av >= 0 {
+            made = param_list(st, tx, src, jm, av);
+        }
         let body = block(st, tx, src, jm, required(st, src, jm, v, "body"));
         let id = node(st, kinds.NK::SSystem);
         ast.put(st, id, 4, unit);
@@ -1199,6 +1209,14 @@ fn stmt[&s, &t, &x, &j](st: &!s [int], tx: &!t [byte], src: &x [byte], jm: &!j [
         ast.put(st, id, 6, lent.n);
         ast.put(st, id, 7, body.head);
         ast.put(st, id, 8, body.n);
+        if rv >= 0 {
+            ast.put(st, id, 9, runs.head);
+            ast.put(st, id, 10, runs.n);
+        }
+        if av >= 0 {
+            ast.put(st, id, 11, made.head);
+            ast.put(st, id, 12, made.n);
+        }
         return id;
     }
     if jsonread.is_string(jm, src, kv, "region") {

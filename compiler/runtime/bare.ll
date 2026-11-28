@@ -13,6 +13,33 @@ declare void @llvm.memset.p0.i64(ptr, i8, i64, i1)
 ; module's own record, `@cancho_bare_own`, so that a lent system can point it at the record of a program's block
 ; (cancho-os docs/programs.md, section 6) and nothing of one is ever in the other's lists.
 @cancho_bare_own = internal global [52 x i64] zeroinitializer
+
+; What a lent system and a block that runs keep (docs/bare-system.md, 11e), here since the trap and every function read them:
+; whether something is lent (0 no, 1 yes, 2 the kernel is answering a program), the function that ends a program that traps
+; (null when none runs), where the stack a function runs on ends (0 for the kernel's: nothing is below it), and why the last trap
+; was taken (1 a check of the language, 2 no memory left, 3 no stack left).
+@cancho_sys_on = global i64 0
+@cancho_runs_hook = global ptr null
+@cancho_stack_end = internal global i64 0
+@cancho_sys_why = global i64 0
+
+; The check every function makes first, after its frame is taken: the stack pointer (here, the address of a cell of this
+; function's own frame) below the end is a trap, why 3. One call, so that a function LLVM writes into another does not bring a
+; copy of the comparison.
+define void @cancho_stack_check() noinline nounwind {
+entry:
+  %cell = alloca i64
+  %sp = ptrtoint ptr %cell to i64
+  %end = load i64, ptr @cancho_stack_end
+  %deep = icmp ult i64 %sp, %end
+  br i1 %deep, label %over, label %room
+over:
+  store i64 3, ptr @cancho_sys_why
+  call void @cancho_trap()
+  unreachable
+room:
+  ret void
+}
 @cancho_bare_arena = internal global ptr null
 
 define internal ptr @cancho_bare_state() {
@@ -23,7 +50,7 @@ entry:
   ret ptr %s
 }
 
-; The next `bytes` (a multiple of 16) of the memory the link names; past its end is a trap.
+; The next `bytes` (a multiple of 16) of the memory the link names; past its end is a trap, why 2.
 define internal ptr @cancho_bare_bump(i64 %bytes) {
 entry:
   %st = call ptr @cancho_bare_state()
@@ -48,6 +75,7 @@ entry:
   %bad = or i1 %wrapped, %over
   br i1 %bad, label %fail, label %ok
 fail:
+  store i64 2, ptr @cancho_sys_why
   call void @cancho_trap()
   unreachable
 ok:
@@ -90,6 +118,7 @@ entry:
   %bad = or i1 %wrapped, %huge
   br i1 %bad, label %fail, label %ok
 fail:
+  store i64 2, ptr @cancho_sys_why
   call void @cancho_trap()
   unreachable
 ok:
@@ -152,6 +181,7 @@ entry:
   %carry = extractvalue {i64, i1} %m, 1
   br i1 %carry, label %fail, label %ok
 fail:
+  store i64 2, ptr @cancho_sys_why
   call void @cancho_trap()
   unreachable
 ok:

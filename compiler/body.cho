@@ -48,6 +48,7 @@ import selfhost.narrowing;
 import selfhost.builtins;
 import selfhost.prims;
 import selfhost.consteval;
+import selfhost.netcode;
 
 // What an expression came to: its type, and whether it is a known integer (a literal, or a
 
@@ -412,6 +413,12 @@ fn borrow_stmt[&s, &x](st: &!s [int], text: &x [byte], id: int, ret: int) -> [] 
     return 0;
 }
 
+// Is `cap` a capability a lent system answers, and so one `as` can make (docs/bare-system.md, 11e)?
+fn made_by_system[&s](st: &!s [int], cap: int) -> [] bool {
+    let i = types.prelude_index(st, cap);
+    return i == scope.heap_index() || i == netcode.prelude_named("Io") || i == netcode.prelude_named("Args") || i == netcode.prelude_named("Fs") || i == netcode.prelude_named("Clock") || i == netcode.prelude_named("Out");
+}
+
 // The function called `name` of module `target`, or -1.
 fn system_function[&s, &x](st: &!s [int], text: &x [byte], target: int, name: &static [byte]) -> [] int {
     var it = st[15];
@@ -500,7 +507,7 @@ fn has_return[&s](st: &!s [int], head: int, n: int) -> [] bool {
             if has_return(st, ast.get(st, id, 5), ast.get(st, id, 6)) {
                 return true;
             }
-        } else if ast.is_kind(st, id, kinds.NK::SBorrow) || ast.is_kind(st, id, kinds.NK::SSystem) {
+        } else if ast.is_kind(st, id, kinds.NK::SBorrow) || ast.is_kind(st, id, kinds.NK::SSystem) && ast.get(st, id, 10) < 0 {
             if has_return(st, ast.get(st, id, 7), ast.get(st, id, 8)) {
                 return true;
             }
@@ -538,7 +545,23 @@ fn system_stmt[&s, &x](st: &!s [int], text: &x [byte], id: int, ret: int) -> [] 
         ast.fail(st, rules.r_arity_mismatch(), from, to);
         return 0;
     }
-    if has_return(st, ast.get(st, id, 7), ast.get(st, id, 8)) {
+    // `runs (mem, at, size)` (docs/bare-system.md, 11e): the body is a program in the block `at .. at + size` of what `mem` reaches,
+    // on its own stack, and a trap in it ends it and not the kernel. Only where there is no system, and with the LLVM backend.
+    let runs = ast.get(st, id, 10) >= 0;
+    if runs && st[61] != 3 {
+        ast.fail(st, rules.r_unsupported_on_target(), from, to);
+        return 0;
+    }
+    if runs && st[55] & 1048576 != 0 {
+        // the backend of cancho's own does not write the switch yet (cancho-os docs/programs.md, decision 9)
+        ast.fail(st, rules.r_unsupported_by_backend(), from, to);
+        return 0;
+    }
+    if runs && ast.get(st, id, 10) != 3 {
+        ast.fail(st, rules.r_arity_mismatch(), from, to);
+        return 0;
+    }
+    if !runs && has_return(st, ast.get(st, id, 7), ast.get(st, id, 8)) {
         // a `return` inside the block would leave what was lent lent
         ex.skip(st, from, to);
         return 0;
@@ -572,6 +595,39 @@ fn system_stmt[&s, &x](st: &!s [int], text: &x [byte], id: int, ret: int) -> [] 
         let pushed = st[52] - first_arg;
         if ast.ok(st) && pushed > 32 {
             ex.skip(st, from, to);
+        }
+        // `mem`, an `Mmio` of the function, and `at` and `size`, whole numbers, read where the statement is
+        var bound_from = 0;
+        var bound_to = 0;
+        var runs_at = ex.nothing();
+        var runs_size = ex.nothing();
+        if runs && ast.ok(st) {
+            let mem = ast.get(st, id, 9);
+            let mi = scope.find(st, text, ast.get(st, mem, 4));
+            if !ast.is_kind(st, mem, kinds.NK::EName) || mi < 0 {
+                ast.fail(st, rules.r_unknown_name(), ast.nstart(st, mem), ast.nend(st, mem));
+            } else {
+                let mt = scope.binding_type(st, mi);
+                if !types.is_ref(st, mt) || !types.is_prelude(st, types.ref_inner(st, mt)) || types.prelude_index(st, types.ref_inner(st, mt)) != netcode.prelude_named("Mmio") {
+                    ast.fail(st, rules.r_type_mismatch(), ast.nstart(st, mem), ast.nend(st, mem));
+                } else {
+                    let lit = types.prelude_lit_tok(st, types.ref_inner(st, mt));
+                    if lit >= 0 {
+                        bound_from = ast.tstart(st, lit) + 1;
+                        bound_to = ast.tend(st, lit) - 1;
+                    }
+                }
+            }
+            let an = ast.next(st, mem);
+            if ast.ok(st) {
+                runs_at = exprs.expr(st, text, an);
+                scope.expect(st, text, 1, runs_at.ty, ast.nstart(st, an), ast.nend(st, an));
+            }
+            let zn = ast.next(st, an);
+            if ast.ok(st) {
+                runs_size = exprs.expr(st, text, zn);
+                scope.expect(st, text, 1, runs_size.ty, ast.nstart(st, zn), ast.nend(st, zn));
+            }
         }
         // the module's functions, each held to its place and written into the runtime's
         let out = system_function(st, text, target, "out");
@@ -678,6 +734,7 @@ fn system_stmt[&s, &x](st: &!s [int], text: &x [byte], id: int, ret: int) -> [] 
         }
         if bare && ast.ok(st) {
             syscode.system_globals(st);
+            let glue_from = st[57];
             syscode.system_files(st, 6, folder, pushed);
             syscode.system_files(st, 7, step, pushed);
             syscode.system_files(st, 8, open, pushed);
@@ -704,6 +761,10 @@ fn system_stmt[&s, &x](st: &!s [int], text: &x [byte], id: int, ret: int) -> [] 
             syscode.system_glue(st, 3, key, pushed);
             syscode.system_glue(st, 4, flush, pushed);
             syscode.system_glue(st, 5, arg, pushed);
+            if runs {
+                syscode.runs_wrap(st, glue_from);
+                syscode.runs_functions(st);
+            }
             syscode.system_lend(st, pushed);
             syscode.system_switch(st, true);
             if count >= 0 {
@@ -774,8 +835,56 @@ fn system_stmt[&s, &x](st: &!s [int], text: &x [byte], id: int, ret: int) -> [] 
         if discharging {
             outer = effects.lend(st, answers);
         }
-        if ast.ok(st) {
+        if ast.ok(st) && !runs {
             block(st, text, ast.get(st, id, 7), ast.get(st, id, 8), ret);
+        }
+        if ast.ok(st) && runs {
+            // The body is written where it is, and then cut out into a function of its own (syscode.runs_cut). It sees the
+            // function's whole numbers and booleans (a copy), the capabilities `as` makes, and nothing else; it returns a whole number.
+            let m1 = st[46];
+            let m2 = st[48];
+            let names = st[21];
+            st[65] = 1 + st[21];
+            st[66] = defers(st);
+            st[67] = st[37];
+            st[68] = st[39];
+            st[69] = 0;
+            var made = ast.get(st, id, 11);
+            var opened = false;
+            if made >= 0 {
+                let block_id = scope.open_block(st, 0 - 2 - ast.get(st, made, 4));
+                opened = true;
+                while made >= 0 && ast.ok(st) {
+                    let written = ast.get(st, made, 5);
+                    pass1.resolve(st, text, written, st[22], st[23], st[28], true, false);
+                    var cap = 0;
+                    if ast.ok(st) {
+                        cap = scope.referent_type(st, written);
+                    }
+                    if !types.is_prelude(st, cap) || !made_by_system(st, cap) {
+                        ast.fail(st, rules.r_type_mismatch(), ast.nstart(st, made), ast.nend(st, made));
+                    } else {
+                        let unique = types.prelude_index(st, cap) == scope.heap_index() || types.prelude_index(st, cap) == netcode.prelude_named("Io");
+                        scope.bind(st, ast.get(st, made, 4), types.make_ref(st, unique, types.block_region(block_id), cap), false, ast.nstart(st, made), ast.nend(st, made));
+                        if emit.on(st) {
+                            emit.store_dummy_pointer(st, st[39] - 1);
+                        }
+                    }
+                    made = ast.next(st, made);
+                }
+            }
+            if ast.ok(st) {
+                block(st, text, ast.get(st, id, 7), ast.get(st, id, 8), 1);
+            }
+            st[21] = names;
+            if opened {
+                scope.close_block(st);
+            }
+            st[65] = 0;
+            if bare && ast.ok(st) {
+                syscode.runs_cut(st, m1, m2);
+                syscode.runs_site(st, text, bound_from, bound_to, runs_at.known, runs_at.value, runs_at.reg, runs_size.known, runs_size.value, runs_size.reg);
+            }
         }
         if discharging {
             effects.lend_end(st, outer, rows);
@@ -1008,6 +1117,10 @@ fn terminates[&s](st: &!s [int], head: int, n: int) -> [] bool {
         }
         return terminates(st, ast.get(st, last, 5), ast.get(st, last, 6)) && terminates(st, ast.get(st, last, 7), ast.get(st, last, 8));
     }
+    if ast.is_kind(st, last, kinds.NK::SSystem) && ast.get(st, last, 10) >= 0 {
+        // a `return` in a body that `runs` ends the program, not the function
+        return false;
+    }
     if ast.is_kind(st, last, kinds.NK::SBorrow) || ast.is_kind(st, last, kinds.NK::SSystem) {
         return terminates(st, ast.get(st, last, 7), ast.get(st, last, 8));
     }
@@ -1105,7 +1218,12 @@ fn writes_stmt[&s](st: &!s [int], id: int) -> [] bool {
 // A `return` leaves every arena that is open: the chunk of each goes back, the innermost first.
 fn close_arenas[&s](st: &!s [int]) -> [] int {
     var id = st[37];
-    while id >= 0 {
+    // (a `return` in the body of a block that `runs` closes only what the body opened)
+    var floor = 0 - 1;
+    if st[65] > 0 {
+        floor = st[67];
+    }
+    while id >= 0 && id != floor {
         if st[st[36] + 2 * id + 1] >= 0 {
             emit.arena_close(st, id);
         }
@@ -1336,7 +1454,8 @@ fn stmt[&s, &x](st: &!s [int], text: &x [byte], id: int, ret: int) -> [] int {
             ast.fail(st, rules.r_unknown_name(), from, to);
             return 0;
         }
-        if !scope.binding_mutable(st, i) {
+        if !scope.binding_mutable(st, i) || scope.outside_runs(st, i) {
+            // (the body of a block that `runs` has a copy of a whole number of the function, and assigns to none)
             ast.fail(st, rules.r_assign_to_immutable(), from, to);
             return 0;
         }
@@ -1462,7 +1581,11 @@ fn stmt[&s, &x](st: &!s [int], text: &x [byte], id: int, ret: int) -> [] int {
             scope.expect(st, text, ret, found.ty, ast.nstart(st, value), ast.nend(st, value));
             if emit.on(st) && ast.ok(st) {
                 // The value is read first, then what is deferred runs, then the function returns.
-                run_defers(st, text, 0);
+                var low = 0;
+                if st[65] > 0 {
+                    low = st[66];
+                }
+                run_defers(st, text, low);
                 close_arenas(st);
                 scope.lin_return(st, from, to);
             }
@@ -1521,6 +1644,7 @@ fn check_item[&s, &x](st: &!s [int], text: &x [byte], fn_item: int) -> [] int {
     st[32] = 0;
     st[35] = 0;
     st[37] = 0 - 1;
+    st[65] = 0;
     st[39] = 0;
     st[54] = 0;
     scope.lin_reset(st);

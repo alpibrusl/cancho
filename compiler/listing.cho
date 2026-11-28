@@ -597,6 +597,18 @@ pub fn dump_stmt[&i, &s, &x](io: &!i Io, st: &!s [int], text: &x [byte], id: int
     }
     if ast.is_kind(st, id, kinds.NK::SSystem) {
         dump_exprs(io, st, text, ast.get(st, id, 5), ast.get(st, id, 6));
+        if ast.get(st, id, 10) >= 0 {
+            dump_exprs(io, st, text, ast.get(st, id, 9), ast.get(st, id, 10));
+            w(io, "S.Runs ");
+            wn(io, ast.get(st, id, 10));
+            w(io, "\n");
+        }
+        if ast.get(st, id, 12) >= 0 {
+            dump_params(io, st, text, ast.get(st, id, 11), ast.get(st, id, 12));
+            w(io, "S.As ");
+            wn(io, ast.get(st, id, 12));
+            w(io, "\n");
+        }
         dump_stmts(io, st, text, ast.get(st, id, 7), ast.get(st, id, 8));
         w(io, "S.System ");
         wname(io, st, text, ast.get(st, id, 4));

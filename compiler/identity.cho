@@ -1197,7 +1197,26 @@ fn stmt[&s, &x, &j](st: &!s [int], text: &x [byte], d: &!j [int], id: int) -> []
         qualified_name(st, text, d, 0 - 1, ast.get(st, id, 4));
         put_len(d, ast.get(st, id, 6));
         expr_list(st, text, d, ast.get(st, id, 5), ast.get(st, id, 6));
+        // `runs (mem, at, size)` and `as (name: Type, ..)` (docs/bare-system.md, 11e), only where they are written, so that a block
+        // without them is what it was
+        let bound_before = d[3];
+        if ast.get(st, id, 10) >= 0 {
+            put_tag(d, 119);
+            put_len(d, ast.get(st, id, 10));
+            expr_list(st, text, d, ast.get(st, id, 9), ast.get(st, id, 10));
+        }
+        if ast.get(st, id, 12) >= 0 {
+            put_tag(d, 120);
+            put_len(d, ast.get(st, id, 12));
+            var cap = ast.get(st, id, 11);
+            while cap >= 0 {
+                encode_type(st, text, d, ast.get(st, cap, 5));
+                bind(d, ast.get(st, cap, 4));
+                cap = ast.next(st, cap);
+            }
+        }
         block(st, text, d, ast.get(st, id, 7), ast.get(st, id, 8));
+        d[3] = bound_before;
         return 0;
     }
     if ast.is_kind(st, id, kinds.NK::SRegion) {

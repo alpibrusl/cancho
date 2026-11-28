@@ -502,9 +502,9 @@ growing buffers, a block of 64 KiB made and given back 20,000 times, 0 bytes wro
 
 ## 11e. A block that runs on its own stack, and is left by a trap
 
-The second slice of cancho-os's `docs/programs.md` (its section 9), designed here before it is built, as that
-document's decision 1 asks. Nothing of it is in the compiler yet. What a program that fails does to the kernel is
-that document's business; this is what the language and the compiler do.
+The second slice of cancho-os's `docs/programs.md` (its section 9), designed here before it was built, as that
+document's decision 1 asks, and built as the owner took it (2026-11-28: all three open points as proposed). What a
+program that fails does to the kernel is that document's business; this is what the language and the compiler do.
 
 ### The statement
 
@@ -565,9 +565,10 @@ In the function, where the body was, the statement becomes:
 2. the copies stored at `at + 608`; the allocator's record cleared, its two ends set to `at + 1024` and the stack's
    end; the program's saved stack pointer set to the top and its return address to `@cancho_runs_start`;
 3. what is lent stored, as now; `@cancho_sys_block` set to `at`, the allocator's pointer (`@cancho_bare_arena`) to
-   the block's record, `@cancho_stack_end` to the stack's end plus 4 KiB; `@cancho_sys_on` to 1;
+   the block's record, `@cancho_stack_end` to the stack's end plus 4 KiB, `@cancho_runs_hook` to the module's
+   `@cancho_runs_failed`; `@cancho_sys_on` to 1;
 4. `call void @cancho_switch(ptr @cancho_sys_back, ptr <the program's registers>)`;
-5. (back here when the program has ended or failed) `@cancho_sys_on` 0, the three pointers back to null and 0;
+5. (back here when the program has ended or failed) `@cancho_sys_on` 0, the four back to null and 0;
 6. nothing lent.
 
 `@cancho_runs_start` is written once per module: the state 1, a call of `@cancho_runs_body`, its value and the state
@@ -577,21 +578,25 @@ pointer, d8 to d15) stored where the first argument says and loaded from where t
 the run of instructions the probe of cancho-os's `docs/programs.md` section 8 measured. LLVM sees an ordinary call
 that keeps what a call keeps, which is true.
 
-**The functions of the system** (§5) gain, for a block with `runs`, around the call of the module's function: room
-for the kernel's answer (the stack pointer less 16 KiB not below the end, or a trap, which at 1 is the program's,
-why 3), `@cancho_sys_on` to 2 and the allocator to the kernel's, the call, and back. The stack's end stays the
+**The functions of the system** (§5) gain, for a block with `runs`, a call of `@cancho_runs_away` before the call of the
+module's function and of `@cancho_runs_back` before each `ret` (put into their text once they are written): room for
+the kernel's answer (the stack pointer less 16 KiB not below the end, or a trap, which at 1 is the program's, why 3),
+`@cancho_sys_on` to 2 and the allocator to the kernel's; and back. Both do nothing when no program runs. The stack's end stays the
 program's while the kernel answers: an answer that overran it would trap at 2, which resets the board, and writes
 nothing outside the block's stack first.
 
-**The trap** (`driver.cho`, the target with no system) becomes: if `@cancho_sys_on` is 1 and `@cancho_sys_block`
-is not null, the state 3, why from `@cancho_sys_why` (1 unless the place that traps stored 2 or 3), where from
-`llvm.returnaddress`, and `@cancho_switch(<the program's registers>, @cancho_sys_back)`; otherwise `udf #0xc11f`
-as now. A `system` block without `runs` never sets `@cancho_sys_block`, so its traps stay the kernel's. The
-allocator's three traps (`bare.ll`) store 2 first.
+**The trap** (`driver.cho`, the target with no system) becomes: if `@cancho_sys_on` is 1 and `@cancho_runs_hook` is
+not null, the hook is called with where the trap was called from (`llvm.returnaddress`), and it stores the state 3,
+why from `@cancho_sys_why` (1 unless the place that traps stored 2 or 3) and where, and does
+`@cancho_switch(<the program's registers>, @cancho_sys_back)`; otherwise `udf #0xc11f` as now. The trap is in every
+module of this target and the switch only in one with a block that runs, so the trap reaches it through the hook,
+and `@cancho_sys_on`, the hook, the stack's end and why are `runtime/bare.ll`'s. A `system` block without `runs`
+never sets the hook, so its traps stay the kernel's. The allocator's traps for no memory (`bare.ll`) store 2 first.
 
 **The stack's end, at every function** (cancho-os `docs/programs.md`, decision 2): on this target each function
-begins with `call void @cancho_stack_check()`, which compares the stack pointer with `@cancho_stack_end` and below
-it stores 3 in `@cancho_sys_why` and traps. The end is 0, which nothing is below, until a block that `runs` sets it.
+begins with `call void @cancho_stack_check()`, which compares the stack pointer (the address of a cell of its own
+frame, so that the backend of cancho's own reads it too) with `@cancho_stack_end` and below it stores 3 in
+`@cancho_sys_why` and traps. It is not written for the backend of cancho's own, which refuses `runs`. The end is 0, which nothing is below, until a block that `runs` sets it.
 The call comes after the function's own frame is taken, so a frame of up to 4 KiB that went past the end is caught
 before anything is written below the stack.
 
@@ -617,10 +622,12 @@ the program is ever in the kernel's lists, and a program that fails leaves nothi
 **The arguments** stay in `@cancho_sys_args` in this slice: a program runs from its start to its end or its trap
 before anything else does. The next slice, where a program waits while others run, moves them into the block.
 
-**Refused**: `runs` on any other target (`runs-target`), and with the backend of cancho's own until it writes the
-switch and the check (`runs-native`; cancho-os `docs/programs.md`, decision 9); a body that names anything of the
-function but a whole number or a boolean, or assigns to one (`runs-names-outside`); more than 32 names copied; a
-`return` with no whole number.
+**Refused**, each by a rule the checker has: `runs` on any other target (`unsupported-on-target`), and with the
+backend of cancho's own until it writes the switch and the check (`unsupported-by-backend`; cancho-os
+`docs/programs.md`, decision 9); a body that names anything of the function but a whole number or a boolean
+(`unknown-name`: the body does not see it), or assigns to one (`assign-to-immutable`: it has a copy); more than 32
+names copied, or `runs` with other than three (`arity-mismatch`); `mem` not an `Mmio`, `at` or `size` not whole
+numbers, an `as` type the system does not answer, a `return` with no whole number (`type-mismatch`).
 
 ### Tests that can fail
 
@@ -632,14 +639,11 @@ function but a whole number or a boolean, or assigns to one (`runs-names-outside
 - The checker's refusals, each with a probe that must be refused and one beside it that must not.
 - In cancho-os, what its section 9 says for slice 2, judged by OpenSSH, `checklog.py` and `fsck.fat -n`.
 
-### Open, for the owner
+### Decided (2026-11-28)
 
-1. `return e` as the program's value, which reads as leaving the function. The other way is a value the block has,
-   `let said = system ... in { .. }`, which the language has nowhere else.
-2. `as` with the types written. Without it the body would name the function's own capabilities (they have no bytes,
-   so the code would not change), which decision 1's rule excludes.
-3. The stack as a quarter of the block, fixed by the compiler. cancho-os's table of programs (#49) wanting another
-   size would need a fourth word in `runs`.
+The owner took the three points as proposed: `return e` is the program's value; `as` has its types written; the stack
+is a quarter of the block, fixed by the compiler (a fourth word in `runs` if cancho-os's table of programs ever wants
+another size).
 
 ## 12. The discharge of §6, designed against the checker
 

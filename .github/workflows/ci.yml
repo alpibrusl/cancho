@@ -30,9 +30,9 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       # docs/native-backend.md section 16: tests/commands/native_image.sh boots the image the compiler wrote, where there is a machine to boot it on.
-      - name: qemu-system-aarch64, for the image test
+      - name: qemu-system-aarch64, for the image test, and ld.lld, for the block that runs (docs/bare-system.md, 11e)
         if: runner.os == 'Linux'
-        run: sudo apt-get update && sudo apt-get install -y --no-install-recommends qemu-system-arm
+        run: sudo apt-get update && sudo apt-get install -y --no-install-recommends qemu-system-arm lld
       - name: scripts/gate.sh
         run: scripts/gate.sh
 

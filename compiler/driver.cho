@@ -341,7 +341,11 @@ fn build_module[&s, &x](st: &!s [int], text: &x [byte]) -> [] int {
     // signal (SIGILL) whichever compiler built it: `llvm.trap` is `brk` on arm64, which is SIGTRAP.
     // Where there is no system it is not written in line: each place that traps calls the one function, which a lent system
     // can then make end the program and not the kernel (cancho-os docs/programs.md, sections 3 and 9).
-    if st[61] == 3 {
+    if st[61] == 3 && st[55] & nativert.bit() == 0 {
+        // A program in a block that runs (docs/bare-system.md, 11e) fails alone: while it runs (`@cancho_sys_on` 1) its module's
+        // `@cancho_runs_failed` is the hook, and is told where the trap was called from. Otherwise the trap is the kernel's.
+        emit.str(st, "declare ptr @llvm.returnaddress(i32)\ndefine void @cancho_trap() noreturn noinline {\nentry:\n  %on = load i64, ptr @cancho_sys_on\n  %hook = load ptr, ptr @cancho_runs_hook\n  %running = icmp eq i64 %on, 1\n  %held = icmp ne ptr %hook, null\n  %program = and i1 %running, %held\n  br i1 %program, label %alone, label %kernel\nalone:\n  %at = call ptr @llvm.returnaddress(i32 0)\n  call void %hook(ptr %at)\n  unreachable\nkernel:\n  call void asm sideeffect \"");
+    } else if st[61] == 3 {
         emit.str(st, "define void @cancho_trap() noreturn noinline {\nentry:\n  call void asm sideeffect \"");
     } else {
         emit.str(st, "define void @cancho_trap() noreturn {\nentry:\n  call void asm sideeffect \"");

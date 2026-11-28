@@ -712,6 +712,14 @@ fn stmt[&i, &s, &x](io: &!i Io, st: &!s [int], text: &x [byte], id: int, d: int)
         name(io, st, text, ast.get(st, id, 4));
         e = entry(io, d, e, "lent");
         exprs(io, st, text, ast.get(st, id, 5), ast.get(st, id, 6), d + 1);
+        if ast.get(st, id, 10) >= 0 {
+            e = entry(io, d, e, "runs");
+            exprs(io, st, text, ast.get(st, id, 9), ast.get(st, id, 10), d + 1);
+        }
+        if ast.get(st, id, 12) >= 0 {
+            e = entry(io, d, e, "as");
+            params(io, st, text, ast.get(st, id, 11), ast.get(st, id, 12), d + 1);
+        }
         e = entry(io, d, e, "body");
         block(io, st, text, ast.get(st, id, 7), ast.get(st, id, 8), d + 1);
         return end_object(io, d);

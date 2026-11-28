@@ -85,8 +85,9 @@ pub fn refuse[&s, &r](st: &!s [int], ir: &r [byte]) -> [] int {
     // A module with a `system` block (`docs/bare-system.md`) has functions of its own for the streams and the arguments.
     var lent = false;
     var s = 0;
-    while s + 17 < len(ir) && !lent {
-        lent = lc.at(ir, s) == '@' && lc.spells(ir, s, s + 17, "@cancho_sys_on = ");
+    // (`@cancho_sys_lent`, which only such a module has: `@cancho_sys_on` is the runtime's, in every module of this target)
+    while s + 19 < len(ir) && !lent {
+        lent = lc.at(ir, s) == '@' && lc.spells(ir, s, s + 19, "@cancho_sys_lent = ");
         s = s + 1;
     }
     var at = 0;
