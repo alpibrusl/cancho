@@ -990,8 +990,9 @@ says it and an entry of a pool at the end of the section otherwise, as clang doe
 
 ## 17. Values in registers (N9): the design
 
-Nothing of this section is built yet; it is the design N9's issue asks for before the code, and its numbers are the baseline
-the code is measured against.
+This is the design N9's issue asks for before the code, and its numbers are the baseline the code is measured against. Slice 1
+(`mem2reg`, section 17.7) is built: `compiler/native/mem2reg.cho`, and what was measured of it is section 17.8. Where building it
+showed the design wrong or short, the design is corrected below, and each correction says so.
 
 ### 17.1 Where the instructions go today
 
@@ -1016,13 +1017,18 @@ being read or written; and under section 12's lowering each such `load` is itsel
 to the load's slot, which the next use loads again. In cancho-os's kernel, 31,087 times in 421,006 instructions a value is
 stored to a slot and the next instruction loads it back. (Counted with a script over the text; it is not in the repository.)
 What stops the other 1,587: the address is stored somewhere (1,414), passed to a call (116), or offset (57).
+(Counted again on the module of the commit that adds `mem2reg`, with a script of the same rule: 33,070 of 34,650; of those 2,309 are
+aggregates, which slice 1 leaves in memory, section 17.2.)
 
 That is why the order is the issue's: **`mem2reg` first**, as its own step with its own tests, and the allocator after it.
 
 ### 17.2 `mem2reg`
 
-A promotable `alloca` is one whose every use is a `load` of its type from it or a `store` of its type to it (not of it). For
-each function, on the reader's table, which stays as it was read; what the pass makes is a side table the generator reads:
+A promotable `alloca` is one whose every use is a `load` of its type from it or a `store` of its type to it (not of it).
+*Corrected when it was built:* slice 1 asks more of it, so that what it promotes fits one register-sized slot: its type is an
+integer of at most 64 bits, `ptr`, `float` or `double` (an aggregate or an `i128` stays in memory), its count is absent or the
+constant 1, and no `load` or `store` of it is `volatile` or `atomic`. For each function, on the reader's table, which stays as it
+was read; what the pass makes is a side table the generator reads:
 
 1. **Dominators**, by Cooper, Harvey and Kennedy's iteration over reverse postorder, and the **dominance frontiers**.
 2. **Where a `phi` goes**: for each promotable `alloca`, the iterated dominance frontier of the blocks that store to it
@@ -1036,6 +1042,31 @@ each function, on the reader's table, which stays as it was read; what the pass 
    `store`); for each block, its new `phi`s, each with a value for each predecessor. The new `phi`s have ids after the
    module's, and the generator's `phi` lowering (section 12.3: a value per edge, a second slot, the copy when the block
    begins) takes them as it takes the module's own.
+
+*As built*, which is narrower or different in five places:
+
+- **A replaced `load` shares a slot rather than being rewritten at each use.** A value is zero (what a variable never stored
+  holds), a local of the function, or an operand of the module (a constant a `store` stored). When it is a local, the `load`
+  is given that local's slot in the frame and emits nothing, so every instruction that reads it reads the right bytes with
+  no change to the fetch of an operand: this is sound because in SSA the definition of the local dominates the `load`, which
+  dominates each of its uses, so between the `load` and a use the local is not defined again without the `load` being run
+  again. When it is a constant or zero, the `load` keeps its slot and the constant is written there where the `load` was. A
+  chain (a `store` of a promoted `load`) is followed by the pass, not the generator: the walk of the dominator tree meets the
+  `load` first, so the `store` stores what replaced it.
+- **Per function, one table, laid out once.** The side table is sized by `room(m)` from the most names, instructions, blocks
+  and edges any function of the module has, and `promote(m, s, func)` refills it for each function; a table smaller than
+  `room(m)` is a refusal (`more code than the room the code generator was given`). The `phi`s, their values and the dominance
+  frontiers go in a pool, the rest of the table: `room` gives it 6 cells an instruction, 4 an edge, 4 a block and 256, which
+  no function of the compiler comes near (section 17.8).
+- **What the pass cannot make sense of is left as it is**, which is always right: a block that does not end with `br`,
+  `switch`, `ret` or `unreachable` or has one before its end, a label that names no block, a first block that is jumped to,
+  a `store` of a promoted `load` that the walk has not met (no dominance: the module is not SSA), or a pool too small. Then
+  every instruction of that function stays, the code generator writes it as section 12 does, and it counts the function
+  (`llout.h_left`; none in the compiler's module).
+- **Blocks no jump reaches** are not walked: a promoted `load` there reads zero, a `store` there goes. A reached block's new
+  `phi` has a value (zero) for such a block that jumps to it, so the jump that is never taken is still written.
+- **Pruning computes the whole iterated frontier and keeps only where the variable is live in.** A block in the frontier
+  where it is not live has no `phi`, but still joins the worklist, so that what lies past it is found as in Cytron et al.
 
 What it is held to: `opt -passes=mem2reg` is the other implementation. The text it writes cannot be compared with ours (it
 names values its own way), so the comparison is the one D4 makes: every program of `tests/accept` and `examples`, and the
@@ -1074,6 +1105,10 @@ the instructions are `icmp`, and most are the condition of a `br`.
 
 `cancho build --backend native --no-registers` builds as sections 12 to 16 do, with neither `mem2reg` nor the allocation,
 so that a program that runs wrongly with them can be bisected to them. It is a flag of the command line, not of the language.
+*As built:* `build`, `run`, `test` and `check` take it, and only with `--backend native` (with the LLVM backend it is a usage
+error, status 2). The code generator is given an empty side table, so the pass is not run, and the code is the same words as
+before it existed: `tests/native/gen/tricky.s` is that code, and `tests/native/gen/vars-no-registers.s` is the code of a module
+the pass does change.
 
 ### 17.6 What will say it worked
 
@@ -1085,8 +1120,42 @@ image size of section 16.5, 1.71 MB for cancho-os, which must come under its 2 M
 
 ### 17.7 In slices
 
-1. `mem2reg`, the side table, its use by the generator, `--no-registers`, the differential run. Measured alone.
+1. `mem2reg`, the side table, its use by the generator, `--no-registers`, the differential run. Measured alone. **Done**:
+   section 17.8.
 2. Liveness, intervals, linear scan over `x19`-`x28` and `d8`-`d15`, register moves for `phi`s.
 3. The fused compare and branch.
 4. Caller-saved registers, if 2 leaves a third of the self-build time still to find.
+
+### 17.8 What was measured
+
+Slice 1 alone, at the commit that adds `compiler/native/mem2reg.cho`, on Linux x86-64; AArch64 code under `qemu-aarch64` 8.2.2 with
+`-L /usr/aarch64-linux-gnu`, programs linked by `aarch64-linux-gnu-gcc ... -lpthread -lm`. Nothing below was run on an AArch64
+machine; stage `native` of the gate and the CI job `native-self-build` were not run for it.
+
+```sh
+cancho test --std compiler/native/{llmod,llread,llbody,lltop,lllayout,llout,a64,a64sys,a64frame,a64call,a64gen,a64fn,mem2reg}.cho tests/native/mem2reg_test.cho
+cancho build F --std --backend native [--no-registers] --host linux-aarch64 --clang a64cc -o OUT   # and OUT run under qemu
+```
+
+| what | result |
+|---|---|
+| The pass over the compiler's own module (`--emit ll --host linux-aarch64 --backend native` of `compiler/cancho.files`: 3,885 functions) | **30,761 of 34,650 `alloca`s promoted**; 121,907 `load`s replaced, 41,433 `store`s removed, 12,518 new `phi`s. No function left as it is. 0.8 s with the reader |
+| Against the count of section 17.1 (32,499 of 34,086, on an older module) | that count was of every type. The same rule counted again by a script over this module: 33,070, of which 2,309 are aggregates this slice keeps in memory and **30,761 are scalars: the pass's number exactly** |
+| The side table for that module | 75,746 cells; the most of its pool any function used is 6,816 of 18,698 |
+| The compiler's object (`--emit obj`) with the pass and with `--no-registers` | 10,476,504 bytes against 12,277,640; its code and constants (`size`: text) 8,272,240 against 10,073,852, **17.9 % less**. Linked: 8,776,096 against 10,545,568 bytes. Making the object takes 10.2 s against 9.8 s |
+| `tests/accept` and `examples` (152 files), each built both ways and run under qemu, the output and the status compared | **149 the same**. 2 are built neither way: `audio_hello` and `aliasing_in_a_slice_of_references` are refused by the front end ("the compiler in cancho has no code for what is here"), the pass never sees them. 1 differed once: `process_group_kill` ended 0 with the pass and did not end in 20 s without it, in a run of four at a time. Run again, 16 times each with eight at a time, it ended 1 four times with the pass and twice without, and alone it passed five times of five both ways: a race of the program under qemu, the same in both builds |
+| The same 152 built with `--no-registers` (`--emit obj`) by this compiler and by the compiler of the commit before it | **150 the same bytes**; the 2 above refused by both |
+| `tests/native/gen/vars.ll` (front-end style: a swap through a third variable in a loop, a diamond, nested loops, `double` and `float`, `i1` `i8` `i16` through a `switch`, an alloca that escapes, a pointer variable, a block no jump reaches) | 703 words with the pass, 722 without; both linked and run, and both print what clang's build prints (`tests/native/gen/vars.printed`). `tricky.ll` has the same 1,581 words both ways (its two allocas are aggregates) |
+| The natively built compiler building the compiler (sources to linked program, `--backend native`), built with the pass and without it, under qemu, one after the other | 496 s with, 633 s without: **21.6 % less**. An earlier pair, the second of which shared the machine: 449 s and 589 s (23.8 %). The two stage-3 compilers and the one the x86-64 compiler built have the same `.text`, `.data` and `.rodata` |
+| Tables for the pass of every size below `room` | each a refusal, by the pass and by the code generator |
+| Every byte of two modules made each of thirteen and eight bytes, and every truncation, read, then the pass over each function and the code generated with it (about 10,000 modules) | none traps |
+| The pass broken on purpose three ways: pruning removed, the renaming's log not given back, the new `phi`s not copied when their block begins | the first two caught by the suite (one and three tests) and all three by `tests/commands/native_gen.sh` (the words of `vars.s`); the last two also make `vars.ll` print wrong numbers when run. A dead `phi` (the first) changes the code but not what the program prints, as it should |
+
+Measured against section 17.6: the self-build falls by about a fifth (21.6 % to 23.8 %), where the step as a whole must reach a
+third; slices 2 and 3 are where the rest is to come from. The object is 17.9 % smaller in code, not yet the image size N8 needs
+(section 16.5): cancho-os's image was not built for this.
+
+Two mistakes running found and no review: `alloc` is a name of cancho's prelude, which the type checker reports at its use and
+not as a name taken (the pass's allocation of the pool is `take`); and `--no-registers` was at first read as a file by the list
+of the program's files (`cliprog.files_of_args`), which only building a program with it showed.
 
