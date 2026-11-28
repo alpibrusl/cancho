@@ -480,6 +480,26 @@ report says `net_out("10.0.0.1:80")` (`tests/commands/freestanding.sh`, `a_lent_
 check itself was held, outside the compiler, to thirteen hosts, ports and bounds whose verdicts were read off `net.c`:
 it agreed on all of them.
 
+## 11d. The trap is a call, and the allocator is behind one pointer
+
+The first slice of cancho-os's `docs/programs.md` (a program that fails ends alone, and a program that waits), which
+changes nothing a program can see:
+
+- **`cancho_trap` is `noinline` on the bare target.** It was one `udf #0xc11f` that LLVM wrote in line at every check.
+  Now each function that can trap calls it: LLVM folds the checks of one function into one call, so the address a
+  trap is called from names the function, not the check. A lent system can later make that one function end the
+  program instead of the kernel. On other targets it is written as before.
+- **The allocator of `runtime/bare.ll` keeps its state in one record** of 52 words: where the next fresh memory
+  begins, the chunks given back, the 48 lists of the heap's blocks by size, and the two ends of the memory it hands out
+  (0 for the link's two symbols). `@cancho_bare_arena` points at it; null is the module's own, `@cancho_bare_own`.
+  Pointing it at another record is how a later slice gives a program its own block.
+
+Measured on cancho-os 0.0.54 (the LLVM backend): the image went from 865,952 to 808,544 bytes; its 8,560 `udf` are 1,
+reached by 609 `bl cancho_trap`, and no other branch reaches it (`llvm-objdump -d`). The kernel's `heap` check (600
+growing buffers, a block of 64 KiB made and given back 20,000 times, 0 bytes wrong), `fail trap` and `fail memory`, and
+`netout.sh`, `keys.sh`, `agents.sh`, `authority.sh` and a listing of 5,000 names over SSH pass as before.
+`freestanding`, `native_subset`, `duplication` and `regen` pass.
+
 ## 12. The discharge of §6, designed against the checker
 
 Built as written here; what was learned building it is marked "(built)". Written before the code, after

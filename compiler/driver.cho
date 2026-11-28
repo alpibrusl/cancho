@@ -339,7 +339,13 @@ fn build_module[&s, &x](st: &!s [int], text: &x [byte]) -> [] int {
     emit.str(st, "declare void @llvm.trap()\n");
     // Every trap is one instruction on each target, as the Rust backend writes it, so that a program stops with the same
     // signal (SIGILL) whichever compiler built it: `llvm.trap` is `brk` on arm64, which is SIGTRAP.
-    emit.str(st, "define void @cancho_trap() noreturn {\nentry:\n  call void asm sideeffect \"");
+    // Where there is no system it is not written in line: each place that traps calls the one function, which a lent system
+    // can then make end the program and not the kernel (cancho-os docs/programs.md, sections 3 and 9).
+    if st[61] == 3 {
+        emit.str(st, "define void @cancho_trap() noreturn noinline {\nentry:\n  call void asm sideeffect \"");
+    } else {
+        emit.str(st, "define void @cancho_trap() noreturn {\nentry:\n  call void asm sideeffect \"");
+    }
     if st[61] == 0 {
         emit.str(st, "ud2");
     } else {
