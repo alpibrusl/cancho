@@ -87,6 +87,7 @@ native/llprint.cho
 native/llread.cho
 native/lltop.cho
 native/mem2reg.cho
+native/regalloc.cho
 nativert.cho
 netcode.cho
 pass1.cho

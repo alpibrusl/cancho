@@ -6,10 +6,12 @@ module gen_dump;
 // `adrp x16, name`, `add x16, x16, :lo12:name`, and the two that go through the linker's table of addresses). It is how the code generator is read by a
 // person, how its tests compare what it writes with what it wrote, and how its code was run before there was an object writer: the output assembles.
 //
-//     cancho build tests/native/gen_dump.cho compiler/native/{llmod,llread,llbody,lltop,lllayout,llout,a64,a64sys,a64frame,a64call,a64gen,a64fn,mem2reg}.cho --std -o EXE
-//     EXE MODULE.ll [registers] > MODULE.s
+//     cancho build tests/native/gen_dump.cho compiler/native/{llmod,llread,llbody,lltop,lllayout,llout,a64,a64sys,a64frame,a64call,a64gen,a64fn,mem2reg,regalloc}.cho --std -o EXE
+//     EXE MODULE.ll [registers [counts]] > MODULE.s
 //
-// With `registers` the variables are made values first (`mem2reg.cho`, section 17); without, the code is that of `--no-registers`.
+// With `registers` the variables are made values first and the values given registers (`mem2reg.cho`, `regalloc.cho`, section 17); without, the code is
+// that of `--no-registers`. With `counts` the line on the standard error says too how many allocas were promoted, how many values were given a register,
+// how many that wanted one were not, and how many functions were left with none.
 // On the standard error: `ok: words W functions F relocations R`, or `read:` or `generate:`, the line of the module and the reason, with status 1.
 
 import std.buffer;
@@ -194,6 +196,17 @@ fn main(world: World) -> [] int {
                                         said = buffer.push_nat(h, said, out.functions(o));
                                         said = buffer.append(h, said, " relocations ");
                                         said = buffer.push_nat(h, said, out.relocations(o));
+                                        if arg_count(a) > 3 && bytes.equal(arg(a, 3), "counts") {
+                                            // What the variables made values and the registers came to (section 17.9).
+                                            said = buffer.append(h, said, " promoted ");
+                                            said = buffer.push_nat(h, said, o[out.h_promoted()]);
+                                            said = buffer.append(h, said, " allocated ");
+                                            said = buffer.push_nat(h, said, o[out.h_allocated()]);
+                                            said = buffer.append(h, said, " spilled ");
+                                            said = buffer.push_nat(h, said, o[out.h_spilled()]);
+                                            said = buffer.append(h, said, " without ");
+                                            said = buffer.push_nat(h, said, o[out.h_unallocated()]);
+                                        }
                                     }
                                 }
                                 unbox_slice(h, code);

@@ -1,0 +1,832 @@
+edition 7;
+module selfhost.regalloc;
+
+// regalloc.cho -- the values of a function given registers (`docs/native-backend.md` section 17.3), after `mem2reg.cho` has made its variables values: the
+// blocks the first reaches in reverse postorder, each instruction a position two after the one before; which values are live into and out of each block, by
+// the backward iteration to a fixed point over bit sets of the values; for each value one interval, from its definition to the last place it is live, which
+// takes in every loop it is live across because liveness does; and the intervals given registers in the order they begin (Poletto and Sarkar), the one that
+// ends last given back to its slot when there are too few. Only the registers a callee keeps: `x19` to `x28` for integers and pointers, `d8` to `d15` for
+// `float` and `double`. What it reads is the module and `mem2reg`'s part of the side table; what it writes is its own part of the same table, so that
+// `--no-registers` (an empty table) runs neither. Pure, and no trap on any module the reader read: a function whose values do not fit its part, or that
+// uses a value no definition comes before, has no registers, which is always right.
+//
+// A value is a local of the function: its names, then the new phis of `mem2reg` (`names + k`). A promoted `load` that is another local has no value of its
+// own: it is that local (an alias), as it has that local's slot. Values that never get a register: a type that is not an integer of at most 64 bits, a
+// pointer, `float` or `double`; an `alloca`'s address; a removed instruction; a label; a value nothing uses.
+
+import selfhost.llmod as lm;
+import selfhost.llread as lr;
+import selfhost.llbody as lb;
+import selfhost.mem2reg as m2;
+
+// ---- the cells, counted from the start of the allocator's part of the side table ----
+
+// 1 when the function last given has an allocation (0 none was made, 2 it did not fit).
+fn c_status() -> [] int {
+    return 0;
+}
+
+// Its values, blocks and the words of a bit set of its values; how many values were given a register and how many that wanted one were not; the
+// registers used (bit `r` for `x<r>`, bit `32 + r` for `d<r>`); how many positions the order has.
+fn c_values() -> [] int {
+    return 1;
+}
+
+fn c_blocks() -> [] int {
+    return 2;
+}
+
+fn c_words() -> [] int {
+    return 3;
+}
+
+fn c_allocated() -> [] int {
+    return 4;
+}
+
+fn c_spilled() -> [] int {
+    return 5;
+}
+
+fn c_used() -> [] int {
+    return 6;
+}
+
+fn c_positions() -> [] int {
+    return 7;
+}
+
+// Where each array begins, from the start of the part: by value its kind (0 none, 1 a general register, 2 a floating-point one; 4 added when it is used),
+// the value it is (itself, or the local an alias is), where its interval begins and ends (-1 for none), its register (-1 for none), the next value that
+// begins where it does; by block (its number in the text) where it begins and ends in the order; four bit sets a block (live in, live out, used before it is
+// defined there, defined there); by position the first value that begins there; and the intervals that hold a register.
+fn c_kind() -> [] int {
+    return 8;
+}
+
+fn c_alias() -> [] int {
+    return 9;
+}
+
+fn c_start() -> [] int {
+    return 10;
+}
+
+fn c_end() -> [] int {
+    return 11;
+}
+
+fn c_reg() -> [] int {
+    return 12;
+}
+
+fn c_next() -> [] int {
+    return 13;
+}
+
+fn c_bstart() -> [] int {
+    return 14;
+}
+
+fn c_bend() -> [] int {
+    return 15;
+}
+
+fn c_in() -> [] int {
+    return 16;
+}
+
+fn c_out() -> [] int {
+    return 17;
+}
+
+fn c_gen() -> [] int {
+    return 18;
+}
+
+fn c_kill() -> [] int {
+    return 19;
+}
+
+fn c_head() -> [] int {
+    return 20;
+}
+
+fn c_active() -> [] int {
+    return 21;
+}
+
+fn head_cells() -> [] int {
+    return 32;
+}
+
+// The bits that say which registers there are: `x19` to `x28`, and `d8` to `d15` (bits 40 to 47).
+fn general_mask() -> [] int {
+    return (1 << 29) - (1 << 19);
+}
+
+fn float_mask() -> [] int {
+    return (1 << 48) - (1 << 40);
+}
+
+// ---- cells ----
+
+fn top[&s](s: &s [int], c: int) -> [] int {
+    if m2.alloc_cells(s) < head_cells() {
+        return 0;
+    }
+    return lm.cell(s, m2.alloc_base(s) + c);
+}
+
+fn set_top[&s](s: &!s [int], c: int, value: int) -> [] int {
+    let at = m2.alloc_base(s) + c;
+    if m2.alloc_cells(s) >= head_cells() && at >= 0 && at < len(s) {
+        s[at] = value;
+    }
+    return 0;
+}
+
+// Cell `k` of the array that begins at the offset in header cell `c`: 0 outside the part.
+fn get[&s](s: &s [int], c: int, k: int) -> [] int {
+    let off = top(s, c);
+    if k < 0 || off < head_cells() || off + k >= m2.alloc_cells(s) {
+        return 0;
+    }
+    return lm.cell(s, m2.alloc_base(s) + off + k);
+}
+
+fn put[&s](s: &!s [int], c: int, k: int, value: int) -> [] int {
+    let off = top(s, c);
+    let at = m2.alloc_base(s) + off + k;
+    if k >= 0 && off >= head_cells() && off + k < m2.alloc_cells(s) && at < len(s) {
+        s[at] = value;
+    }
+    return 0;
+}
+
+// Bit `v` of the set of block `b` in the array of header cell `c`, and the same set.
+fn has[&s](s: &s [int], c: int, b: int, v: int) -> [] bool {
+    let w = top(s, c_words());
+    if v < 0 || v >= top(s, c_values()) {
+        return false;
+    }
+    return get(s, c, b * w + v / 64) >> v % 64 & 1 == 1;
+}
+
+fn add[&s](s: &!s [int], c: int, b: int, v: int) -> [] int {
+    let w = top(s, c_words());
+    if v < 0 || v >= top(s, c_values()) {
+        return 0;
+    }
+    let k = b * w + v / 64;
+    return put(s, c, k, get(s, c, k) | 1 << v % 64);
+}
+
+// ---- the module ----
+
+fn op_of[&m](m: &m [int], rec: int) -> [] int {
+    return lm.cell(m, rec + 2);
+}
+
+fn opnd(rec: int, k: int) -> [] int {
+    return rec + lb.instr_head() + 4 * k;
+}
+
+fn count_of[&m](m: &m [int], rec: int) -> [] int {
+    return lm.cell(m, rec + 9);
+}
+
+// The register a value of type `ty` would have: 1 general, 2 floating point, 0 none.
+pub fn class_of[&m](m: &m [int], ty: int) -> [] int {
+    let t = lm.resolved(m, ty);
+    let kind = lm.type_kind(m, t);
+    if kind == lm.k_ptr() {
+        return 1;
+    }
+    if kind == lm.k_int() && lm.type_count(m, t) >= 1 && lm.type_count(m, t) <= 64 {
+        return 1;
+    }
+    if kind == lm.k_float() || kind == lm.k_double() {
+        return 2;
+    }
+    return 0;
+}
+
+// The value local `id` is (an alias is the local it shares), or -1.
+fn value[&s](s: &s [int], id: int) -> [] int {
+    if id < 0 || id >= top(s, c_values()) {
+        return 0 - 1;
+    }
+    return get(s, c_alias(), id);
+}
+
+fn kind[&s](s: &s [int], v: int) -> [] int {
+    if v < 0 || v >= top(s, c_values()) {
+        return 0;
+    }
+    return get(s, c_kind(), v) & 3;
+}
+
+// ---- the room ----
+
+// The cells a function of `u` values, `nb` blocks and `ni` instructions needs.
+fn need(u: int, nb: int, ni: int) -> [] int {
+    let words = (u + 63) / 64;
+    return head_cells() + 7 * u + 2 * nb + 4 * nb * words + 2 * (ni + nb) + 8 + 64;
+}
+
+// ---- what it says ----
+
+// For the function last given: 1 when it has an allocation; how many values were given a register, how many wanted one and were not; the registers used.
+pub fn status[&s](s: &s [int]) -> [] int {
+    return top(s, c_status());
+}
+
+pub fn allocated[&s](s: &s [int]) -> [] int {
+    return top(s, c_allocated());
+}
+
+pub fn spilled[&s](s: &s [int]) -> [] int {
+    return top(s, c_spilled());
+}
+
+pub fn used[&s](s: &s [int]) -> [] int {
+    return top(s, c_used());
+}
+
+// The register of local `id` (`x<r>` or `d<r>` by its type), or -1: it is in its slot.
+pub fn register[&s](s: &s [int], id: int) -> [] int {
+    if status(s) != 1 {
+        return 0 - 1;
+    }
+    let v = value(s, id);
+    if v < 0 {
+        return 0 - 1;
+    }
+    return get(s, c_reg(), v);
+}
+
+// Where the interval of local `id` begins and ends in the order (-1: it has none), and whether it is live into or out of block `b` (its number in the text).
+pub fn start[&s](s: &s [int], id: int) -> [] int {
+    let v = value(s, id);
+    if status(s) != 1 || v < 0 {
+        return 0 - 1;
+    }
+    return get(s, c_start(), v);
+}
+
+pub fn end[&s](s: &s [int], id: int) -> [] int {
+    let v = value(s, id);
+    if status(s) != 1 || v < 0 {
+        return 0 - 1;
+    }
+    return get(s, c_end(), v);
+}
+
+pub fn live_in[&s](s: &s [int], b: int, id: int) -> [] bool {
+    return status(s) == 1 && b >= 0 && b < top(s, c_blocks()) && has(s, c_in(), b, value(s, id));
+}
+
+pub fn live_out[&s](s: &s [int], b: int, id: int) -> [] bool {
+    return status(s) == 1 && b >= 0 && b < top(s, c_blocks()) && has(s, c_out(), b, value(s, id));
+}
+
+// Where block `b` begins in the order (-1 for a block the first does not reach).
+pub fn block_start[&s](s: &s [int], b: int) -> [] int {
+    if status(s) != 1 || b < 0 || b >= top(s, c_blocks()) {
+        return 0 - 1;
+    }
+    return get(s, c_bstart(), b);
+}
+
+// ---- the allocation ----
+
+// The function at `func`, after `mem2reg.promote` said 0 for it (`promoted`: the code generator uses what it made, its new phis and its actions; else every
+// instruction stays): its values given registers. Answers how many were given one (0 when none was made).
+pub fn allocate[&m, &s](m: &m [int], s: &!s [int], func: int, promoted: bool) -> [] int {
+    if m2.alloc_cells(s) < head_cells() {
+        return 0;
+    }
+    var c = 0;
+    while c < head_cells() {
+        set_top(s, c, 0);
+        c = c + 1;
+    }
+    if m2.status(s) != 0 || lm.cell(m, func) != lr.r_func() {
+        return 0;
+    }
+    let names = lm.cell(m, func + 9);
+    let n = lm.cell(m, names + 2);
+    var phis = 0;
+    if promoted {
+        phis = m2.phis(s);
+    }
+    let u = n + phis;
+    let nb = m2.blocks(s);
+    let ni = m2.instructions(s);
+    let reached = m2.reached_blocks(s);
+    if lm.cell(m, names) != lr.r_locals() || n < 0 || n != m2.names(s) || phis < 0 || nb <= 0 || reached <= 0 {
+        return 0;
+    }
+    if need(u, nb, ni) > m2.alloc_cells(s) {
+        set_top(s, c_status(), 2);
+        return 0;
+    }
+    let words = (u + 63) / 64;
+    let positions = 2 * (ni + nb) + 8;
+    set_top(s, c_values(), u);
+    set_top(s, c_blocks(), nb);
+    set_top(s, c_words(), words);
+    set_top(s, c_positions(), positions);
+    // The arrays, one after another.
+    var at = head_cells();
+    set_top(s, c_kind(), at);
+    at = at + u;
+    set_top(s, c_alias(), at);
+    at = at + u;
+    set_top(s, c_start(), at);
+    at = at + u;
+    set_top(s, c_end(), at);
+    at = at + u;
+    set_top(s, c_reg(), at);
+    at = at + u;
+    set_top(s, c_next(), at);
+    at = at + u;
+    set_top(s, c_bstart(), at);
+    at = at + nb;
+    set_top(s, c_bend(), at);
+    at = at + nb;
+    set_top(s, c_in(), at);
+    at = at + nb * words;
+    set_top(s, c_out(), at);
+    at = at + nb * words;
+    set_top(s, c_gen(), at);
+    at = at + nb * words;
+    set_top(s, c_kill(), at);
+    at = at + nb * words;
+    set_top(s, c_head(), at);
+    at = at + positions;
+    set_top(s, c_active(), at);
+    var k = 0;
+    while k < 4 * nb * words {
+        put(s, c_in(), k, 0);
+        k = k + 1;
+    }
+    k = 0;
+    while k < nb {
+        put(s, c_bstart(), k, 0 - 1);
+        put(s, c_bend(), k, 0 - 1);
+        k = k + 1;
+    }
+    kinds(m, s, func, n, phis, promoted);
+    sets(m, s, n, promoted);
+    if !live(s, func, m, n) {
+        return 0;
+    }
+    intervals(m, s, n, promoted);
+    scan(s, u, positions);
+    set_top(s, c_status(), 1);
+    return allocated(s);
+}
+
+// What each value is: its kind, and for an alias the local it is.
+fn kinds[&m, &s](m: &m [int], s: &!s [int], func: int, n: int, phis: int, promoted: bool) -> [] int {
+    let names = lm.cell(m, func + 9);
+    var id = 0;
+    while id < n {
+        let info = names + 3 + 4 * id;
+        let ty = lm.cell(m, info + 2);
+        let def = lm.cell(m, info + 1);
+        put(s, c_alias(), id, id);
+        put(s, c_kind(), id, 0);
+        put(s, c_start(), id, 0 - 1);
+        put(s, c_end(), id, 0 - 1);
+        put(s, c_reg(), id, 0 - 1);
+        var cls = 0;
+        if lm.cell(m, info + 3) == 0 && ty != lm.ty_void() {
+            cls = class_of(m, ty);
+        }
+        if cls > 0 && lm.cell(m, def) == lr.r_func() {
+            put(s, c_kind(), id, cls);
+        } else if cls > 0 && lm.cell(m, def) == lr.r_instr() && op_of(m, def) != lr.op_alloca() {
+            var what = m2.a_keep();
+            let i = m2.instruction_of(s, id);
+            if promoted {
+                what = m2.action(s, i);
+            }
+            if what == m2.a_keep() {
+                put(s, c_kind(), id, cls);
+            } else if what == m2.a_replaced() {
+                let r = m2.replacement(s, i);
+                if m2.kind(r) == m2.v_local() {
+                    put(s, c_alias(), id, m2.value_of(r));
+                } else {
+                    put(s, c_kind(), id, cls);
+                }
+            }
+        }
+        id = id + 1;
+    }
+    var k = 0;
+    while k < phis {
+        put(s, c_alias(), n + k, n + k);
+        put(s, c_kind(), n + k, class_of(m, m2.phi_type(s, k)));
+        put(s, c_start(), n + k, 0 - 1);
+        put(s, c_end(), n + k, 0 - 1);
+        put(s, c_reg(), n + k, 0 - 1);
+        k = k + 1;
+    }
+    // An alias of an alias is the local at the end of the chain; one that leads nowhere is no value.
+    let u = n + phis;
+    id = 0;
+    while id < n {
+        var t = get(s, c_alias(), id);
+        var steps = 0;
+        while t >= 0 && t < u && get(s, c_alias(), t) != t && steps <= u {
+            t = get(s, c_alias(), t);
+            steps = steps + 1;
+        }
+        if t < 0 || t >= u || steps > u {
+            t = 0 - 1;
+        }
+        put(s, c_alias(), id, t);
+        id = id + 1;
+    }
+    return 0;
+}
+
+// The values of the operand at `at` (four cells of the module): the value it is, or -1 for a constant or a value with no register to have.
+fn used_value[&m, &s](m: &m [int], s: &s [int], at: int) -> [] int {
+    if lm.cell(m, at + 1) != lr.o_local() {
+        return 0 - 1;
+    }
+    let v = value(s, lm.cell(m, at + 2));
+    if kind(s, v) == 0 {
+        return 0 - 1;
+    }
+    return v;
+}
+
+// The value a new phi has from a block, as a value here, or -1.
+fn phi_source[&s](s: &s [int], value_from: int) -> [] int {
+    if value_from < 0 || m2.kind(value_from) != m2.v_local() {
+        return 0 - 1;
+    }
+    let v = value(s, m2.value_of(value_from));
+    if kind(s, v) == 0 {
+        return 0 - 1;
+    }
+    return v;
+}
+
+// What each instruction kept defines (or -1), and what it does: 0 it is lowered, 1 it is a `phi` of the module, 2 a promoted `load` replaced by a constant (a
+// definition with no use), 3 nothing (removed, or a load that is another local).
+fn role[&m, &s](m: &m [int], s: &s [int], i: int, promoted: bool) -> [] int {
+    let rec = m2.record_of(s, i);
+    if promoted && m2.action(s, i) != m2.a_keep() {
+        if m2.action(s, i) == m2.a_replaced() && m2.kind(m2.replacement(s, i)) != m2.v_local() {
+            return 2;
+        }
+        return 3;
+    }
+    if op_of(m, rec) == lr.op_phi() {
+        return 1;
+    }
+    return 0;
+}
+
+fn defined[&m, &s](m: &m [int], s: &s [int], rec: int) -> [] int {
+    let id = lm.cell(m, rec + 4);
+    if id < 0 || id >= top(s, c_values()) || get(s, c_alias(), id) != id || kind(s, id) == 0 {
+        return 0 - 1;
+    }
+    return id;
+}
+
+// The values the edge from block `b` to block `t` uses (what each `phi` of `t` has from `b`), each either added to `b`'s set of the used (`mode` 0), unless
+// `b` defines it, or its interval taken to `pos` (1).
+fn edge[&m, &s](m: &m [int], s: &!s [int], b: int, t: int, n: int, promoted: bool, mode: int, pos: int) -> [] int {
+    let label = lm.cell(m, m2.block_record(s, b) + 2);
+    var i = m2.block_first(s, t);
+    let after = m2.block_after(s, t);
+    while i >= 0 && i < after && op_of(m, m2.record_of(s, i)) == lr.op_phi() {
+        let rec = m2.record_of(s, i);
+        var k = 0;
+        var found = false;
+        while k + 1 < count_of(m, rec) && !found {
+            if lm.cell(m, opnd(rec, k + 1) + 2) == label {
+                found = true;
+                mark(s, used_value(m, s, opnd(rec, k)), b, mode, pos);
+            }
+            k = k + 2;
+        }
+        i = i + 1;
+    }
+    if promoted {
+        var j = 0;
+        while j < m2.block_phis(s, t) {
+            mark(s, phi_source(s, m2.phi_value_from(s, m2.block_phi(s, t, j), b)), b, mode, pos);
+            j = j + 1;
+        }
+    }
+    return 0;
+}
+
+fn mark[&s](s: &!s [int], v: int, b: int, mode: int, pos: int) -> [] int {
+    if v < 0 {
+        return 0;
+    }
+    if mode == 0 {
+        if !has(s, c_kill(), b, v) {
+            add(s, c_gen(), b, v);
+        }
+        return 0;
+    }
+    put(s, c_kind(), v, get(s, c_kind(), v) | 4);
+    return extend(s, v, pos);
+}
+
+// Each block's values used before it defines them, and those it defines.
+fn sets[&m, &s](m: &m [int], s: &!s [int], n: int, promoted: bool) -> [] int {
+    var j = 0;
+    while j < m2.reached_blocks(s) {
+        let b = m2.in_order(s, j);
+        if promoted {
+            var p = 0;
+            while p < m2.block_phis(s, b) {
+                let v = n + m2.block_phi(s, b, p);
+                if kind(s, v) != 0 {
+                    add(s, c_kill(), b, v);
+                }
+                p = p + 1;
+            }
+        }
+        var i = m2.block_first(s, b);
+        let after = m2.block_after(s, b);
+        while i >= 0 && i < after {
+            let rec = m2.record_of(s, i);
+            let what = role(m, s, i, promoted);
+            if what == 0 {
+                var k = 0;
+                while k < count_of(m, rec) {
+                    let v = used_value(m, s, opnd(rec, k));
+                    if v >= 0 && !has(s, c_kill(), b, v) {
+                        add(s, c_gen(), b, v);
+                    }
+                    k = k + 1;
+                }
+            }
+            if what <= 2 {
+                let d = defined(m, s, rec);
+                if d >= 0 {
+                    add(s, c_kill(), b, d);
+                }
+            }
+            i = i + 1;
+        }
+        var k = 0;
+        while k < m2.successors(s, b) {
+            edge(m, s, b, m2.successor_of(s, b, k), n, promoted, 0, 0);
+            k = k + 1;
+        }
+        j = j + 1;
+    }
+    return 0;
+}
+
+// Live in and live out, by the backward iteration over the blocks in postorder to a fixed point; false when a value other than a parameter is live into
+// the first block (a use with no definition before it: the module is not in SSA form, and the function gets no registers).
+fn live[&m, &s](s: &!s [int], func: int, m: &m [int], n: int) -> [] bool {
+    let reached = m2.reached_blocks(s);
+    let words = top(s, c_words());
+    var changed = true;
+    var rounds = 0;
+    while changed {
+        changed = false;
+        rounds = rounds + 1;
+        if rounds > reached + 3 {
+            return false;
+        }
+        var j = reached - 1;
+        while j >= 0 {
+            let b = m2.in_order(s, j);
+            var w = 0;
+            while w < words {
+                var out_w = 0;
+                var k = 0;
+                while k < m2.successors(s, b) {
+                    out_w = out_w | get(s, c_in(), m2.successor_of(s, b, k) * words + w);
+                    k = k + 1;
+                }
+                let in_w = get(s, c_gen(), b * words + w) | out_w & (get(s, c_kill(), b * words + w) ^ 0 - 1);
+                if in_w != get(s, c_in(), b * words + w) || out_w != get(s, c_out(), b * words + w) {
+                    changed = true;
+                    put(s, c_in(), b * words + w, in_w);
+                    put(s, c_out(), b * words + w, out_w);
+                }
+                w = w + 1;
+            }
+            j = j - 1;
+        }
+    }
+    let first = m2.in_order(s, 0);
+    let names = lm.cell(m, func + 9);
+    var v = 0;
+    while v < top(s, c_values()) {
+        if has(s, c_in(), first, v) && (v >= n || lm.cell(m, lm.cell(m, names + 3 + 4 * v + 1)) != lr.r_func()) {
+            return false;
+        }
+        v = v + 1;
+    }
+    return true;
+}
+
+// The interval of value `v` taken to `pos`.
+fn extend[&s](s: &!s [int], v: int, pos: int) -> [] int {
+    if v < 0 || v >= top(s, c_values()) {
+        return 0;
+    }
+    let a = get(s, c_start(), v);
+    if a < 0 || pos < a {
+        put(s, c_start(), v, pos);
+    }
+    if get(s, c_end(), v) < pos {
+        put(s, c_end(), v, pos);
+    }
+    return 0;
+}
+
+// Each value's interval: the blocks in reverse postorder, each beginning at a position and each instruction two after the one before. A value is defined at
+// its instruction's position and one (a `phi`, and a value live into the block, at the block's), used at it, and used by an edge one after the block's last
+// instruction, where the values live out of it are too.
+fn intervals[&m, &s](m: &m [int], s: &!s [int], n: int, promoted: bool) -> [] int {
+    let words = top(s, c_words());
+    var p = 0;
+    var j = 0;
+    while j < m2.reached_blocks(s) {
+        let b = m2.in_order(s, j);
+        let begins = p;
+        put(s, c_bstart(), b, begins);
+        p = p + 2;
+        var w = 0;
+        while w < words {
+            var bits = get(s, c_in(), b * words + w);
+            var v = w * 64;
+            while bits != 0 {
+                if bits & 1 == 1 {
+                    extend(s, v, begins);
+                }
+                bits = bits >> 1 & 0x7fffffffffffffff;
+                v = v + 1;
+            }
+            w = w + 1;
+        }
+        if promoted {
+            var q = 0;
+            while q < m2.block_phis(s, b) {
+                let v = n + m2.block_phi(s, b, q);
+                if kind(s, v) != 0 {
+                    extend(s, v, begins);
+                }
+                q = q + 1;
+            }
+        }
+        var i = m2.block_first(s, b);
+        let after = m2.block_after(s, b);
+        while i >= 0 && i < after {
+            let rec = m2.record_of(s, i);
+            let what = role(m, s, i, promoted);
+            let here = p;
+            p = p + 2;
+            if what == 0 {
+                var k = 0;
+                while k < count_of(m, rec) {
+                    mark(s, used_value(m, s, opnd(rec, k)), b, 1, here);
+                    k = k + 1;
+                }
+            }
+            let d = defined(m, s, rec);
+            if what == 1 {
+                extend(s, d, begins);
+            } else if what <= 2 {
+                extend(s, d, here + 1);
+            }
+            i = i + 1;
+        }
+        put(s, c_bend(), b, p - 2);
+        w = 0;
+        while w < words {
+            var bits = get(s, c_out(), b * words + w);
+            var v = w * 64;
+            while bits != 0 {
+                if bits & 1 == 1 {
+                    extend(s, v, p - 1);
+                }
+                bits = bits >> 1 & 0x7fffffffffffffff;
+                v = v + 1;
+            }
+            w = w + 1;
+        }
+        var k = 0;
+        while k < m2.successors(s, b) {
+            edge(m, s, b, m2.successor_of(s, b, k), n, promoted, 1, p - 1);
+            k = k + 1;
+        }
+        j = j + 1;
+    }
+    return 0;
+}
+
+// Linear scan: the intervals by where they begin; at each, those that have ended give their registers back; if none of its kind is free, the one active
+// that ends last is given back to its slot, unless the new one ends later, which then has none.
+fn scan[&s](s: &!s [int], u: int, positions: int) -> [] int {
+    var p = 0;
+    while p < positions {
+        put(s, c_head(), p, 0 - 1);
+        p = p + 1;
+    }
+    // Pushed from the last value, so that each list is in the order of the values.
+    var v = u - 1;
+    while v >= 0 {
+        let a = get(s, c_start(), v);
+        if get(s, c_kind(), v) & 4 != 0 && kind(s, v) != 0 && a >= 0 && a < positions && get(s, c_end(), v) > a {
+            put(s, c_next(), v, get(s, c_head(), a));
+            put(s, c_head(), a, v);
+        }
+        v = v - 1;
+    }
+    var free = general_mask() | float_mask();
+    var active = 0;
+    var given = 0;
+    var spilt = 0;
+    var used_regs = 0;
+    p = 0;
+    while p < positions {
+        var w = get(s, c_head(), p);
+        while w >= 0 {
+            // The intervals that ended before this one begins.
+            var k = 0;
+            while k < active {
+                let a = get(s, c_active(), k);
+                if get(s, c_end(), a) < p {
+                    free = free | reg_bit(get(s, c_reg(), a), kind(s, a));
+                    active = active - 1;
+                    put(s, c_active(), k, get(s, c_active(), active));
+                } else {
+                    k = k + 1;
+                }
+            }
+            var mask = general_mask();
+            if kind(s, w) == 2 {
+                mask = float_mask();
+            }
+            if free & mask != 0 {
+                var bit = 0;
+                while free & mask & 1 << bit == 0 {
+                    bit = bit + 1;
+                }
+                free = free & (1 << bit ^ 0 - 1);
+                used_regs = used_regs | 1 << bit;
+                put(s, c_reg(), w, bit & 31);
+                put(s, c_active(), active, w);
+                active = active + 1;
+                given = given + 1;
+            } else {
+                // The active interval of this kind that ends last.
+                var last = 0 - 1;
+                k = 0;
+                while k < active {
+                    let a = get(s, c_active(), k);
+                    if kind(s, a) == kind(s, w) && (last < 0 || get(s, c_end(), a) > get(s, c_end(), get(s, c_active(), last))) {
+                        last = k;
+                    }
+                    k = k + 1;
+                }
+                spilt = spilt + 1;
+                if last >= 0 && get(s, c_end(), get(s, c_active(), last)) > get(s, c_end(), w) {
+                    let a = get(s, c_active(), last);
+                    put(s, c_reg(), w, get(s, c_reg(), a));
+                    put(s, c_reg(), a, 0 - 1);
+                    put(s, c_active(), last, w);
+                }
+            }
+            w = get(s, c_next(), w);
+        }
+        p = p + 1;
+    }
+    set_top(s, c_allocated(), given);
+    set_top(s, c_spilled(), spilt);
+    set_top(s, c_used(), used_regs);
+    return 0;
+}
+
+// The bit of register `r` of kind `k` in the masks above.
+fn reg_bit(r: int, k: int) -> [] int {
+    if r < 0 {
+        return 0;
+    }
+    if k == 2 {
+        return 1 << 32 + r;
+    }
+    return 1 << r;
+}

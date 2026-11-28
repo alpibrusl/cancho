@@ -2,7 +2,7 @@
 // stored, allocas that are not promoted, nested loops (where a `phi` is pruned because the variable is not live), a use before its definition; a table too
 // small is a refusal at every size; and no damaged byte and no truncation of a module, once read, reaches a trap in the pass or in the code generator with it.
 //
-//     cancho test --std compiler/native/llmod.cho compiler/native/llread.cho compiler/native/llbody.cho compiler/native/lltop.cho compiler/native/lllayout.cho compiler/native/llout.cho compiler/native/a64.cho compiler/native/a64sys.cho compiler/native/a64frame.cho compiler/native/a64call.cho compiler/native/a64gen.cho compiler/native/a64fn.cho compiler/native/mem2reg.cho tests/native/mem2reg_test.cho
+//     cancho test --std compiler/native/llmod.cho compiler/native/llread.cho compiler/native/llbody.cho compiler/native/lltop.cho compiler/native/lllayout.cho compiler/native/llout.cho compiler/native/a64.cho compiler/native/a64sys.cho compiler/native/a64frame.cho compiler/native/a64call.cho compiler/native/a64gen.cho compiler/native/a64fn.cho compiler/native/mem2reg.cho compiler/native/regalloc.cho tests/native/mem2reg_test.cho
 
 import std.test;
 import selfhost.llmod as lm;

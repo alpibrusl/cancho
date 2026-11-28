@@ -19,6 +19,7 @@ import selfhost.a64frame as fr;
 import selfhost.a64call as cc;
 import selfhost.a64gen as gen;
 import selfhost.mem2reg as m2;
+import selfhost.regalloc as ra;
 
 fn op_of[&m](m: &m [int], rec: int) -> [] int {
     return lm.cell(m, rec + 2);
@@ -94,6 +95,10 @@ fn frame[&m, &s, &o](m: &m [int], s: &s [int], o: &!o [int], func: int, promoted
     }
     o[out.h_out_area()] = (stack + 15) / 16 * 16;
     o[out.h_frame()] = o[out.h_out_area()];
+    if o[out.h_saved()] != 0 {
+        // The registers the allocation uses and the caller keeps, just above the arguments, where a pair of them is reached in one instruction.
+        o[out.h_save_at()] = out.reserve(o, 8 * saved_count(o[out.h_saved()]), 16);
+    }
     o[cc.h_scratch()] = out.reserve(o, largest, 16);
     if cc.in_memory(m, lm.cell(m, func + 5)) {
         o[out.h_sret()] = out.reserve(o, 8, 8);
@@ -175,6 +180,7 @@ fn entry[&m, &o](m: &m [int], o: &!o [int], func: int) -> [] int {
         fr.mov_imm(o, 17, size);
         out.emit(o, a64.addsub_ext(1, 1, 0, 31, 31, 17, 3, 0));
     }
+    saved(o, 0);
     if o[out.h_sret()] >= 0 {
         fr.access(o, 3, 0, 0, 8, fr.sp(), o[out.h_sret()]);
     }
@@ -184,7 +190,9 @@ fn entry[&m, &o](m: &m [int], o: &!o [int], func: int) -> [] int {
         let p = func + lt.func_head() + 3 * k;
         let ty = lm.cell(m, p);
         let id = lm.cell(m, p + 1);
-        if id >= 0 && out.slot(o, id) >= 0 {
+        if id >= 0 && out.slot(o, id) >= 0 && out.reg(o, id) >= 0 && cc.one_register(m, ty) {
+            cc.from_register(m, o, ty, out.reg(o, id), cc.w_parameter());
+        } else if id >= 0 && out.slot(o, id) >= 0 {
             fr.add_offset(o, 14, fr.sp(), out.slot(o, id));
             cc.walk(m, o, ty, 0, cc.w_parameter(), 0);
         } else {
@@ -196,8 +204,50 @@ fn entry[&m, &o](m: &m [int], o: &!o [int], func: int) -> [] int {
     return 0;
 }
 
-// The end: the frame given back, the two registers restored, and the return.
+// How many registers the mask `saved` (bit `r` for `x<r>`, `32 + r` for `d<r>`) has.
+fn saved_count(saved: int) -> [] int {
+    var n = 0;
+    var bit = 0;
+    while bit < 64 {
+        if saved >> bit & 1 == 1 {
+            n = n + 1;
+        }
+        bit = bit + 1;
+    }
+    return n;
+}
+
+// The registers the allocation uses that a caller keeps, written to their place in the frame (`load` 0) or read back from it (1): in pairs where two of a
+// kind are next to each other and the offset is one a pair reaches.
+fn saved[&o](o: &!o [int], load: int) -> [] int {
+    let mask = o[out.h_saved()];
+    var at = o[out.h_save_at()];
+    var pending = 0 - 1;
+    var bit = 0;
+    while bit < 64 {
+        if mask >> bit & 1 == 1 {
+            if pending >= 0 && pending >> 5 == bit >> 5 && (at - 8) / 8 < 64 {
+                out.emit(o, a64.load_store_pair(1, bit >> 5, 2, load, pending & 31, bit & 31, fr.sp(), (at - 8) / 8));
+                pending = 0 - 1;
+            } else {
+                if pending >= 0 {
+                    fr.access(o, 3, pending >> 5, load, pending & 31, fr.sp(), at - 8);
+                }
+                pending = bit;
+            }
+            at = at + 8;
+        }
+        bit = bit + 1;
+    }
+    if pending >= 0 {
+        fr.access(o, 3, pending >> 5, load, pending & 31, fr.sp(), at - 8);
+    }
+    return 0;
+}
+
+// The end: the registers kept for the caller restored, the frame given back, the two registers restored, and the return.
 fn leave[&o](o: &!o [int]) -> [] int {
+    saved(o, 1);
     out.emit(o, a64.addsub_imm(1, 0, 0, 31, 29, 0, 0));
     out.emit(o, a64.load_store_pair(1, 0, 1, 1, 29, 30, 31, 2));
     out.emit(o, a64.branch_reg(2, 30));
@@ -229,6 +279,9 @@ fn put_value[&t, &m, &o](text: &t [byte], m: &m [int], o: &!o [int], value: int,
         if slot < 0 {
             return out.fail(o, out.why_operand());
         }
+        if fr.spill(m, o, m2.value_of(value), ty, 14, 0) {
+            return 0;
+        }
         fr.access(o, size, 0, 1, 9, fr.sp(), slot);
         return fr.access(o, size, 0, 0, 9, 14, 0);
     }
@@ -241,11 +294,15 @@ fn put_value[&t, &m, &o](text: &t [byte], m: &m [int], o: &!o [int], value: int,
 // A jump from the block being written (number `from`) to the block of label `id`: each `phi` of that block is given the value it has when it is come to from
 // here (into its second slot: the block moves them all into the first when it begins, so that one `phi` may read another's old value), the new `phi`s of the
 // side table too, and then the branch.
+//
+// A `phi` that has a register is given its value here, not through its second slot: the moves of all of them are one parallel copy (each reads what was there
+// before any is written), made after the `phi`s in memory have been given theirs, which read the same old values.
 fn jump[&t, &m, &s, &o](text: &t [byte], m: &m [int], s: &s [int], o: &!o [int], func: int, id: int, promoted: bool, from: int) -> [] int {
     let block = block_of(m, func, id);
     if block == 0 || lm.cell(m, block) != lr.r_block() {
         return out.fail(o, out.why_operand());
     }
+    var moves = 0;
     var at = instruction_at(m, next(m, block));
     while at != 0 && op_of(m, at) == lr.op_phi() && !out.failed(o) {
         let phi = lm.cell(m, at + 4);
@@ -254,8 +311,12 @@ fn jump[&t, &m, &s, &o](text: &t [byte], m: &m [int], s: &s [int], o: &!o [int],
         while k + 1 < lm.cell(m, at + 9) && !found {
             if lm.cell(m, opnd(m, at, k + 1) + 2) == o[cc.h_block()] {
                 found = true;
-                fr.add_offset(o, 14, fr.sp(), out.phi_slot(o, phi));
-                fr.store_value(text, m, o, opnd(m, at, k), lm.cell(m, at + 6), 0, 0);
+                if out.reg(o, phi) >= 0 {
+                    moves = add_move(m, o, moves, phi, lm.cell(m, at + 6), 0, opnd(m, at, k), fr.register_of(m, o, opnd(m, at, k)));
+                } else {
+                    fr.add_offset(o, 14, fr.sp(), out.phi_slot(o, phi));
+                    fr.store_value(text, m, o, opnd(m, at, k), lm.cell(m, at + 6), 0, 0);
+                }
             }
             k = k + 2;
         }
@@ -274,13 +335,166 @@ fn jump[&t, &m, &s, &o](text: &t [byte], m: &m [int], s: &s [int], o: &!o [int],
             if value < 0 {
                 return out.fail(o, out.why_operand());
             }
-            fr.add_offset(o, 14, fr.sp(), out.phi_slot(o, m2.names(s) + k));
-            put_value(text, m, o, value, m2.phi_type(s, k));
+            let phi = m2.names(s) + k;
+            if out.reg(o, phi) >= 0 {
+                var r = 0 - 1;
+                if m2.kind(value) == m2.v_local() {
+                    r = out.reg(o, m2.value_of(value));
+                }
+                moves = add_move(m, o, moves, phi, m2.phi_type(s, k), 1, value, r);
+            } else {
+                fr.add_offset(o, 14, fr.sp(), out.phi_slot(o, phi));
+                put_value(text, m, o, value, m2.phi_type(s, k));
+            }
             j = j + 1;
         }
     }
+    parallel_copy(text, m, o, moves);
     out.fixup(o, out.here(o), id);
     out.emit(o, a64.branch(0, 0));
+    return 0;
+}
+
+// ---- the moves of a jump into the `phi`s that have registers ----
+//
+// Five cells a move, in the output's room for them: the register it writes (`d` ones 32 on, so that the two kinds are one set of numbers), the register it
+// reads (the same way; -1: what it reads is in memory or a constant), the type, and what it reads: 0 and an operand of the module, or 1 and a value of the
+// side table (`mem2reg.cho`).
+
+fn move_cell[&o](o: &o [int], k: int, c: int) -> [] int {
+    return lm.cell(o, o[out.h_moves()] + 5 * k + c);
+}
+
+fn set_move[&o](o: &!o [int], k: int, c: int, value: int) -> [] int {
+    if k < 0 || 5 * k + c >= out.moves_room() {
+        return out.fail(o, out.why_room());
+    }
+    o[o[out.h_moves()] + 5 * k + c] = value;
+    return 0;
+}
+
+// The register `r` of a value of type `ty` as a number of the moves.
+fn numbered[&m](m: &m [int], ty: int, r: int) -> [] int {
+    if r >= 0 && fr.float_kind(m, ty) >= 0 {
+        return r + 32;
+    }
+    return r;
+}
+
+// A move into the register of `phi`, of type `ty`, from what `kind` and `what` say, which is in the register `r` (-1: not one): how many moves there are now.
+fn add_move[&m, &o](m: &m [int], o: &!o [int], moves: int, phi: int, ty: int, kind: int, what: int, r: int) -> [] int {
+    let d = numbered(m, ty, out.reg(o, phi));
+    let from = numbered(m, ty, r);
+    if d == from {
+        return moves;
+    }
+    set_move(o, moves, 0, d);
+    set_move(o, moves, 1, from);
+    set_move(o, moves, 2, ty);
+    set_move(o, moves, 3, kind);
+    set_move(o, moves, 4, what);
+    return moves + 1;
+}
+
+// Is a register any of the first `moves` moves still has to read?
+fn read_by[&o](o: &o [int], moves: int, r: int) -> [] bool {
+    var k = 0;
+    while k < moves {
+        if move_cell(o, k, 1) == r && move_cell(o, k, 0) >= 0 {
+            return true;
+        }
+        k = k + 1;
+    }
+    return false;
+}
+
+// Move `k` made: what it reads into its register.
+fn make_move[&t, &m, &o](text: &t [byte], m: &m [int], o: &!o [int], k: int) -> [] int {
+    let d = move_cell(o, k, 0);
+    let from = move_cell(o, k, 1);
+    let ty = move_cell(o, k, 2);
+    let what = move_cell(o, k, 4);
+    if from >= 32 {
+        return fr.fmov(o, d - 32, from - 32);
+    }
+    if from >= 0 {
+        return fr.mov(o, d, from);
+    }
+    if move_cell(o, k, 3) == 0 {
+        if d >= 32 {
+            return fr.operand_fp(m, o, what, d - 32);
+        }
+        return fr.operand(m, o, what, d, false);
+    }
+    // A value of the side table that is in no register: zero, a local in its slot, or an operand of the module.
+    if m2.kind(what) == m2.v_operand() {
+        if d >= 32 {
+            return fr.operand_fp(m, o, m2.value_of(what), d - 32);
+        }
+        return fr.operand(m, o, m2.value_of(what), d, false);
+    }
+    if m2.kind(what) == m2.v_local() {
+        let slot = out.slot(o, m2.value_of(what));
+        if slot < 0 {
+            return out.fail(o, out.why_operand());
+        }
+        if d >= 32 {
+            return fr.access(o, 2 + fr.float_kind(m, ty), 1, 1, d - 32, fr.sp(), slot);
+        }
+        return fr.load_local(m, o, ty, d, m2.value_of(what), false);
+    }
+    if d >= 32 {
+        out.emit(o, a64.fp_int(1, 1, 5, d - 32, 31));
+        return 0;
+    }
+    return fr.mov(o, d, 31);
+}
+
+// The moves made as one parallel copy: each whose register no other still reads, until none is left; when every one left is read by another, they are
+// cycles of registers, and one register of one is kept in `x17` (or `d17`) while the cycle is undone. The text has the proof that this is all it takes.
+fn parallel_copy[&t, &m, &o](text: &t [byte], m: &m [int], o: &!o [int], moves: int) -> [] int {
+    var left = moves;
+    var rounds = 0;
+    while left > 0 && !out.failed(o) && rounds <= 4 * moves + 4 {
+        rounds = rounds + 1;
+        var made = false;
+        var k = 0;
+        while k < moves {
+            let d = move_cell(o, k, 0);
+            if d >= 0 && !read_by(o, moves, d) {
+                make_move(text, m, o, k);
+                set_move(o, k, 0, 0 - 1);
+                left = left - 1;
+                made = true;
+            }
+            k = k + 1;
+        }
+        if !made && left > 0 {
+            // A cycle: the first move left gives what its register holds to the scratch register, which those that read it read instead.
+            k = 0;
+            while k < moves && move_cell(o, k, 0) < 0 {
+                k = k + 1;
+            }
+            let d = move_cell(o, k, 0);
+            var temp = 17;
+            if d >= 32 {
+                temp = 49;
+                fr.fmov(o, 17, d - 32);
+            } else {
+                fr.mov(o, 17, d);
+            }
+            var j = 0;
+            while j < moves {
+                if move_cell(o, j, 0) >= 0 && move_cell(o, j, 1) == d {
+                    set_move(o, j, 1, temp);
+                }
+                j = j + 1;
+            }
+        }
+    }
+    if left > 0 {
+        return out.fail(o, out.why_room());
+    }
     return 0;
 }
 
@@ -294,18 +508,22 @@ fn begin_block[&m, &s, &o](m: &m [int], s: &s [int], o: &!o [int], block: int, p
     var at = instruction_at(m, next(m, block));
     while at != 0 && op_of(m, at) == lr.op_phi() && !out.failed(o) {
         let phi = lm.cell(m, at + 4);
-        fr.add_offset(o, 13, fr.sp(), out.phi_slot(o, phi));
-        fr.add_offset(o, 14, fr.sp(), out.slot(o, phi));
-        fr.copy(o, ly.size_of(m, lm.cell(m, at + 6)), 8);
+        if out.reg(o, phi) < 0 {
+            fr.add_offset(o, 13, fr.sp(), out.phi_slot(o, phi));
+            fr.add_offset(o, 14, fr.sp(), out.slot(o, phi));
+            fr.copy(o, ly.size_of(m, lm.cell(m, at + 6)), 8);
+        }
         at = instruction_at(m, next(m, at));
     }
     if promoted {
         var j = 0;
         while j < m2.block_phis(s, b) && !out.failed(o) {
             let k = m2.block_phi(s, b, j);
-            fr.add_offset(o, 13, fr.sp(), out.phi_slot(o, m2.names(s) + k));
-            fr.add_offset(o, 14, fr.sp(), out.slot(o, m2.names(s) + k));
-            fr.copy(o, ly.size_of(m, m2.phi_type(s, k)), 8);
+            if out.reg(o, m2.names(s) + k) < 0 {
+                fr.add_offset(o, 13, fr.sp(), out.phi_slot(o, m2.names(s) + k));
+                fr.add_offset(o, 14, fr.sp(), out.slot(o, m2.names(s) + k));
+                fr.copy(o, ly.size_of(m, m2.phi_type(s, k)), 8);
+            }
             j = j + 1;
         }
     }
@@ -321,6 +539,22 @@ fn replaced[&t, &m, &s, &o](text: &t [byte], m: &m [int], s: &s [int], o: &!o [i
     }
     if out.slot(o, id) < 0 {
         return out.fail(o, out.why_operand());
+    }
+    let r = out.reg(o, id);
+    if r >= 0 {
+        // Its register is given the constant.
+        let ty = lm.cell(m, rec + 6);
+        if m2.kind(value) == m2.v_operand() && fr.float_kind(m, ty) >= 0 {
+            return fr.operand_fp(m, o, m2.value_of(value), r);
+        }
+        if m2.kind(value) == m2.v_operand() {
+            return fr.operand(m, o, m2.value_of(value), r, false);
+        }
+        if fr.float_kind(m, ty) >= 0 {
+            out.emit(o, a64.fp_int(1, 1, 5, r, 31));
+            return 0;
+        }
+        return fr.mov(o, r, 31);
     }
     fr.add_offset(o, 14, fr.sp(), out.slot(o, id));
     return put_value(text, m, o, value, lm.cell(m, rec + 6));
@@ -342,7 +576,11 @@ fn control[&t, &m, &s, &o](text: &t [byte], m: &m [int], s: &s [int], o: &!o [in
         return fr.access(o, 3, 0, 0, 9, fr.sp(), out.slot(o, id));
     }
     if op == lr.op_ret() {
-        if n > 0 {
+        let r = fr.register_of(m, o, opnd(m, rec, 0));
+        if n > 0 && r >= 0 && o[out.h_sret()] < 0 && cc.one_register(m, lm.cell(m, opnd(m, rec, 0))) {
+            cc.reset(o);
+            cc.from_register(m, o, lm.cell(m, opnd(m, rec, 0)), r, cc.w_result_out());
+        } else if n > 0 {
             let ty = lm.cell(m, opnd(m, rec, 0));
             let place = fr.in_frame(text, m, o, opnd(m, rec, 0), ty, o[cc.h_scratch()]);
             if o[out.h_sret()] >= 0 {
@@ -362,10 +600,10 @@ fn control[&t, &m, &s, &o](text: &t [byte], m: &m [int], s: &s [int], o: &!o [in
             return jump(text, m, s, o, func, lm.cell(m, opnd(m, rec, 0) + 2), promoted, b);
         }
         // The condition's low bit: clear, over the jump to the first block and its `phi` values, to the jump to the second.
-        fr.operand(m, o, opnd(m, rec, 0), 9, false);
+        let c = fr.source(m, o, opnd(m, rec, 0), 9, false);
         let test = out.emit(o, 0);
         jump(text, m, s, o, func, lm.cell(m, opnd(m, rec, 1) + 2), promoted, b);
-        out.patch(o, test, a64.bit_branch(0, 9, 0, out.here(o) - test));
+        out.patch(o, test, a64.bit_branch(0, c, 0, out.here(o) - test));
         return jump(text, m, s, o, func, lm.cell(m, opnd(m, rec, 2) + 2), promoted, b);
     }
     if op == lr.op_switch() {
@@ -376,9 +614,9 @@ fn control[&t, &m, &s, &o](text: &t [byte], m: &m [int], s: &s [int], o: &!o [in
         }
         var k = 2;
         while k + 1 < n && !out.failed(o) {
-            fr.operand(m, o, opnd(m, rec, 0), 9, false);
-            fr.operand(m, o, opnd(m, rec, k), 10, false);
-            out.emit(o, a64.addsub_shift(1, 1, 1, 31, 9, 10, 0, 0));
+            let a = fr.source(m, o, opnd(m, rec, 0), 9, false);
+            let c = fr.source(m, o, opnd(m, rec, k), 10, false);
+            out.emit(o, a64.addsub_shift(1, 1, 1, 31, a, c, 0, 0));
             let skip = out.emit(o, 0);
             jump(text, m, s, o, func, lm.cell(m, opnd(m, rec, k + 1) + 2), promoted, b);
             out.patch(o, skip, a64.branch_cond(1, out.here(o) - skip));
@@ -413,6 +651,22 @@ fn function[&t, &m, &s, &o](text: &t [byte], m: &m [int], s: &!s [int], o: &!o [
         locals = n + m2.phis(s);
     }
     out.begin_function(o, func, locals);
+    if len(s) > 0 && m2.status(s) == 0 {
+        // The values given registers (`regalloc.cho`): each local's, and the registers to keep for the caller.
+        ra.allocate(m, s, func, promoted);
+        if ra.status(s) == 1 {
+            var id = 0;
+            while id < locals {
+                out.set_reg(o, id, ra.register(s, id));
+                id = id + 1;
+            }
+            o[out.h_saved()] = ra.used(s);
+            o[out.h_allocated()] = o[out.h_allocated()] + ra.allocated(s);
+            o[out.h_spilled()] = o[out.h_spilled()] + ra.spilled(s);
+        } else {
+            o[out.h_unallocated()] = o[out.h_unallocated()] + 1;
+        }
+    }
     frame(m, s, o, func, promoted);
     if out.failed(o) {
         return 0;

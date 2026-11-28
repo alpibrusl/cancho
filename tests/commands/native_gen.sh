@@ -8,7 +8,7 @@
 cancho=$1
 work=$2
 . tests/commands/script_lib.sh
-native="compiler/native/llmod.cho compiler/native/llread.cho compiler/native/llbody.cho compiler/native/lltop.cho compiler/native/lllayout.cho compiler/native/llout.cho compiler/native/a64.cho compiler/native/a64sys.cho compiler/native/a64frame.cho compiler/native/a64call.cho compiler/native/a64gen.cho compiler/native/a64fn.cho compiler/native/mem2reg.cho"
+native="compiler/native/llmod.cho compiler/native/llread.cho compiler/native/llbody.cho compiler/native/lltop.cho compiler/native/lllayout.cho compiler/native/llout.cho compiler/native/a64.cho compiler/native/a64sys.cho compiler/native/a64frame.cho compiler/native/a64call.cho compiler/native/a64gen.cho compiler/native/a64fn.cho compiler/native/mem2reg.cho compiler/native/regalloc.cho"
 
 begin the_generator_writes_the_code_that_was_run
 # shellcheck disable=SC2086
@@ -24,19 +24,22 @@ end
 
 # The variables of a module made values (docs/native-backend.md section 17.2): tests/native/gen/vars.ll is written as the front end writes, every local an
 # `alloca` (a swap through a third variable in a loop, a diamond, nested loops, `double` and `float`, `i1`, `i8` and `i16` through a `switch`, an alloca that
-# escapes beside one that does not, a pointer variable, a block no jump reaches). tests/native/gen/vars.s is the code with the pass and
-# tests/native/gen/vars-no-registers.s without it; both were assembled, linked and run under qemu by tests/native/gen_run.sh, where each printed
-# tests/native/gen/vars.printed, which is what clang's build of the module prints. tricky.ll's two allocas are aggregates, so the pass leaves its code as it was.
+# escapes beside one that does not, a pointer variable, a block no jump reaches). tests/native/gen/vars.s is the code with the pass and the values given
+# registers (section 17.3) and tests/native/gen/vars-no-registers.s without either; both were assembled, linked and run under qemu by
+# tests/native/gen_run.sh, where each printed tests/native/gen/vars.printed, which is what clang's build of the module prints. tricky.ll's two allocas are
+# aggregates, so the pass leaves them, but its values are given registers: tests/native/gen/tricky-registers.s is that code, which was run the same way and
+# printed tests/native/gen/tricky.printed, what clang's build prints.
 begin the_variables_made_values_are_the_code_that_was_run
 "$work/dump" tests/native/gen/vars.ll registers > "$work/vars.s" 2> "$work/vars.txt"
 same "$?" 0 "the status"
-same "$(cat "$work/vars.txt")" "ok: words 703 functions 10 relocations 32" "what it says with the pass"
+same "$(cat "$work/vars.txt")" "ok: words 419 functions 10 relocations 32" "what it says with the pass"
 same "$(cmp -s "$work/vars.s" tests/native/gen/vars.s; echo $?)" 0 "the assembly against tests/native/gen/vars.s"
 "$work/dump" tests/native/gen/vars.ll > "$work/vars0.s" 2> "$work/vars0.txt"
 same "$(cat "$work/vars0.txt")" "ok: words 722 functions 10 relocations 32" "what it says without"
 same "$(cmp -s "$work/vars0.s" tests/native/gen/vars-no-registers.s; echo $?)" 0 "the assembly against tests/native/gen/vars-no-registers.s"
-"$work/dump" tests/native/gen/tricky.ll registers > "$work/tricky-registers.s" 2> /dev/null
-same "$(cmp -s "$work/tricky-registers.s" tests/native/gen/tricky.s; echo $?)" 0 "tricky.ll with the pass against tests/native/gen/tricky.s"
+"$work/dump" tests/native/gen/tricky.ll registers > "$work/tricky-registers.s" 2> "$work/tricky-registers.txt"
+same "$(cat "$work/tricky-registers.txt")" "ok: words 1162 functions 15 relocations 73" "what it says of tricky.ll with the pass"
+same "$(cmp -s "$work/tricky-registers.s" tests/native/gen/tricky-registers.s; echo $?)" 0 "tricky.ll with the pass against tests/native/gen/tricky-registers.s"
 end
 
 # One instruction changed in the module is a change in what is written: the comparison above can fail.

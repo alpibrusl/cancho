@@ -61,8 +61,9 @@ pub fn h_fn_end() -> [] int {
     return 11;
 }
 
-// What is known of each local of the function being written, by its number, three cells: where its slot is in the frame (-1: it has none), where the slot a
-// `phi` is given its next value in is (-1: it is no `phi`), and for a label the word its block begins at (-1 until it is written).
+// What is known of each local of the function being written, by its number, four cells: where its slot is in the frame (-1: it has none), where the slot a
+// `phi` is given its next value in is (-1: it is no `phi`), for a label the word its block begins at (-1 until it is written), and the register it lives in
+// (-1: its slot; `x<r>` or `d<r>` by its type).
 pub fn h_loc() -> [] int {
     return 12;
 }
@@ -120,8 +121,40 @@ pub fn h_left() -> [] int {
     return 29;
 }
 
-pub fn header() -> [] int {
+// With the values given registers (`regalloc.cho`): the registers the function being written keeps for its caller (bit `r` for `x<r>`, bit `32 + r` for
+// `d<r>`) and where in its frame they are kept; and how many values were given a register, how many that wanted one were not, and how many functions with
+// values were left with none.
+pub fn h_saved() -> [] int {
+    return 30;
+}
+
+pub fn h_save_at() -> [] int {
+    return 31;
+}
+
+pub fn h_allocated() -> [] int {
     return 32;
+}
+
+pub fn h_spilled() -> [] int {
+    return 33;
+}
+
+pub fn h_unallocated() -> [] int {
+    return 34;
+}
+
+// The moves of one jump's `phi`s that are registers (`a64fn.cho`): where they begin, and how many there is room for.
+pub fn h_moves() -> [] int {
+    return 35;
+}
+
+pub fn moves_room() -> [] int {
+    return 128;
+}
+
+pub fn header() -> [] int {
+    return 40;
 }
 
 // ---- why a module is refused by the code generator (after `llmod`'s reasons) ----
@@ -324,14 +357,14 @@ fn loc[&o](o: &o [int], id: int, c: int) -> [] int {
     if id < 0 || id >= o[h_loc_cap()] {
         return 0 - 1;
     }
-    return o[o[h_loc()] + 3 * id + c];
+    return o[o[h_loc()] + 4 * id + c];
 }
 
 fn set_loc[&o](o: &!o [int], id: int, c: int, value: int) -> [] int {
     if id < 0 || id >= o[h_loc_cap()] {
         return fail(o, why_room());
     }
-    o[o[h_loc()] + 3 * id + c] = value;
+    o[o[h_loc()] + 4 * id + c] = value;
     return 0;
 }
 
@@ -357,6 +390,14 @@ pub fn label[&o](o: &o [int], id: int) -> [] int {
 
 pub fn set_label[&o](o: &!o [int], id: int, index: int) -> [] int {
     return set_loc(o, id, 2, index);
+}
+
+pub fn reg[&o](o: &o [int], id: int) -> [] int {
+    return loc(o, id, 3);
+}
+
+pub fn set_reg[&o](o: &!o [int], id: int, r: int) -> [] int {
+    return set_loc(o, id, 3, r);
 }
 
 // `bytes` of the frame, aligned to `align`: where they are from the stack pointer.
@@ -392,7 +433,7 @@ pub fn begin_function[&o](o: &!o [int], func: int, locals: int) -> [] int {
         return fail(o, why_room());
     }
     var k = 0;
-    while k < 3 * locals {
+    while k < 4 * locals {
         o[o[h_loc()] + k] = 0 - 1;
         k = k + 1;
     }
@@ -400,6 +441,8 @@ pub fn begin_function[&o](o: &!o [int], func: int, locals: int) -> [] int {
     o[h_out_area()] = 0;
     o[h_frame()] = 0;
     o[h_sret()] = 0 - 1;
+    o[h_saved()] = 0;
+    o[h_save_at()] = 0;
     o[h_start()] = here(o);
     o[h_func()] = func;
     return 0;
@@ -428,7 +471,7 @@ pub fn room[&m](m: &m [int]) -> [] int {
     let records = lm.cell(m, lm.h_top()) - lm.cell(m, lm.h_rec());
     let instructions = lm.cell(m, lm.h_ninstr());
     let functions_n = lm.cell(m, lm.h_nfuncs());
-    return header() + 96 * instructions + 2 * records + 64 * functions_n + 4096 + 3 * (2 * lm.cell(m, lm.h_li_cap()) + 8) + 3 * functions_n + 3;
+    return header() + 96 * instructions + 2 * records + 64 * functions_n + 4096 + 4 * (2 * lm.cell(m, lm.h_li_cap()) + 8) + 3 * functions_n + 3 + moves_room();
 }
 
 // The table `o` laid out for the module in `m`, empty. A table smaller than `room(m)` is a refusal, as is every write after it.
@@ -451,7 +494,9 @@ pub fn layout[&m, &o](m: &m [int], o: &!o [int]) -> [] int {
     o[h_loc()] = next;
     // As many again for the new `phi`s of `mem2reg.cho`.
     o[h_loc_cap()] = 2 * lm.cell(m, lm.h_li_cap()) + 8;
-    next = next + 3 * o[h_loc_cap()];
+    next = next + 4 * o[h_loc_cap()];
+    o[h_moves()] = next;
+    next = next + moves_room();
     o[h_fn()] = next;
     o[h_fn_top()] = next;
     next = next + 3 * functions_n + 3;

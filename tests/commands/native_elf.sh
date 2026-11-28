@@ -9,7 +9,7 @@ work=$2
 . tests/commands/script_lib.sh
 # The bytes of a file, sixteen to a line, written the same way whatever `od` this machine has (they space their columns differently).
 hex() { od -An -v -tx1 "$1" | tr -s ' \n' '\n\n' | grep . | awk '{ printf "%s%s", $0, (NR % 16 == 0 ? "\n" : " ") } END { if (NR % 16) print "" }'; }
-native="compiler/native/llmod.cho compiler/native/llread.cho compiler/native/llbody.cho compiler/native/lltop.cho compiler/native/lllayout.cho compiler/native/llout.cho compiler/native/a64.cho compiler/native/a64sys.cho compiler/native/a64frame.cho compiler/native/a64call.cho compiler/native/a64gen.cho compiler/native/a64fn.cho compiler/native/mem2reg.cho compiler/native/elf.cho"
+native="compiler/native/llmod.cho compiler/native/llread.cho compiler/native/llbody.cho compiler/native/lltop.cho compiler/native/lllayout.cho compiler/native/llout.cho compiler/native/a64.cho compiler/native/a64sys.cho compiler/native/a64frame.cho compiler/native/a64call.cho compiler/native/a64gen.cho compiler/native/a64fn.cho compiler/native/mem2reg.cho compiler/native/regalloc.cho compiler/native/elf.cho"
 
 begin the_writer_writes_the_object_that_was_run
 # shellcheck disable=SC2086
