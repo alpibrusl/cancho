@@ -534,7 +534,7 @@ fn system_stmt[&s, &x](st: &!s [int], text: &x [byte], id: int, ret: int) -> [] 
         return 0;
     }
     let lent = ast.get(st, id, 6);
-    if lent > 8 {
+    if lent > 12 {
         ast.fail(st, rules.r_arity_mismatch(), from, to);
         return 0;
     }
@@ -550,8 +550,8 @@ fn system_stmt[&s, &x](st: &!s [int], text: &x [byte], id: int, ret: int) -> [] 
         return 0;
     }
     region r {
-        let lt = alloc_slice[r](8, 0);
-        let held = alloc_slice[r](8, 0 - 1);
+        let lt = alloc_slice[r](12, 0);
+        let held = alloc_slice[r](12, 0 - 1);
         let first_arg = st[52];
         var node = ast.get(st, id, 5);
         var i = 0;
@@ -614,6 +614,7 @@ fn system_stmt[&s, &x](st: &!s [int], text: &x [byte], id: int, ret: int) -> [] 
         let lock = system_function(st, text, target, "lock");
         let rename = system_function(st, text, target, "rename");
         let remove = system_function(st, text, target, "remove");
+        let time = system_function(st, text, target, "clock");
         if ast.ok(st) && folder >= 0 {
             system_fits(st, text, folder, lt, lent, 2, from, to);
         }
@@ -659,6 +660,9 @@ fn system_stmt[&s, &x](st: &!s [int], text: &x [byte], id: int, ret: int) -> [] 
         if ast.ok(st) && remove >= 0 {
             system_fits(st, text, remove, lt, lent, 12, from, to);
         }
+        if ast.ok(st) && time >= 0 {
+            system_fits(st, text, time, lt, lent, 1, from, to);
+        }
         if bare && ast.ok(st) {
             syscode.system_globals(st);
             syscode.system_files(st, 6, folder, pushed);
@@ -678,6 +682,7 @@ fn system_stmt[&s, &x](st: &!s [int], text: &x [byte], id: int, ret: int) -> [] 
             syscode.system_files(st, 20, rename, pushed);
             syscode.system_files(st, 21, remove, pushed);
             syscode.system_files(st, 22, sync, pushed);
+            syscode.system_files(st, 23, time, pushed);
             syscode.system_glue(st, 1, out, pushed);
             syscode.system_glue(st, 2, err, pushed);
             syscode.system_glue(st, 3, key, pushed);
@@ -724,6 +729,9 @@ fn system_stmt[&s, &x](st: &!s [int], text: &x [byte], id: int, ret: int) -> [] 
         }
         if step >= 0 && rename >= 0 && remove >= 0 && sync >= 0 {
             answers = answers + effects.label_bit(st, "dir_write");
+        }
+        if time >= 0 {
+            answers = answers + effects.label_bit(st, "clock");
         }
         if open >= 0 && folder >= 0 {
             // `fs_read`, whatever its argument: the path was held to it before the module is asked

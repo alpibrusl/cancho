@@ -254,6 +254,27 @@ same "$(head -n 1 "$work/files-auth.txt")" "performs nothing" "the report for no
 same "$(performs "$work/noopen-auth.txt")" 'fs_read("") ' "the report with no open in the module"
 end
 
+# And the clock (docs/bare-system.md, "The clock"): `clock_ms` and `clock_unix_ms` are the module's `clock`, and the block discharges `clock`, so the
+# function that holds the block declares nothing; the same source built for the host keeps `clock` in its rows.
+begin a_lent_system_answers_the_clock
+if "$cancho" build tests/probes/bare_system_clock.cho tests/probes/bare_system_clockmod.cho --target aarch64-none-elf --emit ll -o "$work/clock.ll" > "$work/clock.txt" 2>&1; then
+    same "$(calls_undefined "$work/clock.ll")" "" "what the module calls and does not define"
+    same "$(grep -c '^define i64 @cancho_clock_ms(' "$work/clock.ll")" 1 "the function the clock builtins call is the module's own"
+    same "$("$cancho" authority tests/probes/bare_system_clock.cho tests/probes/bare_system_clockmod.cho --target aarch64-none-elf | head -1)" "performs nothing" "the block discharges the clock"
+else
+    fail "a program that asks a lent system the time, for no system, said: $(head -c 300 "$work/clock.txt")"
+fi
+# without a `clock` in the module, asking the time is a trap, not a call of something missing, and the label is not discharged
+sed 's/^pub fn clock\[/pub fn hour[/' tests/probes/bare_system_clockmod.cho > "$work/noclock.cho"
+if "$cancho" build tests/probes/bare_system_clock.cho "$work/noclock.cho" --target aarch64-none-elf --emit ll -o "$work/noclock.ll" > "$work/noclock.txt" 2>&1; then
+    same "$(calls_undefined "$work/noclock.ll")" "" "what the module calls and does not define, when the system has no clock"
+    same "$(awk '/^define i64 @cancho_clock_ms\(/ { on = 1 } on && /call void @cancho_trap\(/ { print "trap"; exit } on && /^}/ { exit }' "$work/noclock.ll")" "trap" "asking a system that has no clock is a trap"
+    same "$("$cancho" authority tests/probes/bare_system_clock.cho "$work/noclock.cho" --target aarch64-none-elf | sed -n 2p | tr -d ' ')" "clock" "and the clock is in the report"
+else
+    fail "with a system that has no clock, the build said: $(head -c 300 "$work/noclock.txt")"
+fi
+end
+
 begin an_object_for_no_system_is_an_elf_for_aarch64
 if "$cancho" build tests/probes/freestanding.cho --std --target aarch64-none-elf --emit obj -o "$work/bare.o" > "$work/obj.txt" 2>&1; then
     # The four bytes of the magic, then (at 18) the machine: 183, AArch64, little-endian.

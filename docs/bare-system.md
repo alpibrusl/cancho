@@ -431,6 +431,26 @@ Step 1 is enough for cancho-os to run the tools. Step 2 is what makes the report
   (`std.system`) that a program's module must mirror, which would let the checker's message point at one
   place.
 
+## 11b. The clock, from a lent system
+
+`clock_ms(clock)` and `clock_unix_ms(clock)` are answered by the module's `clock(.., wall: int)` (`wall` 0: milliseconds
+since a moment of the system's choosing, which only go up; 1: since 1970), written into `@cancho_clock_ms`, the
+function both builtins call on every target. The block discharges `clock` when the module has `clock` (the table of
+§12.2 gains that row). Without it, `@cancho_clock_ms` traps and `clock` stays in the row, as for every other operation.
+A system that does not know the date answers what it decides; cancho-os answers 0 (its `docs/clock.md`).
+
+Random bytes need nothing here: a program asks for them by opening `/dev/urandom` through an `Fs` that covers it
+(`docs/narrowing-into-several.md`), which a lent system answers with `open` and `read` like any other path.
+
+The block takes up to twelve lent values (it took eight): cancho-os lends nine since it lends the processor for its
+counter.
+
+Measured: `tests/probes/bare_system_clock.cho` asks twice how long it has been and once what the date is, from a module
+that counts by twos; it builds for `aarch64-none-elf` into a module that calls nothing it does not define;
+`cancho authority` of it for that target says it performs nothing; with no `clock` in the module, `@cancho_clock_ms`
+traps and the report says `clock` (`tests/commands/freestanding.sh`, `a_lent_system_answers_the_clock`). cancho-os 0.0.52
+runs a program that asks both, in QEMU.
+
 ## 12. The discharge of §6, designed against the checker
 
 Built as written here; what was learned building it is marked "(built)". Written before the code, after
@@ -486,9 +506,10 @@ the body still performs it as far as the row goes, and reaching the builtin trap
 | `dir_read` | `dir_enter`, `dir_open_read`, `dir_list`, `dir_next`, `dir_stat` | `step`, `list`, `next`, `stat` |
 | `file_write` | `file_write`, `file_sync`, `file_lock` | `write`, `sync`, `lock` |
 | `dir_write` | `dir_open_new`, `dir_open_append`, `dir_rename`, `dir_rename_new`, `dir_remove`, `dir_sync` | `step`, `rename`, `remove`, `sync` |
+| `clock` | `clock_ms`, `clock_unix_ms` | `clock` (§11b) |
 
 Nothing else is ever discharged: not `heap`, not `fs_write("...")` (no builtin that performs it is served),
-not the network, the clock, a process, `ffi`, `mmio`, `cpu`. A builtin that performs a discharged label and
+not the network, a process, `ffi`, `mmio`, `cpu`. A builtin that performs a discharged label and
 is not served (`read_bytes` for `io_read`, `file_pwrite` for `file_write`, `dir_mkdir` for `dir_write`) is
 refused by the build if the program reaches it (`unsupported-on-target`), as today, so no image has one.
 

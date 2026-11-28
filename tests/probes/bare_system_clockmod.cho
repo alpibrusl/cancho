@@ -1,0 +1,13 @@
+edition 7;
+module probe_clock;
+
+// bare_system_clockmod.cho -- the system of tests/probes/bare_system_clock.cho: a clock that goes up by two
+// milliseconds each time it is asked how long it has been, and a date of 2026-11-27 14:40:12. `at[0]` is how many times
+// it was asked.
+pub fn clock[&u](at: &!u [int], wall: int) -> [] int {
+    at[0] = at[0] + 1;
+    if wall != 0 {
+        return 1795790412000;
+    }
+    return at[0] * 2;
+}

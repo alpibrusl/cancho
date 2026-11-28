@@ -182,7 +182,8 @@ fn system_triple[&s](st: &!s [int]) -> [] int {
 // And what writes: `step` again (2 a file that must not be there yet, 3 a file to add to, made if it is not there),
 // 17 `write` (bytes to a file: how many were taken), 18 `sync` (a file, kept), 19 `lock` (a file, held by no other),
 // 20 `rename` (a name under a directory to another under the same one; `fresh` 1 refuses a name that is taken),
-// 21 `remove` (a name under a directory), 22 a directory kept, which is `sync` again.
+// 21 `remove` (a name under a directory), 22 a directory kept, which is `sync` again. And the time: 23 `clock`
+// (`wall` 0: milliseconds since a moment of the system's choosing, which only go up; 1: milliseconds since 1970).
 // Each of the program's functions answers a whole number: a handle or a count, or minus the reason it failed, which is
 // what the runtime's own answer. A path was held to the capability's prefix, and a name to being one component, before
 // the program's function is asked: those are the language's promises, not the system's.
@@ -221,6 +222,8 @@ pub fn system_files[&s](st: &!s [int], op: int, callee: int, n: int) -> [] int {
         emit.str(st, "define void @cancho_dir_remove(ptr %dir, ptr %name, i64 %len, ptr %out) {\nentry:\n");
     } else if op == 22 {
         emit.str(st, "define void @cancho_dir_sync(ptr %dir, ptr %out) {\nentry:\n");
+    } else if op == 23 {
+        emit.str(st, "define i64 @cancho_clock_ms(i64 %wall) {\nentry:\n");
     } else {
         emit.str(st, "define i64 @cancho_fd_close(i64 %fd) {\nentry:\n");
     }
@@ -304,6 +307,10 @@ pub fn system_files[&s](st: &!s [int], op: int, callee: int, n: int) -> [] int {
         system_call(st, callee, n, true);
         emit.str(st, "i64 %h)\n");
         system_triple(st);
+    } else if op == 23 {
+        // `clock_ms` (0) and `clock_unix_ms` (1): milliseconds, since some moment or since 1970
+        system_call(st, callee, n, true);
+        emit.str(st, "i64 %wall)\n  ret i64 %r\n}\n");
     } else if op == 9 || op == 17 {
         system_call(st, callee, n, true);
         emit.str(st, "i64 %fd, ptr %p, i64 %n)\n  ret i64 %r\n}\n");
