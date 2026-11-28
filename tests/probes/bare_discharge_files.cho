@@ -1,0 +1,62 @@
+edition 6;
+
+// bare_discharge_files.cho -- a `system` block discharges a path (`docs/bare-system.md` 12): `first` opens a file through an `Fs` and reads a byte of it, and its row
+// says `fs_read("")` and `file_read`; `lend` contains the block, and for no system its row is empty, since the module `probe_fs` has `open` and `folder`, and `read`,
+// `read_at` and `size`. tests/commands/freestanding.sh builds it for `aarch64-none-elf`, takes `open` out of the module, and reads a file outside the block.
+import probe_fs;
+
+// The first byte of `/note`; -1 if there is none.
+fn first[&f](fs: &f Fs("")) -> [fs_read(""), file_read] int {
+    var got = 0 - 1;
+    match open_read(fs, "/note") {
+        Opened::Ok(f) => {
+            var file = f;
+            region q {
+                let room = alloc_slice[q](1, byte_of(0));
+                borrow mut file as &!h in {
+                    match file_read(h, room) {
+                        Read::Got(n) => {
+                            got = int_of(room[0]);
+                        }
+                        Read::End => {
+                        }
+                        Read::Failed(e) => {
+                        }
+                    }
+                }
+            }
+            file_close(file);
+        }
+        Opened::Failed(e) => {
+        }
+    }
+    return got;
+}
+
+fn lend[&f, &u](fs: &f Fs(""), at: &!u [int]) -> [] int {
+    var c = 0;
+    system probe_fs(at) in {
+        c = first(fs);
+    }
+    return c;
+}
+
+fn main(world: World) -> [] int {
+    let Split { io, ffi, fs, heap, args, net, clock, signals } = split(world);
+    release(signals);
+    release(ffi);
+    release(io);
+    release(heap);
+    release(net);
+    release(clock);
+    release(args);
+    var status = 0;
+    region r {
+        let at = alloc_slice[r](6, 0);
+        borrow fs as &f in {
+            status = lend(f, at);
+        }
+    }
+    release(fs);
+    return status;
+}

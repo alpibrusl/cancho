@@ -698,8 +698,48 @@ fn system_stmt[&s, &x](st: &!s [int], text: &x [byte], id: int, ret: int) -> [] 
             }
             i = i + 1;
         }
+        // What the block discharges (`docs/bare-system.md` 12.2): a hosted label every function of which the module has. Only where there is no system under the
+        // program: where there is one, the body's builtins are the system's, and the function that contains the block performs what they perform.
+        var answers = 0;
+        if out >= 0 && flush >= 0 {
+            answers = answers + effects.label_bit(st, "io_write");
+        }
+        if err >= 0 {
+            answers = answers + effects.label_bit(st, "err_write");
+        }
+        if key >= 0 {
+            answers = answers + effects.label_bit(st, "io_read");
+        }
+        if count >= 0 && arg >= 0 {
+            answers = answers + effects.label_bit(st, "args");
+        }
+        if read >= 0 && read_at >= 0 && size >= 0 {
+            answers = answers + effects.label_bit(st, "file_read");
+        }
+        if step >= 0 && list >= 0 && next >= 0 && stat >= 0 {
+            answers = answers + effects.label_bit(st, "dir_read");
+        }
+        if write >= 0 && sync >= 0 && lock >= 0 {
+            answers = answers + effects.label_bit(st, "file_write");
+        }
+        if step >= 0 && rename >= 0 && remove >= 0 && sync >= 0 {
+            answers = answers + effects.label_bit(st, "dir_write");
+        }
+        if open >= 0 && folder >= 0 {
+            // `fs_read`, whatever its argument: the path was held to it before the module is asked
+            answers = answers + effects.arg_flag(st);
+        }
+        let discharging = bare && ast.ok(st);
+        let rows = instances.label_rows(st);
+        var outer = 0;
+        if discharging {
+            outer = effects.lend(st, answers);
+        }
         if ast.ok(st) {
             block(st, text, ast.get(st, id, 7), ast.get(st, id, 8), ret);
+        }
+        if discharging {
+            effects.lend_end(st, outer, rows);
         }
         i = 0;
         while i < lent {
@@ -1569,6 +1609,10 @@ fn check_item[&s, &x](st: &!s [int], text: &x [byte], fn_item: int) -> [] int {
         }
         if ast.ok(st) {
             effects.check(st, text, fn_item, from, to, authority, !emit.on(st) || !effects.untracked(st));
+        }
+        if ast.ok(st) && emit.on(st) {
+            // the function that contains a `system` block lists nothing the block discharged (`docs/bare-system.md` 12.3)
+            effects.lender_exact(st, text, fn_item, from, to);
         }
         effects.record(st, fn_item);
     }
