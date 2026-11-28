@@ -451,6 +451,35 @@ that counts by twos; it builds for `aarch64-none-elf` into a module that calls n
 traps and the report says `clock` (`tests/commands/freestanding.sh`, `a_lent_system_answers_the_clock`). cancho-os 0.0.52
 runs a program that asks both, in QEMU.
 
+## 11c. A connection out, from a lent system
+
+`tcp_connect(out, host, port)`, `conn_read`, `conn_write` and `conn_close` are answered by the module's `dial(.., host:
+&[byte], port: int)` (a handle, or minus why), `receive(.., handle: int, into: &![byte])` (how many bytes came, 0 when
+the other end has closed, or minus why), `send(.., handle: int, data: &[byte])` (how many were taken, or minus why) and
+`close`, the same function that closes a file: a handle is the system's to tell apart. They are written into
+`@cancho_net_tcp_connect`, `@cancho_net_conn_read` and `@cancho_net_conn_write`, the functions the builtins call on
+every target, and the answers are laid out as the hosted runtime lays out its own (`runtime/net.c`), so `Dialed`,
+`Received` and `Sent` are matched the same way. A connection from a lent system waits: `Received::Again` and
+`Sent::Again` are never answered (`conn_nonblocking` is not served).
+
+The host and the port are held to the bound of the `Out` before `dial` is asked, by `@cancho_sys_dial_check` in
+`runtime/bare.ll`, which traps where the hosted runtime traps (`netrt_dial`, `netrt_checked_host`): exactly from edition
+10, `*.` for one label, a prefix before. That is the language's promise, as the prefix of a path is; whether the system
+lets *this* program reach that host is the system's own rule. `net_out` is then discharged whatever its argument, as
+`fs_read` is (§12.2); which labels with an argument a block discharges are kept in bits 40 on of the lent mask
+(`instances.lent_args`: 2 `fs_read`, 8 `net_out`).
+
+The block takes up to twenty lent values (it took twelve): a system that answers connections over its own network
+stack lends that stack's state too, and cancho-os lends seventeen.
+
+Measured: `tests/probes/bare_system_net.cho` connects through an `Out` narrowed to `10.0.0.1:80`, sends four bytes,
+reads until the other end closes and closes, against a module whose host answers three bytes twice; it builds for
+`aarch64-none-elf` into a module that calls nothing it does not define, the dial is checked before the module is asked,
+and `cancho authority` for that target says it performs nothing; with no `dial`, `@cancho_net_tcp_connect` traps and the
+report says `net_out("10.0.0.1:80")` (`tests/commands/freestanding.sh`, `a_lent_system_answers_a_connection_out`). The
+check itself was held, outside the compiler, to thirteen hosts, ports and bounds whose verdicts were read off `net.c`:
+it agreed on all of them.
+
 ## 12. The discharge of §6, designed against the checker
 
 Built as written here; what was learned building it is marked "(built)". Written before the code, after
@@ -507,9 +536,12 @@ the body still performs it as far as the row goes, and reaching the builtin trap
 | `file_write` | `file_write`, `file_sync`, `file_lock` | `write`, `sync`, `lock` |
 | `dir_write` | `dir_open_new`, `dir_open_append`, `dir_rename`, `dir_rename_new`, `dir_remove`, `dir_sync` | `step`, `rename`, `remove`, `sync` |
 | `clock` | `clock_ms`, `clock_unix_ms` | `clock` (§11b) |
+| `net_out("...")`, whatever its argument | `tcp_connect` | `dial`, `close` (§11c) |
+| `conn_read` | `conn_read` | `receive`, `close` (§11c) |
+| `conn_write` | `conn_write` | `send`, `close` (§11c) |
 
 Nothing else is ever discharged: not `heap`, not `fs_write("...")` (no builtin that performs it is served),
-not the network, a process, `ffi`, `mmio`, `cpu`. A builtin that performs a discharged label and
+not `net_in` or the poller, a process, `ffi`, `mmio`, `cpu`. A builtin that performs a discharged label and
 is not served (`read_bytes` for `io_read`, `file_pwrite` for `file_write`, `dir_mkdir` for `dir_write`) is
 refused by the build if the program reaches it (`unsupported-on-target`), as today, so no image has one.
 

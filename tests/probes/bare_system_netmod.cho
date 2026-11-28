@@ -1,0 +1,40 @@
+edition 11;
+module probe_net;
+
+// bare_system_netmod.cho -- the system of tests/probes/bare_system_net.cho: one machine, 10.0.0.1, whose port 80 answers
+// any bytes with three, twice, and then closes. `at[0]` is the handle's use, `at[1]` the bytes it was sent, `at[2]` how
+// many times it was read, `at[3]` how many times a handle was closed.
+pub fn dial[&u, &h](at: &!u [int], host: &h [byte], port: int) -> [] int {
+    if len(host) != 8 || port != 80 {
+        return 0 - 111;
+    }
+    at[0] = 1;
+    return 7;
+}
+
+pub fn send[&u, &b](at: &!u [int], handle: int, data: &b [byte]) -> [] int {
+    if handle != 7 || at[0] != 1 {
+        return 0 - 9;
+    }
+    at[1] = at[1] + len(data);
+    return len(data);
+}
+
+pub fn receive[&u, &b](at: &!u [int], handle: int, into: &!b [byte]) -> [] int {
+    if handle != 7 || at[0] != 1 {
+        return 0 - 9;
+    }
+    at[2] = at[2] + 1;
+    if at[2] > 2 {
+        return 0;
+    }
+    into[0] = byte_of(1);
+    into[1] = byte_of(2);
+    into[2] = byte_of(3);
+    return 3;
+}
+
+pub fn close[&u](at: &!u [int], handle: int) -> [] int {
+    at[3] = at[3] + 1;
+    return 0;
+}
